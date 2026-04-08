@@ -1,0 +1,32 @@
+BasedOnStyle: LLVM
+
+ColumnLimit: 80
+IndentWidth: 8
+TabWidth: 8
+UseTab: ForIndentation
+ContinuationIndentWidth: 8
+
+# Function definitions: return type on its own line, brace on next line.
+# Control structures: brace on same line.
+BreakBeforeBraces: Linux
+AlwaysBreakAfterReturnType: AllDefinitions
+
+# Continuation lines align to the opening parenthesis.
+AlignAfterOpenBracket: Align
+BinPackParameters: true
+BinPackArguments: true
+
+# void *ptr, not void* ptr.
+PointerAlignment: Right
+
+# case labels at same indentation as the switch.
+IndentCaseLabels: false
+
+# Allow compact case labels: case X: return "...";
+AllowShortCaseLabelsOnASingleLine: true
+
+# No space after cast: (uint8_t *)buf.
+SpaceAfterCStyleCast: false
+
+# Do not reorder includes.
+SortIncludes: false

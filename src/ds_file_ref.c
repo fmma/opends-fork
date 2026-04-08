@@ -105,24 +105,24 @@ ds_file_free(void *buf)
 }
 
 ssize_t
-ds_file_read(ds_file_handle_t fh, void *buf_base,
-		size_t size, off_t file_offset, off_t buf_offset)
+ds_file_read(ds_file_handle_t fh, void *buf_base, size_t size,
+             off_t file_offset, off_t buf_offset)
 {
 	struct ref_handle *h = fh;
-	ssize_t ret = pread(h->fd, (char *)buf_base + buf_offset,
-			size, file_offset);
+	ssize_t ret =
+	        pread(h->fd, (char *)buf_base + buf_offset, size, file_offset);
 	if (ret < 0)
 		return -(ssize_t)DS_FILE_INTERNAL_ERROR;
 	return ret;
 }
 
 ssize_t
-ds_file_write(ds_file_handle_t fh, const void *buf_base,
-		size_t size, off_t file_offset, off_t buf_offset)
+ds_file_write(ds_file_handle_t fh, const void *buf_base, size_t size,
+              off_t file_offset, off_t buf_offset)
 {
 	struct ref_handle *h = fh;
-	ssize_t ret = pwrite(h->fd, (const char *)buf_base + buf_offset,
-			size, file_offset);
+	ssize_t ret = pwrite(h->fd, (const char *)buf_base + buf_offset, size,
+	                     file_offset);
 	if (ret < 0)
 		return -(ssize_t)DS_FILE_INTERNAL_ERROR;
 	return ret;
@@ -135,8 +135,7 @@ struct ref_batch {
 };
 
 ds_file_error_t
-ds_file_batch_io_setup(ds_file_batch_handle_t *batch_idp,
-		unsigned nr)
+ds_file_batch_io_setup(ds_file_batch_handle_t *batch_idp, unsigned nr)
 {
 	if (!batch_idp || nr == 0)
 		return ds_file_err(DS_FILE_INVALID_VALUE);
@@ -157,9 +156,8 @@ ds_file_batch_io_setup(ds_file_batch_handle_t *batch_idp,
 }
 
 ds_file_error_t
-ds_file_batch_io_submit(ds_file_batch_handle_t batch_idp,
-		unsigned nr, ds_file_io_params_t *iocbp,
-		unsigned int flags)
+ds_file_batch_io_submit(ds_file_batch_handle_t batch_idp, unsigned nr,
+                        ds_file_io_params_t *iocbp, unsigned int flags)
 {
 	(void)flags;
 	struct ref_batch *b = batch_idp;
@@ -175,17 +173,15 @@ ds_file_batch_io_submit(ds_file_batch_handle_t batch_idp,
 		ssize_t ret;
 
 		if (p->opcode == DS_FILE_READ) {
-			ret = ds_file_read(p->fh,
-					p->u.batch.dev_ptr_base,
-					p->u.batch.size,
-					p->u.batch.file_offset,
-					p->u.batch.dev_ptr_offset);
+			ret = ds_file_read(p->fh, p->u.batch.dev_ptr_base,
+			                   p->u.batch.size,
+			                   p->u.batch.file_offset,
+			                   p->u.batch.dev_ptr_offset);
 		} else {
-			ret = ds_file_write(p->fh,
-					p->u.batch.dev_ptr_base,
-					p->u.batch.size,
-					p->u.batch.file_offset,
-					p->u.batch.dev_ptr_offset);
+			ret = ds_file_write(p->fh, p->u.batch.dev_ptr_base,
+			                    p->u.batch.size,
+			                    p->u.batch.file_offset,
+			                    p->u.batch.dev_ptr_offset);
 		}
 
 		ds_file_io_events_t *e = &b->events[b->count++];
@@ -203,10 +199,9 @@ ds_file_batch_io_submit(ds_file_batch_handle_t batch_idp,
 }
 
 ds_file_error_t
-ds_file_batch_io_get_status(ds_file_batch_handle_t batch_idp,
-		unsigned min_nr, unsigned *nr,
-		ds_file_io_events_t *iocbp,
-		struct timespec *timeout)
+ds_file_batch_io_get_status(ds_file_batch_handle_t batch_idp, unsigned min_nr,
+                            unsigned *nr, ds_file_io_events_t *iocbp,
+                            struct timespec *timeout)
 {
 	(void)timeout;
 	struct ref_batch *b = batch_idp;
@@ -247,31 +242,27 @@ ds_file_batch_io_destroy(ds_file_batch_handle_t batch_idp)
 }
 
 ds_file_error_t
-ds_file_read_async(ds_file_handle_t fh, void *buf_base,
-		size_t *size_p, off_t *file_offset_p,
-		off_t *buf_offset_p, ssize_t *bytes_read_p,
-		ds_stream_t stream)
+ds_file_read_async(ds_file_handle_t fh, void *buf_base, size_t *size_p,
+                   off_t *file_offset_p, off_t *buf_offset_p,
+                   ssize_t *bytes_read_p, ds_stream_t stream)
 {
 	(void)stream;
-	ssize_t ret = ds_file_read(fh, buf_base, *size_p,
-			*file_offset_p, *buf_offset_p);
+	ssize_t ret = ds_file_read(fh, buf_base, *size_p, *file_offset_p,
+	                           *buf_offset_p);
 	*bytes_read_p = ret;
-	return ret < 0 ? ds_file_err(DS_FILE_INTERNAL_ERROR)
-			: ds_file_ok();
+	return ret < 0 ? ds_file_err(DS_FILE_INTERNAL_ERROR) : ds_file_ok();
 }
 
 ds_file_error_t
-ds_file_write_async(ds_file_handle_t fh, void *buf_base,
-		size_t *size_p, off_t *file_offset_p,
-		off_t *buf_offset_p, ssize_t *bytes_written_p,
-		ds_stream_t stream)
+ds_file_write_async(ds_file_handle_t fh, void *buf_base, size_t *size_p,
+                    off_t *file_offset_p, off_t *buf_offset_p,
+                    ssize_t *bytes_written_p, ds_stream_t stream)
 {
 	(void)stream;
-	ssize_t ret = ds_file_write(fh, buf_base, *size_p,
-			*file_offset_p, *buf_offset_p);
+	ssize_t ret = ds_file_write(fh, buf_base, *size_p, *file_offset_p,
+	                            *buf_offset_p);
 	*bytes_written_p = ret;
-	return ret < 0 ? ds_file_err(DS_FILE_INTERNAL_ERROR)
-			: ds_file_ok();
+	return ret < 0 ? ds_file_err(DS_FILE_INTERNAL_ERROR) : ds_file_ok();
 }
 
 ds_file_error_t
