@@ -39,44 +39,44 @@ extern "C" {
 typedef int ds_result_t;
 
 typedef enum ds_file_op_error {
-	DS_FILE_SUCCESS                    = 0,
-	DS_FILE_DRIVER_NOT_INITIALIZED     = 5001,
-	DS_FILE_DRIVER_INVALID_PROPS       = 5002,
-	DS_FILE_DRIVER_UNSUPPORTED_LIMIT   = 5003,
-	DS_FILE_DRIVER_VERSION_MISMATCH    = 5004,
-	DS_FILE_DRIVER_VERSION_READ_ERROR  = 5005,
-	DS_FILE_DRIVER_CLOSING             = 5006,
-	DS_FILE_PLATFORM_NOT_SUPPORTED     = 5007,
-	DS_FILE_IO_NOT_SUPPORTED           = 5008,
-	DS_FILE_DEVICE_NOT_SUPPORTED       = 5009,
-	DS_FILE_FS_DRIVER_ERROR            = 5010,
-	DS_FILE_DEVICE_DRIVER_ERROR        = 5011,
-	DS_FILE_POINTER_INVALID            = 5012,
-	DS_FILE_MEMORY_TYPE_INVALID        = 5013,
-	DS_FILE_POINTER_RANGE_ERROR        = 5014,
-	DS_FILE_CONTEXT_MISMATCH           = 5015,
-	DS_FILE_INVALID_MAPPING_SIZE       = 5016,
-	DS_FILE_INVALID_MAPPING_RANGE      = 5017,
-	DS_FILE_INVALID_FILE_TYPE          = 5018,
-	DS_FILE_INVALID_FILE_OPEN_FLAG     = 5019,
-	DS_FILE_DIO_NOT_SET                = 5020,
-	DS_FILE_INVALID_VALUE              = 5022,
-	DS_FILE_MEMORY_ALREADY_REGISTERED  = 5023,
-	DS_FILE_MEMORY_NOT_REGISTERED      = 5024,
-	DS_FILE_PERMISSION_DENIED          = 5025,
-	DS_FILE_DRIVER_ALREADY_OPEN        = 5026,
-	DS_FILE_HANDLE_NOT_REGISTERED      = 5027,
-	DS_FILE_HANDLE_ALREADY_REGISTERED  = 5028,
-	DS_FILE_DEVICE_NOT_FOUND           = 5029,
-	DS_FILE_INTERNAL_ERROR             = 5030,
-	DS_FILE_GETNEWFD_FAILED            = 5031,
-	DS_FILE_FS_SETUP_ERROR             = 5033,
-	DS_FILE_IO_DISABLED                = 5034,
-	DS_FILE_BATCH_SUBMIT_FAILED        = 5035,
-	DS_FILE_MEMORY_PINNING_FAILED      = 5036,
-	DS_FILE_BATCH_FULL                 = 5037,
-	DS_FILE_ASYNC_NOT_SUPPORTED        = 5038,
-	DS_FILE_IO_MAX_ERROR               = 5039,
+	DS_FILE_SUCCESS = 0,
+	DS_FILE_DRIVER_NOT_INITIALIZED = 5001,
+	DS_FILE_DRIVER_INVALID_PROPS = 5002,
+	DS_FILE_DRIVER_UNSUPPORTED_LIMIT = 5003,
+	DS_FILE_DRIVER_VERSION_MISMATCH = 5004,
+	DS_FILE_DRIVER_VERSION_READ_ERROR = 5005,
+	DS_FILE_DRIVER_CLOSING = 5006,
+	DS_FILE_PLATFORM_NOT_SUPPORTED = 5007,
+	DS_FILE_IO_NOT_SUPPORTED = 5008,
+	DS_FILE_DEVICE_NOT_SUPPORTED = 5009,
+	DS_FILE_FS_DRIVER_ERROR = 5010,
+	DS_FILE_DEVICE_DRIVER_ERROR = 5011,
+	DS_FILE_POINTER_INVALID = 5012,
+	DS_FILE_MEMORY_TYPE_INVALID = 5013,
+	DS_FILE_POINTER_RANGE_ERROR = 5014,
+	DS_FILE_CONTEXT_MISMATCH = 5015,
+	DS_FILE_INVALID_MAPPING_SIZE = 5016,
+	DS_FILE_INVALID_MAPPING_RANGE = 5017,
+	DS_FILE_INVALID_FILE_TYPE = 5018,
+	DS_FILE_INVALID_FILE_OPEN_FLAG = 5019,
+	DS_FILE_DIO_NOT_SET = 5020,
+	DS_FILE_INVALID_VALUE = 5022,
+	DS_FILE_MEMORY_ALREADY_REGISTERED = 5023,
+	DS_FILE_MEMORY_NOT_REGISTERED = 5024,
+	DS_FILE_PERMISSION_DENIED = 5025,
+	DS_FILE_DRIVER_ALREADY_OPEN = 5026,
+	DS_FILE_HANDLE_NOT_REGISTERED = 5027,
+	DS_FILE_HANDLE_ALREADY_REGISTERED = 5028,
+	DS_FILE_DEVICE_NOT_FOUND = 5029,
+	DS_FILE_INTERNAL_ERROR = 5030,
+	DS_FILE_GETNEWFD_FAILED = 5031,
+	DS_FILE_FS_SETUP_ERROR = 5033,
+	DS_FILE_IO_DISABLED = 5034,
+	DS_FILE_BATCH_SUBMIT_FAILED = 5035,
+	DS_FILE_MEMORY_PINNING_FAILED = 5036,
+	DS_FILE_BATCH_FULL = 5037,
+	DS_FILE_ASYNC_NOT_SUPPORTED = 5038,
+	DS_FILE_IO_MAX_ERROR = 5039,
 } ds_file_op_error_t;
 
 typedef struct ds_file_error {
@@ -88,45 +88,62 @@ static inline const char *
 ds_file_op_status_error(ds_file_op_error_t status)
 {
 	switch (status) {
-	case DS_FILE_SUCCESS:                    return "ds_file success";
-	case DS_FILE_DRIVER_NOT_INITIALIZED:     return "driver is not loaded";
-	case DS_FILE_DRIVER_INVALID_PROPS:       return "invalid property";
-	case DS_FILE_DRIVER_UNSUPPORTED_LIMIT:   return "property range error";
-	case DS_FILE_DRIVER_VERSION_MISMATCH:    return "driver version mismatch";
-	case DS_FILE_DRIVER_VERSION_READ_ERROR:  return "driver version read error";
-	case DS_FILE_DRIVER_CLOSING:             return "driver shutdown in progress";
-	case DS_FILE_PLATFORM_NOT_SUPPORTED:     return "direct storage not supported on current platform";
-	case DS_FILE_IO_NOT_SUPPORTED:           return "direct storage not supported on current file";
-	case DS_FILE_DEVICE_NOT_SUPPORTED:       return "direct storage not supported on current device";
-	case DS_FILE_FS_DRIVER_ERROR:            return "filesystem driver ioctl error";
-	case DS_FILE_DEVICE_DRIVER_ERROR:        return "device driver API error";
-	case DS_FILE_POINTER_INVALID:            return "invalid device pointer";
-	case DS_FILE_MEMORY_TYPE_INVALID:        return "invalid pointer memory type";
-	case DS_FILE_POINTER_RANGE_ERROR:        return "pointer range exceeds allocated address range";
-	case DS_FILE_CONTEXT_MISMATCH:           return "device context mismatch";
-	case DS_FILE_INVALID_MAPPING_SIZE:       return "access beyond maximum pinned size";
-	case DS_FILE_INVALID_MAPPING_RANGE:      return "access beyond mapped size";
-	case DS_FILE_INVALID_FILE_TYPE:          return "unsupported file type";
-	case DS_FILE_INVALID_FILE_OPEN_FLAG:     return "unsupported file open flags";
-	case DS_FILE_DIO_NOT_SET:                return "fd direct IO not set";
-	case DS_FILE_INVALID_VALUE:              return "invalid arguments";
-	case DS_FILE_MEMORY_ALREADY_REGISTERED:  return "device pointer already registered";
-	case DS_FILE_MEMORY_NOT_REGISTERED:      return "device pointer lookup failure";
-	case DS_FILE_PERMISSION_DENIED:          return "driver or file access error";
-	case DS_FILE_DRIVER_ALREADY_OPEN:        return "driver is already open";
-	case DS_FILE_HANDLE_NOT_REGISTERED:      return "file descriptor is not registered";
-	case DS_FILE_HANDLE_ALREADY_REGISTERED:  return "file descriptor is already registered";
-	case DS_FILE_DEVICE_NOT_FOUND:           return "device not found";
-	case DS_FILE_INTERNAL_ERROR:             return "internal error";
-	case DS_FILE_GETNEWFD_FAILED:            return "failed to obtain new file descriptor";
-	case DS_FILE_FS_SETUP_ERROR:             return "filesystem driver initialization error";
-	case DS_FILE_IO_DISABLED:                return "direct storage disabled by config on current file";
-	case DS_FILE_BATCH_SUBMIT_FAILED:        return "failed to submit batch operation";
-	case DS_FILE_MEMORY_PINNING_FAILED:      return "failed to allocate pinned device memory";
-	case DS_FILE_BATCH_FULL:                 return "queue full for batch operation";
-	case DS_FILE_ASYNC_NOT_SUPPORTED:        return "stream operation not supported";
-	case DS_FILE_IO_MAX_ERROR:               return "max error";
-	default:                                  return "unknown ds_file error";
+	case DS_FILE_SUCCESS: return "ds_file success";
+	case DS_FILE_DRIVER_NOT_INITIALIZED: return "driver is not loaded";
+	case DS_FILE_DRIVER_INVALID_PROPS: return "invalid property";
+	case DS_FILE_DRIVER_UNSUPPORTED_LIMIT: return "property range error";
+	case DS_FILE_DRIVER_VERSION_MISMATCH: return "driver version mismatch";
+	case DS_FILE_DRIVER_VERSION_READ_ERROR:
+		return "driver version read error";
+	case DS_FILE_DRIVER_CLOSING: return "driver shutdown in progress";
+	case DS_FILE_PLATFORM_NOT_SUPPORTED:
+		return "direct storage not supported on current platform";
+	case DS_FILE_IO_NOT_SUPPORTED:
+		return "direct storage not supported on current file";
+	case DS_FILE_DEVICE_NOT_SUPPORTED:
+		return "direct storage not supported on current device";
+	case DS_FILE_FS_DRIVER_ERROR: return "filesystem driver ioctl error";
+	case DS_FILE_DEVICE_DRIVER_ERROR: return "device driver API error";
+	case DS_FILE_POINTER_INVALID: return "invalid device pointer";
+	case DS_FILE_MEMORY_TYPE_INVALID: return "invalid pointer memory type";
+	case DS_FILE_POINTER_RANGE_ERROR:
+		return "pointer range exceeds allocated address range";
+	case DS_FILE_CONTEXT_MISMATCH: return "device context mismatch";
+	case DS_FILE_INVALID_MAPPING_SIZE:
+		return "access beyond maximum pinned size";
+	case DS_FILE_INVALID_MAPPING_RANGE: return "access beyond mapped size";
+	case DS_FILE_INVALID_FILE_TYPE: return "unsupported file type";
+	case DS_FILE_INVALID_FILE_OPEN_FLAG:
+		return "unsupported file open flags";
+	case DS_FILE_DIO_NOT_SET: return "fd direct IO not set";
+	case DS_FILE_INVALID_VALUE: return "invalid arguments";
+	case DS_FILE_MEMORY_ALREADY_REGISTERED:
+		return "device pointer already registered";
+	case DS_FILE_MEMORY_NOT_REGISTERED:
+		return "device pointer lookup failure";
+	case DS_FILE_PERMISSION_DENIED: return "driver or file access error";
+	case DS_FILE_DRIVER_ALREADY_OPEN: return "driver is already open";
+	case DS_FILE_HANDLE_NOT_REGISTERED:
+		return "file descriptor is not registered";
+	case DS_FILE_HANDLE_ALREADY_REGISTERED:
+		return "file descriptor is already registered";
+	case DS_FILE_DEVICE_NOT_FOUND: return "device not found";
+	case DS_FILE_INTERNAL_ERROR: return "internal error";
+	case DS_FILE_GETNEWFD_FAILED:
+		return "failed to obtain new file descriptor";
+	case DS_FILE_FS_SETUP_ERROR:
+		return "filesystem driver initialization error";
+	case DS_FILE_IO_DISABLED:
+		return "direct storage disabled by config on current file";
+	case DS_FILE_BATCH_SUBMIT_FAILED:
+		return "failed to submit batch operation";
+	case DS_FILE_MEMORY_PINNING_FAILED:
+		return "failed to allocate pinned device memory";
+	case DS_FILE_BATCH_FULL: return "queue full for batch operation";
+	case DS_FILE_ASYNC_NOT_SUPPORTED:
+		return "stream operation not supported";
+	case DS_FILE_IO_MAX_ERROR: return "max error";
+	default: return "unknown ds_file error";
 	}
 }
 
@@ -150,7 +167,8 @@ ds_file_error_t ds_file_driver_close(void);
 long ds_file_use_count(void);
 ds_file_error_t ds_file_get_version(int *version);
 ds_file_error_t ds_file_driver_get_properties(ds_file_drv_props_t *props);
-ds_file_error_t ds_file_driver_set_max_direct_io_size(size_t max_direct_io_size);
+ds_file_error_t
+ds_file_driver_set_max_direct_io_size(size_t max_direct_io_size);
 
 /*
  * File handle registration. Each file descriptor must be registered
@@ -174,10 +192,10 @@ void ds_file_free(void *buf);
  * into the buffer at an offset, useful for scatter reads into a
  * single allocation.
  */
-ssize_t ds_file_read(ds_file_handle_t fh, void *buf_base,
-                      size_t size, off_t file_offset, off_t buf_offset);
-ssize_t ds_file_write(ds_file_handle_t fh, const void *buf_base,
-                       size_t size, off_t file_offset, off_t buf_offset);
+ssize_t ds_file_read(ds_file_handle_t fh, void *buf_base, size_t size,
+                     off_t file_offset, off_t buf_offset);
+ssize_t ds_file_write(ds_file_handle_t fh, const void *buf_base, size_t size,
+                      off_t file_offset, off_t buf_offset);
 
 #ifdef __cplusplus
 }

@@ -21,14 +21,14 @@ extern "C" {
 typedef void *ds_stream_t;
 
 ds_file_error_t ds_file_read_async(ds_file_handle_t fh, void *buf_base,
-                                     size_t *size_p, off_t *file_offset_p,
-                                     off_t *buf_offset_p, ssize_t *bytes_read_p,
-                                     ds_stream_t stream);
+                                   size_t *size_p, off_t *file_offset_p,
+                                   off_t *buf_offset_p, ssize_t *bytes_read_p,
+                                   ds_stream_t stream);
 ds_file_error_t ds_file_write_async(ds_file_handle_t fh, void *buf_base,
-                                      size_t *size_p, off_t *file_offset_p,
-                                      off_t *buf_offset_p,
-                                      ssize_t *bytes_written_p,
-                                      ds_stream_t stream);
+                                    size_t *size_p, off_t *file_offset_p,
+                                    off_t *buf_offset_p,
+                                    ssize_t *bytes_written_p,
+                                    ds_stream_t stream);
 ds_file_error_t ds_file_stream_register(ds_stream_t stream, unsigned flags);
 ds_file_error_t ds_file_stream_deregister(ds_stream_t stream);
 
