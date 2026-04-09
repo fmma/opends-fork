@@ -1,0 +1,13 @@
+[opengds]
+build_dir = "/tmp/opengds-build"
+
+[opengds.repository]
+remote = "https://github.com/fmma/OpenGDS"
+branch = "main"
+path = "/root/OpenGDS"
+
+[test]
+test_file = "/mnt/datasets/opengds_test.bin"
+nvme_bdf = "CHANGE_ME"      # PCI BDF of NVMe device (lspci -D -d ::0108)
+nvme_ns = "CHANGE_ME"       # NVMe namespace device (e.g. /dev/nvme0n1)
+mount_point = "/mnt/datasets"

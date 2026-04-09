@@ -1,0 +1,21 @@
+doc: |
+  Setup OpenGDS
+  =============
+
+  Clones or updates the OpenGDS repository on the target, then builds
+  all available backends with meson.
+
+  Run::
+
+      cijoe \
+        -c configs/transport.toml \
+        -c configs/test.toml \
+        tasks/setup_opengds.yaml
+
+steps:
+  - name: fetch_sources
+    uses: core.repository_prep
+
+  - name: build
+    run: |
+      {{ config.opengds.repository.path }}/tasks/steps/build_opengds.sh {{ config.opengds.repository.path }} {{ config.opengds.build_dir }}
