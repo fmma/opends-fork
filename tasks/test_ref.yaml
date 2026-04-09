@@ -1,0 +1,33 @@
+doc: |
+  OpenGDS Test Suite (Reference backend)
+  ======================================
+
+  Runs the reference backend smoke test and read test against a real
+  file on NVMe. No GPU required.
+
+  Assumes setup_device.yaml and setup_opengds.yaml have been run.
+
+  Run::
+
+      cijoe \
+        -c configs/transport.toml \
+        -c configs/test.toml \
+        tasks/test_ref.yaml
+
+steps:
+  - name: bind_nvme
+    run: |
+      {{ config.opengds.repository.path }}/tasks/steps/bind_nvme.sh {{ config.test.nvme_bdf }} {{ config.test.nvme_ns }}
+
+  - name: mount
+    run: |
+      {{ config.opengds.repository.path }}/tasks/steps/mount_nvme.sh {{ config.test.nvme_ns }} {{ config.test.mount_point }}
+
+  - name: test_smoke_ref
+    run: |
+      {{ config.opengds.build_dir }}/test_smoke_ref
+
+  - name: test_read_ref
+    run: |
+      echo 3 > /proc/sys/vm/drop_caches
+      {{ config.opengds.build_dir }}/test_read_ref {{ config.test.test_file }}

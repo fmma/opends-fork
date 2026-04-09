@@ -1,0 +1,31 @@
+doc: |
+  OpenGDS Test Suite (GPU Direct Storage via cuFile)
+  ==================================================
+
+  Tests GDS reads from NVMe directly into GPU memory using the cuFile
+  backend. Requires an NVIDIA GPU with GDS support. The kernel NVMe
+  driver remains bound because cuFile operates through the mounted
+  filesystem.
+
+  Assumes setup_device.yaml and setup_opengds.yaml have been run.
+
+  Run::
+
+      cijoe \
+        -c configs/transport.toml \
+        -c configs/test.toml \
+        tasks/test_gds.yaml
+
+steps:
+  - name: bind_nvme
+    run: |
+      {{ config.opengds.repository.path }}/tasks/steps/bind_nvme.sh {{ config.test.nvme_bdf }} {{ config.test.nvme_ns }}
+
+  - name: mount
+    run: |
+      {{ config.opengds.repository.path }}/tasks/steps/mount_nvme.sh {{ config.test.nvme_ns }} {{ config.test.mount_point }}
+
+  - name: test_read_gds
+    run: |
+      echo 3 > /proc/sys/vm/drop_caches
+      {{ config.opengds.build_dir }}/test_read_gds {{ config.test.test_file }}

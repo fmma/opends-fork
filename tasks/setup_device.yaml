@@ -1,0 +1,30 @@
+doc: |
+  Setup NVMe device
+  =================
+
+  Binds the NVMe controller to the kernel driver, creates an XFS
+  filesystem, and mounts it.
+
+  Run::
+
+      cijoe \
+        -c configs/transport.toml \
+        -c configs/test.toml \
+        tasks/setup_device.yaml
+
+steps:
+  - name: bind_nvme
+    run: |
+      {{ config.opengds.repository.path }}/tasks/steps/bind_nvme.sh {{ config.test.nvme_bdf }} {{ config.test.nvme_ns }}
+
+  - name: mkfs
+    run: |
+      {{ config.opengds.repository.path }}/tasks/steps/mkfs_nvme.sh {{ config.test.nvme_ns }} {{ config.test.nvme_bdf }}
+
+  - name: mount
+    run: |
+      {{ config.opengds.repository.path }}/tasks/steps/mount_nvme.sh {{ config.test.nvme_ns }} {{ config.test.mount_point }}
+
+  - name: generate_test_file
+    run: |
+      {{ config.opengds.repository.path }}/tasks/steps/generate_test_file.sh {{ config.test.test_file }}
