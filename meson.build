@@ -17,6 +17,12 @@ opengds_ref_dep = declare_dependency(
   link_with : libopengds_ref,
 )
 
+pkg = import('pkgconfig')
+pkg.generate(libopengds_ref,
+  name : 'opengds',
+  description : 'OpenGDS reference backend',
+)
+
 # GDS backend (NVIDIA cuFile + CUDA)
 cc = meson.get_compiler('c')
 cuda_dep = dependency('cuda', modules : ['cuda', 'cudart'], required : false)
