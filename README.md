@@ -112,6 +112,16 @@ Backends
   GDS backend      : true
 ```
 
+## Installing
+
+Install headers, libraries, and a pkg-config file so other projects can
+find OpenGDS via `pkg-config --cflags --libs opengds` or meson's
+`dependency('opengds')`:
+
+```sh
+meson install -C build
+```
+
 ## Testing
 
 Run the reference backend smoke test locally:
