@@ -7,7 +7,7 @@ doc: |
   driver remains bound because cuFile operates through the mounted
   filesystem.
 
-  Assumes setup_device.yaml and setup_opengds.yaml have been run.
+  Assumes aisio's setup_dataset.yaml and setup_opengds.yaml have been run.
 
   Run::
 
