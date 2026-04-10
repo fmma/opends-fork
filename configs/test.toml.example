@@ -7,7 +7,7 @@ branch = "main"
 path = "/root/OpenGDS"
 
 [test]
-test_file = "/mnt/datasets/opengds_test.bin"
+test_file = "/mnt/datasets/tiktokish/class001/class001_00000001.bin"  # Any file from aisio's setup_dataset.yaml
 nvme_bdf = "CHANGE_ME"      # PCI BDF of NVMe device (lspci -D -d ::0108)
 nvme_ns = "CHANGE_ME"       # NVMe namespace device (e.g. /dev/nvme0n1)
 mount_point = "/mnt/datasets"
