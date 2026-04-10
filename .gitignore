@@ -1,5 +1,5 @@
 build/
-cijoe-output/
+cijoe-output*/
 cijoe-archive/
 configs/transport.toml
 configs/test.toml

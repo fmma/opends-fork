@@ -15,6 +15,10 @@ tasks = [
 ]
 
 for task in tasks:
-    rc = subprocess.run(["cijoe", "-m", "-s", *configs, task], cwd=root).returncode
+    name = Path(task).stem
+    rc = subprocess.run(
+        ["cijoe", "-m", "-s", "-o", f"cijoe-output-{name}", *configs, task],
+        cwd=root,
+    ).returncode
     if rc:
         sys.exit(rc)
