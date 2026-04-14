@@ -7,6 +7,7 @@ opends_inc = include_directories('include')
 
 # Reference backend (pread/pwrite on host buffers, no external dependencies)
 libopends_ref = shared_library('opends_ref',
+  'src/ds_file_common.c',
   'src/ds_file_ref.c',
   include_directories : opends_inc,
   install : true,
@@ -35,6 +36,7 @@ gds_enabled = cuda_dep.found() and cufile_dep.found()
 
 if gds_enabled
   libopends_gds = shared_library('opends_gds',
+    'src/ds_file_common.c',
     'src/ds_file_gds.c',
     include_directories : opends_inc,
     dependencies : [cuda_dep, cufile_dep],
