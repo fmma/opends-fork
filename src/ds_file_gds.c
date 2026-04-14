@@ -98,8 +98,7 @@ ds_file_driver_get_properties(ds_file_drv_props_t *props)
 ds_file_error_t
 ds_file_driver_set_max_direct_io_size(size_t max_direct_io_size)
 {
-	CUfileError_t err =
-	        cuFileDriverSetMaxDirectIOSize(max_direct_io_size);
+	CUfileError_t err = cuFileDriverSetMaxDirectIOSize(max_direct_io_size);
 	if (err.err != CU_FILE_SUCCESS)
 		return from_cufile_error(err);
 	return ds_file_ok();
@@ -199,8 +198,7 @@ ds_file_read(ds_file_handle_t fh, void *buf_base, size_t size,
              off_t file_offset, off_t buf_offset)
 {
 	struct gds_handle *h = fh;
-	return cuFileRead(h->cufh, buf_base, size, file_offset,
-	                  buf_offset);
+	return cuFileRead(h->cufh, buf_base, size, file_offset, buf_offset);
 }
 
 ssize_t
@@ -208,8 +206,7 @@ ds_file_write(ds_file_handle_t fh, const void *buf_base, size_t size,
               off_t file_offset, off_t buf_offset)
 {
 	struct gds_handle *h = fh;
-	return cuFileWrite(h->cufh, buf_base, size, file_offset,
-	                   buf_offset);
+	return cuFileWrite(h->cufh, buf_base, size, file_offset, buf_offset);
 }
 
 /* ------------------------------------------------------------------ */
@@ -222,8 +219,8 @@ ds_file_batch_io_setup(ds_file_batch_handle_t *batch_idp, unsigned nr)
 	if (!batch_idp || nr == 0)
 		return ds_file_err(DS_FILE_INVALID_VALUE);
 
-	CUfileError_t err = cuFileBatchIOSetUp(
-	        (CUfileBatchHandle_t *)batch_idp, nr);
+	CUfileError_t err =
+	        cuFileBatchIOSetUp((CUfileBatchHandle_t *)batch_idp, nr);
 	if (err.err != CU_FILE_SUCCESS)
 		return from_cufile_error(err);
 	return ds_file_ok();
@@ -248,15 +245,14 @@ ds_file_batch_io_submit(ds_file_batch_handle_t batch_idp, unsigned nr,
 		cu_params[i].cookie = iocbp[i].cookie;
 		cu_params[i].u.batch.devPtr_base =
 		        iocbp[i].u.batch.dev_ptr_base;
-		cu_params[i].u.batch.file_offset =
-		        iocbp[i].u.batch.file_offset;
+		cu_params[i].u.batch.file_offset = iocbp[i].u.batch.file_offset;
 		cu_params[i].u.batch.devPtr_offset =
 		        iocbp[i].u.batch.dev_ptr_offset;
 		cu_params[i].u.batch.size = iocbp[i].u.batch.size;
 	}
 
-	CUfileError_t err = cuFileBatchIOSubmit(
-	        (CUfileBatchHandle_t)batch_idp, nr, cu_params, flags);
+	CUfileError_t err = cuFileBatchIOSubmit((CUfileBatchHandle_t)batch_idp,
+	                                        nr, cu_params, flags);
 	free(cu_params);
 
 	if (err.err != CU_FILE_SUCCESS)
@@ -278,8 +274,7 @@ ds_file_batch_io_get_status(ds_file_batch_handle_t batch_idp, unsigned min_nr,
 		return ds_file_err(DS_FILE_INTERNAL_ERROR);
 
 	CUfileError_t err = cuFileBatchIOGetStatus(
-	        (CUfileBatchHandle_t)batch_idp, min_nr, nr, cu_events,
-	        timeout);
+	        (CUfileBatchHandle_t)batch_idp, min_nr, nr, cu_events, timeout);
 
 	if (err.err != CU_FILE_SUCCESS) {
 		free(cu_events);
@@ -301,8 +296,7 @@ ds_file_batch_io_cancel(ds_file_batch_handle_t batch_idp)
 {
 	if (!batch_idp)
 		return ds_file_err(DS_FILE_INVALID_VALUE);
-	CUfileError_t err =
-	        cuFileBatchIOCancel((CUfileBatchHandle_t)batch_idp);
+	CUfileError_t err = cuFileBatchIOCancel((CUfileBatchHandle_t)batch_idp);
 	if (err.err != CU_FILE_SUCCESS)
 		return from_cufile_error(err);
 	return ds_file_ok();
@@ -340,9 +334,9 @@ ds_file_write_async(ds_file_handle_t fh, void *buf_base, size_t *size_p,
                     ssize_t *bytes_written_p, ds_stream_t stream)
 {
 	struct gds_handle *h = fh;
-	CUfileError_t err = cuFileWriteAsync(
-	        h->cufh, buf_base, size_p, file_offset_p, buf_offset_p,
-	        bytes_written_p, (CUstream)stream);
+	CUfileError_t err = cuFileWriteAsync(h->cufh, buf_base, size_p,
+	                                     file_offset_p, buf_offset_p,
+	                                     bytes_written_p, (CUstream)stream);
 	if (err.err != CU_FILE_SUCCESS)
 		return from_cufile_error(err);
 	return ds_file_ok();
@@ -351,8 +345,7 @@ ds_file_write_async(ds_file_handle_t fh, void *buf_base, size_t *size_p,
 ds_file_error_t
 ds_file_stream_register(ds_stream_t stream, unsigned flags)
 {
-	CUfileError_t err =
-	        cuFileStreamRegister((CUstream)stream, flags);
+	CUfileError_t err = cuFileStreamRegister((CUstream)stream, flags);
 	if (err.err != CU_FILE_SUCCESS)
 		return from_cufile_error(err);
 	return ds_file_ok();
@@ -361,8 +354,7 @@ ds_file_stream_register(ds_stream_t stream, unsigned flags)
 ds_file_error_t
 ds_file_stream_deregister(ds_stream_t stream)
 {
-	CUfileError_t err =
-	        cuFileStreamDeregister((CUstream)stream);
+	CUfileError_t err = cuFileStreamDeregister((CUstream)stream);
 	if (err.err != CU_FILE_SUCCESS)
 		return from_cufile_error(err);
 	return ds_file_ok();
