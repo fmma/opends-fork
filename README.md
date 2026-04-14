@@ -1,14 +1,14 @@
-# OpenGDS
+# OpenDS
 
 Open source accelerator direct storage. Provides a vendor-neutral
 ds_file API for reading files directly into accelerator memory.
 
 ## Backends
 
-- **Reference** (`libopengds_ref`): POSIX `pread`/`pwrite` on host
+- **Reference** (`libopends_ref`): POSIX `pread`/`pwrite` on host
   buffers. No external dependencies. Serves as a correctness baseline
   and template for hardware-specific backends.
-- **GDS** (`libopengds_gds`): Wraps NVIDIA cuFile for GPUDirect
+- **GDS** (`libopends_gds`): Wraps NVIDIA cuFile for GPUDirect
   Storage. Buffers are GPU memory allocated with `cudaMalloc` and
   registered via `cuFileBufRegister`. Requires CUDA toolkit and the
   cuFile (GDS) library. Built conditionally when both are found.
@@ -22,7 +22,7 @@ opened with `O_DIRECT`. Unaligned reads via bounce buffers are planned
 but not yet implemented.
 
 ```c
-#include <opengds.h>
+#include <opends.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -115,8 +115,8 @@ Backends
 ## Installing
 
 Install headers, libraries, and a pkg-config file so other projects can
-find OpenGDS via `pkg-config --cflags --libs opengds` or meson's
-`dependency('opengds')`:
+find OpenDS via `pkg-config --cflags --libs opends` or meson's
+`dependency('opends')`:
 
 ```sh
 meson install -C build

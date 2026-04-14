@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 
-#include "opengds.h"
+#include "opends.h"
 
 #include <fcntl.h>
 #include <stdio.h>

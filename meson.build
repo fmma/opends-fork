@@ -1,26 +1,26 @@
-project('OpenGDS', 'c',
+project('OpenDS', 'c',
   version : '0.1.0',
   default_options : ['c_std=c11'],
 )
 
-opengds_inc = include_directories('include')
+opends_inc = include_directories('include')
 
 # Reference backend (pread/pwrite on host buffers, no external dependencies)
-libopengds_ref = shared_library('opengds_ref',
+libopends_ref = shared_library('opends_ref',
   'src/ds_file_ref.c',
-  include_directories : opengds_inc,
+  include_directories : opends_inc,
   install : true,
 )
 
-opengds_ref_dep = declare_dependency(
-  include_directories : opengds_inc,
-  link_with : libopengds_ref,
+opends_ref_dep = declare_dependency(
+  include_directories : opends_inc,
+  link_with : libopends_ref,
 )
 
 pkg = import('pkgconfig')
-pkg.generate(libopengds_ref,
-  name : 'opengds',
-  description : 'OpenGDS reference backend',
+pkg.generate(libopends_ref,
+  name : 'opends',
+  description : 'OpenDS reference backend',
 )
 
 # GDS backend (NVIDIA cuFile + CUDA)
@@ -34,16 +34,16 @@ cufile_dep = cc.find_library('cufile',
 gds_enabled = cuda_dep.found() and cufile_dep.found()
 
 if gds_enabled
-  libopengds_gds = shared_library('opengds_gds',
+  libopends_gds = shared_library('opends_gds',
     'src/ds_file_gds.c',
-    include_directories : opengds_inc,
+    include_directories : opends_inc,
     dependencies : [cuda_dep, cufile_dep],
     install : true,
   )
 
-  opengds_gds_dep = declare_dependency(
-    include_directories : opengds_inc,
-    link_with : libopengds_gds,
+  opends_gds_dep = declare_dependency(
+    include_directories : opends_inc,
+    link_with : libopends_gds,
   )
 endif
 
@@ -58,18 +58,18 @@ read_cases_h = custom_target('read_cases_h',
 # Test binaries
 executable('test_smoke_ref',
   'tests/test_smoke_ref.c',
-  dependencies : [opengds_ref_dep],
+  dependencies : [opends_ref_dep],
 )
 
 executable('test_read_ref',
   ['tests/test_read_ref.c', read_cases_h],
-  dependencies : [opengds_ref_dep],
+  dependencies : [opends_ref_dep],
 )
 
 if gds_enabled
   executable('test_read_gds',
     ['tests/test_read_gds.c', read_cases_h],
-    dependencies : [opengds_gds_dep, cuda_dep],
+    dependencies : [opends_gds_dep, cuda_dep],
   )
 endif
 

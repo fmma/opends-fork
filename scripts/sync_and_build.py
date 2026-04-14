@@ -15,7 +15,7 @@ with open(root / "configs" / "test.toml", "rb") as f:
     test = tomllib.load(f)
 
 ssh = transport["cijoe"]["transport"]["ssh"]
-dest = test["opengds"]["repository"]["path"]
+dest = test["opends"]["repository"]["path"]
 target = f"{ssh['username']}@{ssh['hostname']}"
 
 rc = subprocess.run(
@@ -31,6 +31,6 @@ if rc:
 
 configs = ["-c", "configs/transport.toml", "-c", "configs/test.toml"]
 sys.exit(subprocess.run(
-    ["cijoe", "-m", "-s", *configs, "tasks/setup_opengds.yaml", "build"],
+    ["cijoe", "-m", "-s", *configs, "tasks/setup_opends.yaml", "build"],
     cwd=root,
 ).returncode)

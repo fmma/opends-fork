@@ -1,10 +1,10 @@
-[opengds]
-build_dir = "/tmp/opengds-build"
+[opends]
+build_dir = "/tmp/opends-build"
 
-[opengds.repository]
-remote = "https://github.com/fmma/OpenGDS"
+[opends.repository]
+remote = "https://github.com/fmma/OpenDS"
 branch = "main"
-path = "/root/OpenGDS"
+path = "/root/OpenDS"
 
 [test]
 test_file = "/mnt/datasets/tiktokish/class001/class001_00000001.bin"  # Any file from aisio's setup_dataset.yaml
