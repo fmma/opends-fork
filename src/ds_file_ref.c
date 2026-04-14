@@ -57,11 +57,14 @@ ds_file_driver_set_max_direct_io_size(size_t max_direct_io_size)
 }
 
 ds_file_error_t
-ds_file_get_version(int *version)
+ds_file_get_version(unsigned *major, unsigned *minor, unsigned *patch)
 {
-	if (!version)
-		return ds_file_err(DS_FILE_INVALID_VALUE);
-	*version = 1000;
+	if (major)
+		*major = 0;
+	if (minor)
+		*minor = 1;
+	if (patch)
+		*patch = 0;
 	return ds_file_ok();
 }
 

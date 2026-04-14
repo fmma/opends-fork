@@ -93,11 +93,12 @@ test_buf_offset(ds_file_handle_t fh, char *wbuf)
 static int
 test_driver_properties(void)
 {
-	int version;
-	if (check(ds_file_get_version(&version), "get_version"))
+	unsigned major, minor, patch;
+	if (check(ds_file_get_version(&major, &minor, &patch), "get_version"))
 		return 1;
-	if (version != 1000) {
-		fprintf(stderr, "version: %d, expected 1000\n", version);
+	if (major != 0 || minor != 1 || patch != 0) {
+		fprintf(stderr, "version: %u.%u.%u, expected 0.1.0\n",
+				major, minor, patch);
 		return 1;
 	}
 
