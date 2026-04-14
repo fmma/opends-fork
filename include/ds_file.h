@@ -165,7 +165,8 @@ typedef void *ds_file_handle_t;
 ds_file_error_t ds_file_driver_open(void);
 ds_file_error_t ds_file_driver_close(void);
 long ds_file_use_count(void);
-ds_file_error_t ds_file_get_version(int *version);
+ds_file_error_t ds_file_get_version(unsigned *major, unsigned *minor,
+                                    unsigned *patch);
 ds_file_error_t ds_file_driver_get_properties(ds_file_drv_props_t *props);
 ds_file_error_t
 ds_file_driver_set_max_direct_io_size(size_t max_direct_io_size);
