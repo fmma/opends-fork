@@ -5,7 +5,7 @@
  * with NVIDIA's cuFile API. Applications written against cuFile can be
  * ported by renaming symbols.
  *
- * The reference backend (libopengds_ref) uses POSIX pread/pwrite on
+ * The reference backend (libopends_ref) uses POSIX pread/pwrite on
  * host buffers and has no external dependencies.
  *
  * Deviations from cuFile:

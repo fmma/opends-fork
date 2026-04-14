@@ -1,0 +1,33 @@
+doc: |
+  OpenDS Test Suite (Reference backend)
+  ======================================
+
+  Runs the reference backend smoke test and read test against a real
+  file on NVMe. No GPU required.
+
+  Assumes aisio's setup_dataset.yaml and setup_opends.yaml have been run.
+
+  Run::
+
+      cijoe \
+        -c configs/transport.toml \
+        -c configs/test.toml \
+        tasks/test_ref.yaml
+
+steps:
+  - name: bind_nvme
+    run: |
+      {{ config.opends.repository.path }}/tasks/steps/bind_nvme.sh {{ config.test.nvme_bdf }} {{ config.test.nvme_ns }}
+
+  - name: mount
+    run: |
+      {{ config.opends.repository.path }}/tasks/steps/mount_nvme.sh {{ config.test.nvme_ns }} {{ config.test.mount_point }}
+
+  - name: test_smoke_ref
+    run: |
+      {{ config.opends.build_dir }}/test_smoke_ref
+
+  - name: test_read_ref
+    run: |
+      echo 3 > /proc/sys/vm/drop_caches
+      {{ config.opends.build_dir }}/test_read_ref {{ config.test.test_file }}
