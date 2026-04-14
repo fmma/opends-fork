@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 
-#include "opengds.h"
+#include "opends.h"
 #include "read_cases.h"
 
 #include <cuda.h>

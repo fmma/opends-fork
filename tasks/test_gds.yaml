@@ -1,5 +1,5 @@
 doc: |
-  OpenGDS Test Suite (GPU Direct Storage via cuFile)
+  OpenDS Test Suite (GPU Direct Storage via cuFile)
   ==================================================
 
   Tests GDS reads from NVMe directly into GPU memory using the cuFile
@@ -7,7 +7,7 @@ doc: |
   driver remains bound because cuFile operates through the mounted
   filesystem.
 
-  Assumes aisio's setup_dataset.yaml and setup_opengds.yaml have been run.
+  Assumes aisio's setup_dataset.yaml and setup_opends.yaml have been run.
 
   Run::
 
@@ -19,13 +19,13 @@ doc: |
 steps:
   - name: bind_nvme
     run: |
-      {{ config.opengds.repository.path }}/tasks/steps/bind_nvme.sh {{ config.test.nvme_bdf }} {{ config.test.nvme_ns }}
+      {{ config.opends.repository.path }}/tasks/steps/bind_nvme.sh {{ config.test.nvme_bdf }} {{ config.test.nvme_ns }}
 
   - name: mount
     run: |
-      {{ config.opengds.repository.path }}/tasks/steps/mount_nvme.sh {{ config.test.nvme_ns }} {{ config.test.mount_point }}
+      {{ config.opends.repository.path }}/tasks/steps/mount_nvme.sh {{ config.test.nvme_ns }} {{ config.test.mount_point }}
 
   - name: test_read_gds
     run: |
       echo 3 > /proc/sys/vm/drop_caches
-      {{ config.opengds.build_dir }}/test_read_gds {{ config.test.test_file }}
+      {{ config.opends.build_dir }}/test_read_gds {{ config.test.test_file }}
