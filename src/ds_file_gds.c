@@ -106,18 +106,19 @@ ds_file_driver_set_max_direct_io_size(size_t max_direct_io_size)
 }
 
 ds_file_error_t
-ds_file_get_version(int *version)
+ds_file_get_version(unsigned *major, unsigned *minor, unsigned *patch)
 {
-	if (!version)
-		return ds_file_err(DS_FILE_INVALID_VALUE);
-
 	CUfileDrvProps_t cu_props;
 	CUfileError_t err = cuFileDriverGetProperties(&cu_props);
 	if (err.err != CU_FILE_SUCCESS)
 		return from_cufile_error(err);
 
-	*version = cu_props.nvfs.major_version * 1000 +
-	           cu_props.nvfs.minor_version;
+	if (major)
+		*major = cu_props.nvfs.major_version;
+	if (minor)
+		*minor = cu_props.nvfs.minor_version;
+	if (patch)
+		*patch = 0;
 	return ds_file_ok();
 }
 
