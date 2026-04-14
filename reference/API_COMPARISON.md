@@ -196,24 +196,8 @@ cuFile uses a JSON configuration file (`cufile.json`) instead of a programmatic 
 
 hipFile adds `hipFileScatefsSupported = 12` to the driver status flags. cuFile stops at value 11.
 
-## Summary of OpenDS deviations from cuFile
+## OpenDS design deviations from cuFile
 
-1. **No descriptor struct.** `ds_file_handle_register()` takes `int fd` directly. No `CUfileDescr_t`, no handle type enum, no Win32, no userspace FS vtable.
+1. **Plain file descriptor instead of descriptor struct.** `ds_file_handle_register()` takes `int fd` directly. The `CUfileDescr_t` type/union and `USERSPACE_FS` handle type are not supported. Linux only.
 
-2. **Backend-owned allocation replaces buffer registration.** `ds_file_alloc()` / `ds_file_free()` replace `cuFileBufRegister()` / `cuFileBufDeregister()`. The backend must own allocations to set up DMA mappings.
-
-3. **Flat driver properties struct.** No `nvfs` sub-struct. Omits poll threshold, status/control/feature flags, cache sizes, and pinned memory size.
-
-4. **Omitted driver controls.** No `SetPollMode`, `SetMaxCacheSize`, or `SetMaxPinnedMemSize`.
-
-5. **No RDMA types.** No `cufileRDMAInfo_t`, `CUfileFSOps_t`, `sockaddr_t`, or RDMA registration flags.
-
-6. **Partial error macros.** `IS_DS_FILE_ERR` and `DS_FILE_ERRSTR` are provided. Backend-specific error macros (`IS_CUDA_ERR`, `CU_FILE_CUDA_ERR`) are not applicable.
-
-7. **No stream flag constants.** `CU_FILE_STREAM_FIXED_*` and `CU_FILE_STREAM_PAGE_ALIGNED_INPUTS` are not defined.
-
-8. **Vendor-neutral naming.** Error codes strip CUDA/NVFS/GPU prefixes. "CUDA driver error" becomes "device driver error", "NVFS driver error" becomes "filesystem driver error".
-
-9. **Generic backend error type.** `ds_result_t` is `int` rather than `CUresult`, decoupling from any GPU vendor runtime.
-
-10. **Generic stream type.** `ds_stream_t` is `void *` rather than `CUstream`, allowing any backend to provide its own stream implementation.
+2. **Backend-owned allocation replaces buffer registration.** `ds_file_alloc()` / `ds_file_free()` replace `cuFileBufRegister()` / `cuFileBufDeregister()`. The backend must own allocations to set up DMA mappings (e.g. through xNVMe).

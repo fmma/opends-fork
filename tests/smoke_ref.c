@@ -15,7 +15,7 @@ check(ds_file_error_t err, const char *label)
 {
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "%s: %s\n", label,
-				ds_file_op_status_error(err.err));
+		        ds_file_op_status_error(err.err));
 		return 1;
 	}
 	return 0;
@@ -61,8 +61,8 @@ test_buf_offset(ds_file_handle_t fh, char *wbuf)
 
 	ssize_t w = ds_file_write(fh, wbuf, BUF_SIZE, 4096, 0);
 	if (w != BUF_SIZE) {
-		fprintf(stderr, "buf_offset write: %zd, expected %d\n",
-				w, BUF_SIZE);
+		fprintf(stderr, "buf_offset write: %zd, expected %d\n", w,
+		        BUF_SIZE);
 		return 1;
 	}
 
@@ -76,8 +76,8 @@ test_buf_offset(ds_file_handle_t fh, char *wbuf)
 
 	ssize_t n = ds_file_read(fh, bigbuf, BUF_SIZE, 4096, 512);
 	if (n != BUF_SIZE) {
-		fprintf(stderr, "buf_offset read: %zd, expected %d\n",
-				n, BUF_SIZE);
+		fprintf(stderr, "buf_offset read: %zd, expected %d\n", n,
+		        BUF_SIZE);
 		ds_file_free(bigbuf);
 		return 1;
 	}
@@ -97,14 +97,14 @@ test_driver_properties(void)
 	if (check(ds_file_get_version(&major, &minor, &patch), "get_version"))
 		return 1;
 	if (major != 0 || minor != 1 || patch != 0) {
-		fprintf(stderr, "version: %u.%u.%u, expected 0.1.0\n",
-				major, minor, patch);
+		fprintf(stderr, "version: %u.%u.%u, expected 0.1.0\n", major,
+		        minor, patch);
 		return 1;
 	}
 
 	if (ds_file_use_count() != 1) {
 		fprintf(stderr, "use_count: %ld, expected 1\n",
-				ds_file_use_count());
+		        ds_file_use_count());
 		return 1;
 	}
 
@@ -121,24 +121,24 @@ test_batch_io(ds_file_handle_t fh, char *wbuf, char *rbuf)
 	fill_pattern(wbuf, BUF_SIZE, 0x42);
 
 	ds_file_io_params_t params[2] = {
-		{
-			.mode = DS_FILE_BATCH,
-			.u.batch = {wbuf, 8192, 0, BUF_SIZE},
-			.fh = fh,
-			.opcode = DS_FILE_WRITE,
-			.cookie = (void *)1,
-		},
-		{
-			.mode = DS_FILE_BATCH,
-			.u.batch = {rbuf, 8192, 0, BUF_SIZE},
-			.fh = fh,
-			.opcode = DS_FILE_READ,
-			.cookie = (void *)2,
-		},
+	        {
+	                .mode = DS_FILE_BATCH,
+	                .u.batch = {wbuf, 8192, 0, BUF_SIZE},
+	                .fh = fh,
+	                .opcode = DS_FILE_WRITE,
+	                .cookie = (void *)1,
+	        },
+	        {
+	                .mode = DS_FILE_BATCH,
+	                .u.batch = {rbuf, 8192, 0, BUF_SIZE},
+	                .fh = fh,
+	                .opcode = DS_FILE_READ,
+	                .cookie = (void *)2,
+	        },
 	};
 
 	if (check(ds_file_batch_io_submit(batch, 2, params, 0),
-			"batch_io_submit")) {
+	          "batch_io_submit")) {
 		ds_file_batch_io_destroy(batch);
 		return 1;
 	}
@@ -146,7 +146,8 @@ test_batch_io(ds_file_handle_t fh, char *wbuf, char *rbuf)
 	ds_file_io_events_t events[2];
 	unsigned nr_events = 2;
 	if (check(ds_file_batch_io_get_status(batch, 2, &nr_events, events,
-			NULL), "batch_io_get_status")) {
+	                                      NULL),
+	          "batch_io_get_status")) {
 		ds_file_batch_io_destroy(batch);
 		return 1;
 	}
@@ -161,7 +162,7 @@ test_batch_io(ds_file_handle_t fh, char *wbuf, char *rbuf)
 		if (events[i].status != DS_FILE_COMPLETE ||
 		    events[i].ret != BUF_SIZE) {
 			fprintf(stderr, "batch event %u: status=%d ret=%zu\n",
-					i, events[i].status, events[i].ret);
+			        i, events[i].status, events[i].ret);
 			ds_file_batch_io_destroy(batch);
 			return 1;
 		}
@@ -192,11 +193,12 @@ test_async_io(ds_file_handle_t fh, char *wbuf, char *rbuf)
 	ssize_t bytes = 0;
 
 	if (check(ds_file_write_async(fh, wbuf, &size, &file_off, &buf_off,
-			&bytes, stream), "write_async"))
+	                              &bytes, stream),
+	          "write_async"))
 		return 1;
 	if (bytes != BUF_SIZE) {
-		fprintf(stderr, "write_async bytes: %zd, expected %d\n",
-				bytes, BUF_SIZE);
+		fprintf(stderr, "write_async bytes: %zd, expected %d\n", bytes,
+		        BUF_SIZE);
 		return 1;
 	}
 
@@ -204,11 +206,12 @@ test_async_io(ds_file_handle_t fh, char *wbuf, char *rbuf)
 	bytes = 0;
 
 	if (check(ds_file_read_async(fh, rbuf, &size, &file_off, &buf_off,
-			&bytes, stream), "read_async"))
+	                             &bytes, stream),
+	          "read_async"))
 		return 1;
 	if (bytes != BUF_SIZE) {
-		fprintf(stderr, "read_async bytes: %zd, expected %d\n",
-				bytes, BUF_SIZE);
+		fprintf(stderr, "read_async bytes: %zd, expected %d\n", bytes,
+		        BUF_SIZE);
 		return 1;
 	}
 
@@ -265,7 +268,7 @@ main(void)
 
 	if (ds_file_use_count() != 0) {
 		fprintf(stderr, "use_count after deregister: %ld, expected 0\n",
-				ds_file_use_count());
+		        ds_file_use_count());
 		return 1;
 	}
 
