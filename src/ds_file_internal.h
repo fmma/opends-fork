@@ -5,7 +5,7 @@
 #ifndef DS_FILE_INTERNAL_H_
 #define DS_FILE_INTERNAL_H_
 
-#include "opengds.h"
+#include "opends.h"
 
 static inline ds_file_error_t
 ds_file_ok(void)

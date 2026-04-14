@@ -1,0 +1,21 @@
+doc: |
+  Setup OpenDS
+  =============
+
+  Clones or updates the OpenDS repository on the target, then builds
+  all available backends with meson.
+
+  Run::
+
+      cijoe \
+        -c configs/transport.toml \
+        -c configs/test.toml \
+        tasks/setup_opends.yaml
+
+steps:
+  - name: fetch_sources
+    uses: core.repository_prep
+
+  - name: build
+    run: |
+      {{ config.opends.repository.path }}/tasks/steps/build_opends.sh {{ config.opends.repository.path }} {{ config.opends.build_dir }}
