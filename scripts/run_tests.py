@@ -10,6 +10,6 @@ root = Path(__file__).resolve().parent.parent
 configs = ["-c", "configs/transport.toml", "-c", "configs/test.toml"]
 
 sys.exit(subprocess.run(
-    ["cijoe", "-m", "-s", "-o", "cijoe-output-test", *configs, "tasks/test.yaml"],
+    ["cijoe", "-m", "-o", "cijoe-output-test", *configs, "tasks/test.yaml"],
     cwd=root,
 ).returncode)
