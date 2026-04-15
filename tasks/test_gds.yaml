@@ -25,7 +25,7 @@ steps:
     run: |
       {{ config.opends.repository.path }}/tasks/steps/mount_nvme.sh {{ config.test.nvme_ns }} {{ config.test.mount_point }}
 
-  - name: test_read_gds
+  - name: test_read_cases_gds
     run: |
       echo 3 > /proc/sys/vm/drop_caches
-      {{ config.opends.build_dir }}/test_read_gds {{ config.test.test_file }}
+      {{ config.opends.build_dir }}/test_read_cases_gds {{ config.test.test_file }}

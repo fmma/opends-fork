@@ -63,14 +63,14 @@ executable('test_smoke_ref',
   dependencies : [opends_ref_dep],
 )
 
-executable('test_read_ref',
-  ['tests/test_read_ref.c', read_cases_h],
+executable('test_read_cases_ref',
+  ['tests/test_read_cases_ref.c', read_cases_h],
   dependencies : [opends_ref_dep],
 )
 
 if gds_enabled
-  executable('test_read_gds',
-    ['tests/test_read_gds.c', read_cases_h],
+  executable('test_read_cases_gds',
+    ['tests/test_read_cases_gds.c', read_cases_h],
     dependencies : [opends_gds_dep, cuda_dep],
   )
 endif
