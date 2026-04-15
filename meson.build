@@ -83,6 +83,9 @@ if gds_enabled
     ['tests/test_read_cases_gds.c', read_cases_h],
     dependencies : [opends_gds_dep, cuda_dep],
   )
+else
+  executable('test_read_gds', 'tests/skip.c')
+  executable('test_read_cases_gds', 'tests/skip.c')
 endif
 
 summary({

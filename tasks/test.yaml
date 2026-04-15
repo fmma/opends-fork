@@ -38,11 +38,9 @@ steps:
 
   - name: test_read_gds
     run: |
-      test -x {{ config.opends.build_dir }}/test_read_gds || exit 0
       {{ config.opends.build_dir }}/test_read_gds {{ config.test.mount_point }}
 
   - name: test_read_cases_gds
     run: |
-      test -x {{ config.opends.build_dir }}/test_read_cases_gds || exit 0
       echo 3 > /proc/sys/vm/drop_caches
       {{ config.opends.build_dir }}/test_read_cases_gds {{ config.test.test_file }}
