@@ -27,6 +27,10 @@ steps:
     run: |
       {{ config.opends.build_dir }}/test_smoke_ref
 
+  - name: test_read_ref
+    run: |
+      {{ config.opends.build_dir }}/test_read_ref
+
   - name: test_read_cases_ref
     run: |
       echo 3 > /proc/sys/vm/drop_caches
