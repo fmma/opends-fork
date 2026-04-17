@@ -4,6 +4,7 @@ project('OpenDS', 'c',
 )
 
 opends_inc = include_directories('include')
+opends_internal_inc = include_directories('src')
 
 # Reference backend (pread/pwrite on host buffers, no external dependencies)
 libopends_ref = shared_library('opends_ref',
@@ -49,6 +50,29 @@ if gds_enabled
   )
 endif
 
+# aisio backend (xNVMe upcie-cuda + mock HOMI extent cache).
+# The library itself only links libxnvme; CUDA context management is
+# the caller's responsibility (xnvme's upcie-cuda plug-in loads CUDA
+# at runtime). Tests pull in cuda_dep separately.
+xnvme_dep = dependency('xnvme', required : false)
+aisio_enabled = xnvme_dep.found()
+
+if aisio_enabled
+  libopends_aisio = shared_library('opends_aisio',
+    'src/ds_file_common.c',
+    'src/ds_file_aisio.c',
+    'src/homi_client_mock.c',
+    include_directories : [opends_inc, opends_internal_inc],
+    dependencies : [xnvme_dep],
+    install : true,
+  )
+
+  opends_aisio_dep = declare_dependency(
+    include_directories : opends_inc,
+    link_with : libopends_aisio,
+  )
+endif
+
 # Test binaries
 executable('test_smoke_ref',
   'tests/test_smoke_ref.c',
@@ -78,4 +102,5 @@ endif
 summary({
   'Reference backend' : true,
   'GDS backend' : gds_enabled,
+  'aisio backend' : aisio_enabled,
 }, section : 'Backends')
