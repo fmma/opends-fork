@@ -12,6 +12,13 @@ ds_file API for reading files directly into accelerator memory.
   Storage. Buffers are GPU memory allocated with `cudaMalloc` and
   registered via `cuFileBufRegister`. Requires CUDA toolkit and the
   cuFile (GDS) library. Built conditionally when both are found.
+- **aisio** (`libopends_aisio`): Reads directly from an NVMe device
+  into GPU memory via xNVMe's `upcie-cuda` backend (PCIe P2P DMA, no
+  filesystem or kernel nvme driver in the path). File-to-LBA mapping
+  comes from a HOMI mock client that loads an extent cache produced
+  by `cache_extents` while the filesystem is still mounted. Requires
+  xNVMe and the CUDA toolkit. Read-only; `ds_file_write` returns
+  `DS_FILE_IO_NOT_SUPPORTED`.
 
 ## ds_file API
 
@@ -110,6 +117,7 @@ Meson reports which backends are enabled at configure time:
 Backends
   Reference backend: true
   GDS backend      : true
+  aisio backend    : true
 ```
 
 ## Installing
