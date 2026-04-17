@@ -1,42 +1,11 @@
 #define _GNU_SOURCE
 
+#include "test_cuda_common.h"
 #include "test_sync_read.h"
 
 #include <cuda.h>
-#include <cuda_runtime.h>
 
 #include <fcntl.h>
-
-static void *
-gds_buf_to_host(void *dst, const void *src, size_t n)
-{
-	cudaMemcpy(dst, src, n, cudaMemcpyDeviceToHost);
-	return dst;
-}
-
-static void
-gds_buf_zero(void *buf, size_t n)
-{
-	cudaMemset(buf, 0, n);
-	cudaDeviceSynchronize();
-}
-
-static void
-gds_check_buffer(const void *buf)
-{
-	struct cudaPointerAttributes attrs;
-	cudaError_t rc = cudaPointerGetAttributes(&attrs, buf);
-	if (rc != cudaSuccess) {
-		fprintf(stderr, "cudaPointerGetAttributes: %s\n",
-		        cudaGetErrorString(rc));
-		abort();
-	}
-	if (attrs.type != cudaMemoryTypeDevice) {
-		fprintf(stderr, "ds_file_alloc returned non-device memory "
-		                "(type=%d)\n", (int)attrs.type);
-		abort();
-	}
-}
 
 int
 main(int argc, char **argv)
@@ -76,9 +45,9 @@ main(int argc, char **argv)
 
 	struct test_env env = {
 		.fh = fh,
-		.buf_to_host = gds_buf_to_host,
-		.buf_zero = gds_buf_zero,
-		.check_buffer = gds_check_buffer,
+		.buf_to_host = cuda_buf_to_host,
+		.buf_zero = cuda_buf_zero,
+		.check_buffer = cuda_check_buffer,
 	};
 
 	fprintf(stderr, "ds_file_read sync tests (gds backend)\n");
