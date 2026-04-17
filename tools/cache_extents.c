@@ -2,15 +2,14 @@
  * cache_extents - Build the HOMI mock extent cache for a file.
  *
  * Runs FS_IOC_FIEMAP to extract the file's physical extents, resolves
- * the backing NVMe namespace's PCI BDF and LBA size, and writes the
- * result to disk in the extent_cache_header format consumed by the
- * aisio backend's mock HOMI client.
+ * the backing NVMe namespace's PCI BDF, and writes the result to disk
+ * in the extent_cache format consumed by the aisio backend's mock
+ * HOMI client.
  */
 
 #define _GNU_SOURCE
 
 #include "extent_cache.h"
-#include "homi_client_mock.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -138,6 +137,14 @@ main(int argc, char **argv)
 		return 1;
 	}
 
+	struct stat file_st;
+	if (fstat(fd, &file_st) < 0) {
+		perror("fstat");
+		close(fd);
+		return 1;
+	}
+	uint64_t file_size = (uint64_t)file_st.st_size;
+
 	uint32_t lba_size = get_lba_size(fd);
 
 	char bdf[16] = {0};
@@ -183,8 +190,8 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	struct homi_extent *extents = calloc(count, sizeof(*extents));
-	if (!extents) {
+	struct extent_cache_record *records = calloc(count, sizeof(*records));
+	if (!records) {
 		perror("calloc");
 		free(fm);
 		close(fd);
@@ -193,9 +200,16 @@ main(int argc, char **argv)
 
 	for (uint32_t i = 0; i < count; i++) {
 		struct fiemap_extent *fe = &fm->fm_extents[i];
-		extents[i].file_offset = fe->fe_logical;
-		extents[i].slba = fe->fe_physical / lba_size;
-		extents[i].nlbas = (fe->fe_length + lba_size - 1) / lba_size;
+		records[i].file_offset = fe->fe_logical;
+		records[i].slba = fe->fe_physical / lba_size;
+		records[i].length = fe->fe_length;
+
+		/* Cap the last extent by the file's logical size: FIEMAP
+		 * returns on-disk extent length, which may include trailing
+		 * block padding past EOF. */
+		uint64_t end = records[i].file_offset + records[i].length;
+		if (end > file_size)
+			records[i].length = file_size - records[i].file_offset;
 	}
 
 	free(fm);
@@ -204,28 +218,27 @@ main(int argc, char **argv)
 	FILE *out = fopen(argv[2], "wb");
 	if (!out) {
 		perror("fopen output");
-		free(extents);
+		free(records);
 		return 1;
 	}
 
 	struct extent_cache_header hdr = {
-	        .lba_size = lba_size,
 	        .extent_count = count,
 	};
 	strncpy(hdr.bdf, bdf, sizeof(hdr.bdf) - 1);
 
 	if (fwrite(&hdr, sizeof(hdr), 1, out) != 1 ||
-	    fwrite(extents, sizeof(*extents), count, out) != count) {
+	    fwrite(records, sizeof(*records), count, out) != count) {
 		perror("fwrite");
 		fclose(out);
-		free(extents);
+		free(records);
 		return 1;
 	}
 	fclose(out);
 
-	fprintf(stderr, "wrote %u extents to %s (lba_size=%u bdf=%s)\n", count,
-	        argv[2], lba_size, bdf);
+	fprintf(stderr, "wrote %u extents to %s (bdf=%s)\n", count, argv[2],
+	        bdf);
 
-	free(extents);
+	free(records);
 	return 0;
 }
