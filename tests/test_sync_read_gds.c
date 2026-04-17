@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 
-#include "test_read.h"
+#include "test_sync_read.h"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -29,7 +29,7 @@ main(int argc, char **argv)
 		dir = argv[1];
 
 	char path[512];
-	snprintf(path, sizeof(path), "%s/test_read_sync_XXXXXX", dir);
+	snprintf(path, sizeof(path), "%s/test_sync_read_XXXXXX", dir);
 	int setup_fd = mkstemp(path);
 	if (setup_fd < 0) {
 		perror("mkstemp");
@@ -81,7 +81,7 @@ main(int argc, char **argv)
 	};
 
 	fprintf(stderr, "ds_file_read sync tests (gds backend)\n");
-	int failed = run_read_tests(&env);
+	int failed = run_sync_read_tests(&env);
 
 	ds_file_handle_deregister(fh);
 	close(fd);

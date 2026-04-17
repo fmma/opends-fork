@@ -1,5 +1,6 @@
 /*
- * test_read.h - Backend-agnostic unit tests for ds_file_read.
+ * test_sync_read.h - Backend-agnostic unit tests for synchronous
+ * ds_file_read.
  *
  * Include from a backend-specific source file that provides main()
  * and initializes a struct test_env with buffer access callbacks.
@@ -9,8 +10,8 @@
  * read results are computed in memory via expected_bytes(), so the
  * test binary never needs to pread the test file for verification.
  */
-#ifndef TEST_READ_H_
-#define TEST_READ_H_
+#ifndef TEST_SYNC_READ_H_
+#define TEST_SYNC_READ_H_
 
 #include "opends.h"
 
@@ -551,7 +552,7 @@ struct test_entry {
 };
 
 /* clang-format off */
-static const struct test_entry read_tests[] = {
+static const struct test_entry sync_read_tests[] = {
 	{"single_block",        test_read_single_block},
 	{"multi_block",         test_read_multi_block},
 	{"at_offset",           test_read_at_offset},
@@ -571,20 +572,20 @@ static const struct test_entry read_tests[] = {
 };
 /* clang-format on */
 
-#define NREAD_TESTS (sizeof(read_tests) / sizeof(read_tests[0]))
+#define NSYNC_READ_TESTS (sizeof(sync_read_tests) / sizeof(sync_read_tests[0]))
 
 static int
-run_read_tests(struct test_env *env)
+run_sync_read_tests(struct test_env *env)
 {
 	int failed = 0;
 
-	for (size_t i = 0; i < NREAD_TESTS; i++) {
-		int rc = read_tests[i].fn(env);
-		fprintf(stderr, "  %-24s %s\n", read_tests[i].name,
+	for (size_t i = 0; i < NSYNC_READ_TESTS; i++) {
+		int rc = sync_read_tests[i].fn(env);
+		fprintf(stderr, "  %-24s %s\n", sync_read_tests[i].name,
 		        rc ? "FAIL" : "ok");
 		failed += rc;
 	}
 	return failed;
 }
 
-#endif /* TEST_READ_H_ */
+#endif /* TEST_SYNC_READ_H_ */

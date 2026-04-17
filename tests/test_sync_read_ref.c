@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 
-#include "test_read.h"
+#include "test_sync_read.h"
 
 #include <fcntl.h>
 
@@ -19,7 +19,7 @@ ref_buf_zero(void *buf, size_t n)
 int
 main(void)
 {
-	char path[] = "/tmp/test_read_sync_XXXXXX";
+	char path[] = "/tmp/test_sync_read_XXXXXX";
 	int fd = mkstemp(path);
 	if (fd < 0) {
 		perror("mkstemp");
@@ -53,7 +53,7 @@ main(void)
 	};
 
 	fprintf(stderr, "ds_file_read sync tests (ref backend)\n");
-	int failed = run_read_tests(&env);
+	int failed = run_sync_read_tests(&env);
 
 	ds_file_handle_deregister(fh);
 	close(fd);
