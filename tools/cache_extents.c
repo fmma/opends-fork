@@ -173,6 +173,16 @@ main(int argc, char **argv)
 		return 1;
 	}
 
+	if (count > 0 &&
+	    !(fm->fm_extents[count - 1].fe_flags & FIEMAP_EXTENT_LAST)) {
+		fprintf(stderr,
+		        "extent list truncated at %u entries (MAX_EXTENTS=%d); "
+		        "raise MAX_EXTENTS and rebuild\n", count, MAX_EXTENTS);
+		free(fm);
+		close(fd);
+		return 1;
+	}
+
 	struct homi_extent *extents = calloc(count, sizeof(*extents));
 	if (!extents) {
 		perror("calloc");
@@ -204,8 +214,13 @@ main(int argc, char **argv)
 	};
 	strncpy(hdr.bdf, bdf, sizeof(hdr.bdf) - 1);
 
-	fwrite(&hdr, sizeof(hdr), 1, out);
-	fwrite(extents, sizeof(*extents), count, out);
+	if (fwrite(&hdr, sizeof(hdr), 1, out) != 1 ||
+	    fwrite(extents, sizeof(*extents), count, out) != count) {
+		perror("fwrite");
+		fclose(out);
+		free(extents);
+		return 1;
+	}
 	fclose(out);
 
 	fprintf(stderr, "wrote %u extents to %s (lba_size=%u bdf=%s)\n", count,
