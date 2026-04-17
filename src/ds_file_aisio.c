@@ -106,12 +106,21 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 	size_t total_transferred = 0;
 	struct xnvme_cmd_ctx cmd = xnvme_cmd_ctx_from_dev(d->xdev);
 	uint64_t max_chunk_lbas = d->mdts_nbytes / lba_nbytes;
+	if (max_chunk_lbas == 0) {
+		homi_extent_list_free(elist);
+		return -EINVAL;
+	}
 
 	for (uint32_t i = 0; i < elist->count; i++) {
 		struct homi_extent *e = &elist->extents[i];
 
 		uint64_t ext_start = e->file_offset;
 		uint64_t ext_end = ext_start + e->length;
+
+		/* Extents are sorted by file_offset; once we're past the
+		 * request no later extent can overlap. */
+		if (ext_start >= req_end)
+			break;
 
 		uint64_t span_start = max_u64(req_start, ext_start);
 		uint64_t span_end = XNVME_MIN_U64(req_end, ext_end);
@@ -310,11 +319,10 @@ ds_file_free(void *buf)
 		if (drv->bufs[i].base == buf) {
 			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
 			drv->buf_count--;
-			break;
+			xnvme_buf_free(drv->xdev, buf);
+			return;
 		}
 	}
-
-	xnvme_buf_free(drv->xdev, buf);
 }
 
 /* ------------------------------------------------------------------ */
