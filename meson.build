@@ -64,15 +64,28 @@ executable('test_smoke_ref',
 )
 
 executable('test_read_ref',
-  ['tests/test_read_ref.c', read_cases_h],
+  'tests/test_read_ref.c',
+  dependencies : [opends_ref_dep],
+)
+
+executable('test_read_cases_ref',
+  ['tests/test_read_cases_ref.c', read_cases_h],
   dependencies : [opends_ref_dep],
 )
 
 if gds_enabled
   executable('test_read_gds',
-    ['tests/test_read_gds.c', read_cases_h],
+    'tests/test_read_gds.c',
     dependencies : [opends_gds_dep, cuda_dep],
   )
+
+  executable('test_read_cases_gds',
+    ['tests/test_read_cases_gds.c', read_cases_h],
+    dependencies : [opends_gds_dep, cuda_dep],
+  )
+else
+  executable('test_read_gds', 'tests/skip.c')
+  executable('test_read_cases_gds', 'tests/skip.c')
 endif
 
 summary({
