@@ -53,6 +53,7 @@ struct aisio_driver {
 static struct aisio_driver *drv;
 static long use_count;
 
+/* xNVMe ships XNVME_MIN_U64 but no matching max; define a local one. */
 static uint64_t
 max_u64(uint64_t a, uint64_t b)
 {
@@ -93,6 +94,8 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		return -EIO;
 
 	uint64_t req_start = (uint64_t)file_offset;
+	if (size > UINT64_MAX - req_start)
+		return -EINVAL;
 	uint64_t req_end = req_start + size;
 
 	struct homi_extent_list *elist = NULL;
@@ -100,7 +103,7 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 	if (rc < 0)
 		return rc;
 
-	size_t highest_covered = 0;
+	size_t total_transferred = 0;
 	struct xnvme_cmd_ctx cmd = xnvme_cmd_ctx_from_dev(d->xdev);
 	uint64_t max_chunk_lbas = d->mdts_nbytes / lba_nbytes;
 
@@ -148,14 +151,12 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 			}
 
 			lbas_done += chunk_lbas;
-			size_t end_off = buf_off + lbas_done * lba_nbytes;
-			if (end_off > highest_covered)
-				highest_covered = end_off;
+			total_transferred += chunk_lbas * lba_nbytes;
 		}
 	}
 
 	homi_extent_list_free(elist);
-	return (ssize_t)highest_covered;
+	return (ssize_t)total_transferred;
 }
 
 /* ------------------------------------------------------------------ */
