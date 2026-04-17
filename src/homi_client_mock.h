@@ -11,8 +11,6 @@
 #ifndef HOMI_CLIENT_MOCK_H_
 #define HOMI_CLIENT_MOCK_H_
 
-#include "extent_cache.h"
-
 #include <stddef.h>
 #include <stdint.h>
 
