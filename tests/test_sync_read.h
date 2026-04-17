@@ -23,7 +23,6 @@
 
 struct test_env {
 	ds_file_handle_t fh;
-	size_t file_size;
 	void *(*buf_to_host)(void *dst, const void *src, size_t n);
 	void (*buf_zero)(void *buf, size_t n);
 };
@@ -463,9 +462,10 @@ test_read_repeated(struct test_env *env)
 }
 
 /*
- * Sweep a table of (offset, size) pairs covering misaligned starts,
+ * Sweep a table of (offset, size) pairs covering non-zero starts,
  * mid-file reads that span pages, and a short read that extends past
- * EOF. Each pair is verified against the in-memory pattern oracle.
+ * EOF. All offsets are page-aligned. Each pair is verified against
+ * the in-memory pattern oracle.
  */
 static int
 test_read_offset_size_sweep(struct test_env *env)
