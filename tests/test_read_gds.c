@@ -64,13 +64,6 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	int ref_fd = open(path, O_RDONLY);
-	if (ref_fd < 0) {
-		perror("open reference");
-		unlink(path);
-		return 1;
-	}
-
 	ds_file_handle_t fh;
 	err = ds_file_handle_register(&fh, fd);
 	if (err.err != DS_FILE_SUCCESS) {
@@ -82,7 +75,6 @@ main(int argc, char **argv)
 
 	struct test_env env = {
 		.fh = fh,
-		.ref_fd = ref_fd,
 		.file_size = FILE_SIZE,
 		.buf_to_host = gds_buf_to_host,
 		.buf_zero = gds_buf_zero,
@@ -92,7 +84,6 @@ main(int argc, char **argv)
 	int failed = run_read_tests(&env);
 
 	ds_file_handle_deregister(fh);
-	close(ref_fd);
 	close(fd);
 	ds_file_driver_close();
 	unlink(path);
