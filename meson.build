@@ -99,6 +99,15 @@ else
   executable('test_sync_read_gds', 'tests/skip.c')
 endif
 
+if aisio_enabled
+  executable('cache_extents',
+    'tools/cache_extents.c',
+    include_directories : opends_internal_inc,
+  )
+else
+  executable('cache_extents', 'tests/skip.c')
+endif
+
 summary({
   'Reference backend' : true,
   'GDS backend' : gds_enabled,
