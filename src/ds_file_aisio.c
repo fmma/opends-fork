@@ -100,7 +100,7 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 	if (rc < 0)
 		return rc;
 
-	size_t total_copied = 0;
+	size_t highest_covered = 0;
 	struct xnvme_cmd_ctx cmd = xnvme_cmd_ctx_from_dev(d->xdev);
 	uint64_t max_chunk_lbas = d->mdts_nbytes / lba_nbytes;
 
@@ -116,6 +116,7 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 			continue;
 
 		uint64_t off_in_ext = span_start - ext_start;
+		size_t buf_off = span_start - req_start;
 
 		/* TODO: bounce buffer for unaligned requests. */
 		if (off_in_ext % lba_nbytes != 0 ||
@@ -134,30 +135,27 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 			        nlbas_total - lbas_done, max_chunk_lbas);
 			chunk_lbas = XNVME_MIN_U64(chunk_lbas, NVME_MAX_NLB);
 
-			size_t chunk_bytes = chunk_lbas * lba_nbytes;
-			if (total_copied + chunk_bytes > size) {
-				homi_extent_list_free(elist);
-				return -EINVAL;
-			}
-
 			uint16_t nlb = (uint16_t)(chunk_lbas - 1);
 			uint64_t cur_slba = slba + lbas_done;
+			uint8_t *dst_chunk = (uint8_t *)dst + buf_off +
+			                     lbas_done * lba_nbytes;
 
 			rc = xnvme_nvm_read(&cmd, d->nsid, cur_slba, nlb,
-			                    (uint8_t *)dst + total_copied,
-			                    NULL);
+			                    dst_chunk, NULL);
 			if (rc || xnvme_cmd_ctx_cpl_status(&cmd)) {
 				homi_extent_list_free(elist);
 				return -EIO;
 			}
 
-			total_copied += chunk_bytes;
 			lbas_done += chunk_lbas;
+			size_t end_off = buf_off + lbas_done * lba_nbytes;
+			if (end_off > highest_covered)
+				highest_covered = end_off;
 		}
 	}
 
 	homi_extent_list_free(elist);
-	return (ssize_t)total_copied;
+	return (ssize_t)highest_covered;
 }
 
 /* ------------------------------------------------------------------ */
