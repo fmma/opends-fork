@@ -63,6 +63,49 @@ resolve_nvme_ns_name(int fd, char *ns_name, size_t len)
 	return 0;
 }
 
+/* FIEMAP reports fe_physical relative to the containing block device.
+ * If the file lives on a partition the caller sees partition-relative
+ * offsets, but xNVMe issues reads against namespace-relative LBAs. Add
+ * the partition's start (always in 512-byte sectors) so slba is
+ * namespace-relative. Returns 0 for whole-device filesystems. */
+static uint64_t
+get_partition_start_bytes(int fd)
+{
+	struct stat st;
+	if (fstat(fd, &st) < 0)
+		return 0;
+
+	char sys_path[256];
+	char link_target[256];
+	snprintf(sys_path, sizeof(sys_path), "/sys/dev/block/%u:%u",
+	         major(st.st_dev), minor(st.st_dev));
+
+	ssize_t n = readlink(sys_path, link_target, sizeof(link_target) - 1);
+	if (n <= 0)
+		return 0;
+	link_target[n] = '\0';
+
+	char *base = strrchr(link_target, '/');
+	if (!base)
+		return 0;
+	base++;
+
+	char start_path[320];
+	snprintf(start_path, sizeof(start_path), "/sys/class/block/%s/start",
+	         base);
+
+	FILE *f = fopen(start_path, "r");
+	if (!f)
+		return 0;
+
+	uint64_t start_sectors = 0;
+	if (fscanf(f, "%lu", &start_sectors) != 1)
+		start_sectors = 0;
+	fclose(f);
+
+	return start_sectors * 512;
+}
+
 static uint32_t
 get_lba_size(int fd)
 {
@@ -146,6 +189,7 @@ main(int argc, char **argv)
 	uint64_t file_size = (uint64_t)file_st.st_size;
 
 	uint32_t lba_size = get_lba_size(fd);
+	uint64_t part_start = get_partition_start_bytes(fd);
 
 	char bdf[16] = {0};
 	if (resolve_pci_bdf(fd, bdf, sizeof(bdf)) < 0)
@@ -201,7 +245,7 @@ main(int argc, char **argv)
 	for (uint32_t i = 0; i < count; i++) {
 		struct fiemap_extent *fe = &fm->fm_extents[i];
 		records[i].file_offset = fe->fe_logical;
-		records[i].slba = fe->fe_physical / lba_size;
+		records[i].slba = (fe->fe_physical + part_start) / lba_size;
 		records[i].length = fe->fe_length;
 
 		/* Cap the last extent by the file's logical size: FIEMAP
@@ -236,8 +280,8 @@ main(int argc, char **argv)
 	}
 	fclose(out);
 
-	fprintf(stderr, "wrote %u extents to %s (bdf=%s)\n", count, argv[2],
-	        bdf);
+	fprintf(stderr, "wrote %u extents to %s (bdf=%s part_start=%lu)\n",
+	        count, argv[2], bdf, part_start);
 
 	free(records);
 	return 0;
