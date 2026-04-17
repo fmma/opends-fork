@@ -17,23 +17,24 @@ ref_buf_zero(void *buf, size_t n)
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
-	char path[] = "/tmp/test_sync_read_XXXXXX";
-	int fd = mkstemp(path);
-	if (fd < 0) {
-		perror("mkstemp");
+	if (argc != 2) {
+		fprintf(stderr, "usage: %s <path>\n", argv[0]);
 		return 1;
 	}
-	unlink(path);
 
-	if (write_test_file(fd))
+	int fd = open(argv[1], O_RDONLY);
+	if (fd < 0) {
+		perror("open");
 		return 1;
+	}
 
 	ds_file_error_t err = ds_file_driver_open();
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "driver_open: %s\n",
 		        ds_file_op_status_error(err.err));
+		close(fd);
 		return 1;
 	}
 
@@ -42,6 +43,7 @@ main(void)
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "handle_register: %s\n",
 		        ds_file_op_status_error(err.err));
+		close(fd);
 		return 1;
 	}
 

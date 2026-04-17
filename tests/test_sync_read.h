@@ -5,24 +5,21 @@
  * Include from a backend-specific source file that provides main()
  * and initializes a struct test_env with buffer access callbacks.
  *
- * The test creates a 16-page (65536-byte) file where each page has
- * a distinct deterministic pattern seeded by its page number. Expected
- * read results are computed in memory via expected_bytes(), so the
- * test binary never needs to pread the test file for verification.
+ * The test expects a 16-page (65536-byte) pattern file already
+ * written by test_sync_read_prep. Expected read results are computed
+ * in memory via expected_bytes(), so the test binary never needs to
+ * read the file outside the backend.
  */
 #ifndef TEST_SYNC_READ_H_
 #define TEST_SYNC_READ_H_
 
 #include "opends.h"
+#include "read_pattern.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
-#define PAGE 4096
-#define FILE_PAGES 16
-#define FILE_SIZE ((size_t)(PAGE * FILE_PAGES))
 
 struct test_env {
 	ds_file_handle_t fh;
@@ -31,37 +28,9 @@ struct test_env {
 	void (*buf_zero)(void *buf, size_t n);
 };
 
-static void
-fill_pattern(char *buf, size_t size, unsigned char seed)
-{
-	for (size_t i = 0; i < size; i++)
-		buf[i] = (unsigned char)((i + seed) & 0xff);
-}
-
-/*
- * Write FILE_PAGES pages of deterministic pattern data to fd.
- * Each page is seeded by its page number so adjacent pages differ.
- */
-static int
-write_test_file(int fd)
-{
-	char page[PAGE];
-
-	for (int p = 0; p < FILE_PAGES; p++) {
-		fill_pattern(page, PAGE, (unsigned char)p);
-		if (pwrite(fd, page, PAGE, (off_t)(p * PAGE)) != PAGE) {
-			perror("pwrite test data");
-			return 1;
-		}
-	}
-	return 0;
-}
-
 /*
  * Fill dst with the bytes that a read at (offset, size) should return.
- * Mirrors fill_pattern/write_test_file: at absolute file offset X the
- * byte value is ((X % PAGE) + (X / PAGE)) & 0xff. Size is clamped to
- * FILE_SIZE. Returns the number of bytes written to dst.
+ * Size is clamped to FILE_SIZE. Returns the number of bytes written.
  */
 static ssize_t
 expected_bytes(char *dst, off_t offset, size_t size)
@@ -73,12 +42,8 @@ expected_bytes(char *dst, off_t offset, size_t size)
 	if (size > avail)
 		size = avail;
 
-	for (size_t i = 0; i < size; i++) {
-		off_t abs = offset + (off_t)i;
-		unsigned long page = (unsigned long)abs / PAGE;
-		unsigned long off_in_page = (unsigned long)abs % PAGE;
-		dst[i] = (unsigned char)((off_in_page + page) & 0xff);
-	}
+	for (size_t i = 0; i < size; i++)
+		dst[i] = (char)pattern_byte(offset + (off_t)i);
 	return (ssize_t)size;
 }
 
