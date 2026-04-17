@@ -21,6 +21,23 @@ gds_buf_zero(void *buf, size_t n)
 	cudaDeviceSynchronize();
 }
 
+static void
+gds_check_buffer(const void *buf)
+{
+	struct cudaPointerAttributes attrs;
+	cudaError_t rc = cudaPointerGetAttributes(&attrs, buf);
+	if (rc != cudaSuccess) {
+		fprintf(stderr, "cudaPointerGetAttributes: %s\n",
+		        cudaGetErrorString(rc));
+		abort();
+	}
+	if (attrs.type != cudaMemoryTypeDevice) {
+		fprintf(stderr, "ds_file_alloc returned non-device memory "
+		                "(type=%d)\n", (int)attrs.type);
+		abort();
+	}
+}
+
 int
 main(int argc, char **argv)
 {
@@ -61,6 +78,7 @@ main(int argc, char **argv)
 		.fh = fh,
 		.buf_to_host = gds_buf_to_host,
 		.buf_zero = gds_buf_zero,
+		.check_buffer = gds_check_buffer,
 	};
 
 	fprintf(stderr, "ds_file_read sync tests (gds backend)\n");
