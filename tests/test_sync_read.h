@@ -1,63 +1,54 @@
 /*
- * test_read.h - Backend-agnostic unit tests for ds_file_read.
+ * test_sync_read.h - Backend-agnostic unit tests for synchronous
+ * ds_file_read.
  *
  * Include from a backend-specific source file that provides main()
  * and initializes a struct test_env with buffer access callbacks.
  *
- * The test creates a 16-page (65536-byte) file where each page has
- * a distinct deterministic pattern seeded by its page number.
+ * The test expects a 16-page (65536-byte) pattern file already
+ * written by test_sync_read_prep. Expected read results are computed
+ * in memory via expected_bytes(), so the test binary never needs to
+ * read the file outside the backend.
  */
-#ifndef TEST_READ_H_
-#define TEST_READ_H_
+#ifndef TEST_SYNC_READ_H_
+#define TEST_SYNC_READ_H_
 
 #include "opends.h"
+#include "read_pattern.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#define PAGE 4096
-#define FILE_PAGES 16
-#define FILE_SIZE ((size_t)(PAGE * FILE_PAGES))
-
 struct test_env {
 	ds_file_handle_t fh;
-	int ref_fd;
-	size_t file_size;
 	void *(*buf_to_host)(void *dst, const void *src, size_t n);
 	void (*buf_zero)(void *buf, size_t n);
 };
 
-static void
-fill_pattern(char *buf, size_t size, unsigned char seed)
-{
-	for (size_t i = 0; i < size; i++)
-		buf[i] = (unsigned char)((i + seed) & 0xff);
-}
-
 /*
- * Write FILE_PAGES pages of deterministic pattern data to fd.
- * Each page is seeded by its page number so adjacent pages differ.
+ * Fill dst with the bytes that a read at (offset, size) should return.
+ * Size is clamped to FILE_SIZE. Returns the number of bytes written.
  */
-static int
-write_test_file(int fd)
+static ssize_t
+expected_bytes(char *dst, off_t offset, size_t size)
 {
-	char page[PAGE];
+	if (offset < 0 || (size_t)offset >= FILE_SIZE)
+		return 0;
 
-	for (int p = 0; p < FILE_PAGES; p++) {
-		fill_pattern(page, PAGE, (unsigned char)p);
-		if (pwrite(fd, page, PAGE, (off_t)(p * PAGE)) != PAGE) {
-			perror("pwrite test data");
-			return 1;
-		}
-	}
-	return 0;
+	size_t avail = FILE_SIZE - (size_t)offset;
+	if (size > avail)
+		size = avail;
+
+	for (size_t i = 0; i < size; i++)
+		dst[i] = (char)pattern_byte(offset + (off_t)i);
+	return (ssize_t)size;
 }
 
 /*
- * Read via ds_file_read, copy result to host, compare with pread
- * reference. Returns 0 on match.
+ * Read via ds_file_read, copy result to host, compare with the
+ * in-memory expected pattern. Returns 0 on match.
  */
 static int
 verify_read(struct test_env *env, void *buf, size_t alloc_size, size_t size,
@@ -84,10 +75,10 @@ verify_read(struct test_env *env, void *buf, size_t alloc_size, size_t size,
 
 	env->buf_to_host(host, buf, alloc_size);
 
-	ssize_t ref_n = pread(env->ref_fd, expected, size, file_offset);
-	if (ref_n != n) {
+	ssize_t expected_n = expected_bytes(expected, file_offset, size);
+	if (n != expected_n) {
 		fprintf(stderr, "  %s: got %zd bytes, expected %zd\n", label, n,
-		        ref_n);
+		        expected_n);
 		free(host);
 		free(expected);
 		return 1;
@@ -209,46 +200,8 @@ test_read_short_at_eof(struct test_env *env)
 	if (!buf)
 		return 1;
 
-	env->buf_zero(buf, req);
-	ssize_t n = ds_file_read(env->fh, buf, req, off, 0);
-	if (n < 0) {
-		fprintf(stderr, "  short_at_eof: %s\n",
-		        ds_file_op_status_error((ds_file_op_error_t)(-n)));
-		ds_file_free(buf);
-		return 1;
-	}
+	int rc = verify_read(env, buf, req, req, off, 0, "short_at_eof");
 
-	if ((size_t)n != PAGE) {
-		fprintf(stderr,
-		        "  short_at_eof: got %zd bytes, expected %zu\n", n,
-		        (size_t)PAGE);
-		ds_file_free(buf);
-		return 1;
-	}
-
-	char *host = malloc((size_t)n);
-	char *expected = malloc((size_t)n);
-	if (!host || !expected) {
-		free(host);
-		free(expected);
-		ds_file_free(buf);
-		return 1;
-	}
-
-	env->buf_to_host(host, buf, (size_t)n);
-	ssize_t ref_n = pread(env->ref_fd, expected, (size_t)n, off);
-
-	int rc = 0;
-	if (ref_n != n) {
-		fprintf(stderr, "  short_at_eof: ref %zd vs %zd\n", ref_n, n);
-		rc = 1;
-	} else if (memcmp(host, expected, (size_t)n) != 0) {
-		fprintf(stderr, "  short_at_eof: data mismatch\n");
-		rc = 1;
-	}
-
-	free(host);
-	free(expected);
 	ds_file_free(buf);
 	return rc;
 }
@@ -508,6 +461,54 @@ test_read_repeated(struct test_env *env)
 	return rc;
 }
 
+/*
+ * Sweep a table of (offset, size) pairs covering non-zero starts,
+ * mid-file reads that span pages, and a short read that extends past
+ * EOF. All offsets are page-aligned. Each pair is verified against
+ * the in-memory pattern oracle.
+ */
+static int
+test_read_offset_size_sweep(struct test_env *env)
+{
+	static const struct {
+		off_t offset;
+		size_t size;
+	} cases[] = {
+		{    0,  4096},
+		{    0, 65536},
+		{ 4096,  4096},
+		{ 8192,  4096},
+		{    0, 32768},
+		{ 4096, 65536},
+		{    0, 16384},
+		{ 8192, 32768},
+	};
+
+	size_t max_size = 0;
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		if (cases[i].size > max_size)
+			max_size = cases[i].size;
+	}
+
+	void *buf = ds_file_alloc(max_size);
+	if (!buf)
+		return 1;
+
+	int rc = 0;
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		char label[64];
+		snprintf(label, sizeof(label), "sweep[off=%ld,sz=%zu]",
+		         (long)cases[i].offset, cases[i].size);
+		rc = verify_read(env, buf, max_size, cases[i].size,
+		                 cases[i].offset, 0, label);
+		if (rc)
+			break;
+	}
+
+	ds_file_free(buf);
+	return rc;
+}
+
 /* --- Test runner ------------------------------------------------ */
 
 struct test_entry {
@@ -516,7 +517,7 @@ struct test_entry {
 };
 
 /* clang-format off */
-static const struct test_entry read_tests[] = {
+static const struct test_entry sync_read_tests[] = {
 	{"single_block",        test_read_single_block},
 	{"multi_block",         test_read_multi_block},
 	{"at_offset",           test_read_at_offset},
@@ -532,23 +533,24 @@ static const struct test_entry read_tests[] = {
 	{"sequential_regions",  test_read_sequential_regions},
 	{"overlapping_regions", test_read_overlapping_regions},
 	{"repeated",            test_read_repeated},
+	{"offset_size_sweep",   test_read_offset_size_sweep},
 };
 /* clang-format on */
 
-#define NREAD_TESTS (sizeof(read_tests) / sizeof(read_tests[0]))
+#define NSYNC_READ_TESTS (sizeof(sync_read_tests) / sizeof(sync_read_tests[0]))
 
 static int
-run_read_tests(struct test_env *env)
+run_sync_read_tests(struct test_env *env)
 {
 	int failed = 0;
 
-	for (size_t i = 0; i < NREAD_TESTS; i++) {
-		int rc = read_tests[i].fn(env);
-		fprintf(stderr, "  %-24s %s\n", read_tests[i].name,
+	for (size_t i = 0; i < NSYNC_READ_TESTS; i++) {
+		int rc = sync_read_tests[i].fn(env);
+		fprintf(stderr, "  %-24s %s\n", sync_read_tests[i].name,
 		        rc ? "FAIL" : "ok");
 		failed += rc;
 	}
 	return failed;
 }
 
-#endif /* TEST_READ_H_ */
+#endif /* TEST_SYNC_READ_H_ */

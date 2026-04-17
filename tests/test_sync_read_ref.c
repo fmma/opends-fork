@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 
-#include "test_read.h"
+#include "test_sync_read.h"
 
 #include <fcntl.h>
 
@@ -17,23 +17,24 @@ ref_buf_zero(void *buf, size_t n)
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
-	char path[] = "/tmp/test_read_sync_XXXXXX";
-	int fd = mkstemp(path);
-	if (fd < 0) {
-		perror("mkstemp");
+	if (argc != 2) {
+		fprintf(stderr, "usage: %s <path>\n", argv[0]);
 		return 1;
 	}
-	unlink(path);
 
-	if (write_test_file(fd))
+	int fd = open(argv[1], O_RDONLY);
+	if (fd < 0) {
+		perror("open");
 		return 1;
+	}
 
 	ds_file_error_t err = ds_file_driver_open();
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "driver_open: %s\n",
 		        ds_file_op_status_error(err.err));
+		close(fd);
 		return 1;
 	}
 
@@ -42,27 +43,19 @@ main(void)
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "handle_register: %s\n",
 		        ds_file_op_status_error(err.err));
-		return 1;
-	}
-
-	int ref_fd = dup(fd);
-	if (ref_fd < 0) {
-		perror("dup");
+		close(fd);
 		return 1;
 	}
 
 	struct test_env env = {
 		.fh = fh,
-		.ref_fd = ref_fd,
-		.file_size = FILE_SIZE,
 		.buf_to_host = ref_buf_to_host,
 		.buf_zero = ref_buf_zero,
 	};
 
 	fprintf(stderr, "ds_file_read sync tests (ref backend)\n");
-	int failed = run_read_tests(&env);
+	int failed = run_sync_read_tests(&env);
 
-	close(ref_fd);
 	ds_file_handle_deregister(fh);
 	close(fd);
 	ds_file_driver_close();

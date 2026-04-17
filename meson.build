@@ -49,43 +49,30 @@ if gds_enabled
   )
 endif
 
-# Generated test data
-python = find_program('python3')
-read_cases_h = custom_target('read_cases_h',
-  input : files('tests/read_cases.txt'),
-  output : 'read_cases.h',
-  command : [python, files('tests/gen_read_cases.py'), '@INPUT@', '@OUTPUT@'],
-)
-
 # Test binaries
 executable('test_smoke_ref',
   'tests/test_smoke_ref.c',
   dependencies : [opends_ref_dep],
 )
 
-executable('test_read_ref',
-  'tests/test_read_ref.c',
-  dependencies : [opends_ref_dep],
+# Prep binary: writes the shared pattern file consumed by every
+# backend's test_sync_read_X. POSIX only, no backend linkage.
+executable('test_sync_read_prep',
+  'tests/test_sync_read_prep.c',
 )
 
-executable('test_read_cases_ref',
-  ['tests/test_read_cases_ref.c', read_cases_h],
+executable('test_sync_read_ref',
+  'tests/test_sync_read_ref.c',
   dependencies : [opends_ref_dep],
 )
 
 if gds_enabled
-  executable('test_read_gds',
-    'tests/test_read_gds.c',
-    dependencies : [opends_gds_dep, cuda_dep],
-  )
-
-  executable('test_read_cases_gds',
-    ['tests/test_read_cases_gds.c', read_cases_h],
+  executable('test_sync_read_gds',
+    'tests/test_sync_read_gds.c',
     dependencies : [opends_gds_dep, cuda_dep],
   )
 else
-  executable('test_read_gds', 'tests/skip.c')
-  executable('test_read_cases_gds', 'tests/skip.c')
+  executable('test_sync_read_gds', 'tests/skip.c')
 endif
 
 summary({

@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 
-#include "test_read.h"
+#include "test_sync_read.h"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -24,24 +24,10 @@ gds_buf_zero(void *buf, size_t n)
 int
 main(int argc, char **argv)
 {
-	const char *dir = ".";
-	if (argc > 1)
-		dir = argv[1];
-
-	char path[512];
-	snprintf(path, sizeof(path), "%s/test_read_sync_XXXXXX", dir);
-	int setup_fd = mkstemp(path);
-	if (setup_fd < 0) {
-		perror("mkstemp");
+	if (argc != 2) {
+		fprintf(stderr, "usage: %s <path>\n", argv[0]);
 		return 1;
 	}
-
-	if (write_test_file(setup_fd)) {
-		unlink(path);
-		return 1;
-	}
-	fsync(setup_fd);
-	close(setup_fd);
 
 	cuInit(0);
 	CUdevice cudev;
@@ -53,21 +39,12 @@ main(int argc, char **argv)
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "driver_open: %s\n",
 		        ds_file_op_status_error(err.err));
-		unlink(path);
 		return 1;
 	}
 
-	int fd = open(path, O_RDWR | O_DIRECT);
+	int fd = open(argv[1], O_RDONLY | O_DIRECT);
 	if (fd < 0) {
 		perror("open O_DIRECT");
-		unlink(path);
-		return 1;
-	}
-
-	int ref_fd = open(path, O_RDONLY);
-	if (ref_fd < 0) {
-		perror("open reference");
-		unlink(path);
 		return 1;
 	}
 
@@ -76,26 +53,22 @@ main(int argc, char **argv)
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "handle_register: %s\n",
 		        ds_file_op_status_error(err.err));
-		unlink(path);
+		close(fd);
 		return 1;
 	}
 
 	struct test_env env = {
 		.fh = fh,
-		.ref_fd = ref_fd,
-		.file_size = FILE_SIZE,
 		.buf_to_host = gds_buf_to_host,
 		.buf_zero = gds_buf_zero,
 	};
 
 	fprintf(stderr, "ds_file_read sync tests (gds backend)\n");
-	int failed = run_read_tests(&env);
+	int failed = run_sync_read_tests(&env);
 
 	ds_file_handle_deregister(fh);
-	close(ref_fd);
 	close(fd);
 	ds_file_driver_close();
-	unlink(path);
 	cuCtxDestroy(cuctx);
 
 	if (failed)
