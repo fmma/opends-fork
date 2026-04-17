@@ -24,24 +24,10 @@ gds_buf_zero(void *buf, size_t n)
 int
 main(int argc, char **argv)
 {
-	const char *dir = ".";
-	if (argc > 1)
-		dir = argv[1];
-
-	char path[512];
-	snprintf(path, sizeof(path), "%s/test_sync_read_XXXXXX", dir);
-	int setup_fd = mkstemp(path);
-	if (setup_fd < 0) {
-		perror("mkstemp");
+	if (argc != 2) {
+		fprintf(stderr, "usage: %s <path>\n", argv[0]);
 		return 1;
 	}
-
-	if (write_test_file(setup_fd)) {
-		unlink(path);
-		return 1;
-	}
-	fsync(setup_fd);
-	close(setup_fd);
 
 	cuInit(0);
 	CUdevice cudev;
@@ -53,14 +39,12 @@ main(int argc, char **argv)
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "driver_open: %s\n",
 		        ds_file_op_status_error(err.err));
-		unlink(path);
 		return 1;
 	}
 
-	int fd = open(path, O_RDWR | O_DIRECT);
+	int fd = open(argv[1], O_RDONLY | O_DIRECT);
 	if (fd < 0) {
 		perror("open O_DIRECT");
-		unlink(path);
 		return 1;
 	}
 
@@ -69,7 +53,7 @@ main(int argc, char **argv)
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "handle_register: %s\n",
 		        ds_file_op_status_error(err.err));
-		unlink(path);
+		close(fd);
 		return 1;
 	}
 
@@ -86,7 +70,6 @@ main(int argc, char **argv)
 	ds_file_handle_deregister(fh);
 	close(fd);
 	ds_file_driver_close();
-	unlink(path);
 	cuCtxDestroy(cuctx);
 
 	if (failed)

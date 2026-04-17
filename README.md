@@ -130,14 +130,23 @@ Run the reference backend smoke test locally:
 ./build/test_smoke_ref
 ```
 
+Run the full synchronous-read suite against the ref backend locally.
+`test_sync_read_prep` writes a deterministic 16-page pattern to a
+file; each backend test reads it back through its backend and
+verifies against an in-memory oracle:
+
+```sh
+f=$(mktemp) && ./build/test_sync_read_prep "$f" \
+  && ./build/test_sync_read_ref "$f"; rm -f "$f"
+```
+
 ### Remote testing with CIJOE
 
 Integration tests run on a remote target via
 [CIJOE](https://github.com/refenv/cijoe). The target needs an NVMe
-device and (for GDS tests) an NVIDIA GPU with GDS support. Each test
-binary creates its own temp file on the target filesystem, writes a
-deterministic pattern, and verifies backend reads against the
-in-memory pattern.
+device and (for GDS tests) an NVIDIA GPU with GDS support. The
+`test_sync_read_prep` step writes a pattern file on the mounted
+filesystem and each backend test reads it back.
 
 1. Copy the example configs and fill in target details:
 
@@ -158,6 +167,6 @@ in-memory pattern.
    python scripts/run_tests.py
    ```
 
-   This runs `test_ref.yaml` (reference backend) and `test_gds.yaml`
-   (GDS backend). The GDS test reads a file into GPU memory via cuFile
-   and compares the output against the reference backend.
+   This runs `tasks/test.yaml`: binds and mounts the NVMe device,
+   writes the pattern file, then exercises each available backend
+   against it.

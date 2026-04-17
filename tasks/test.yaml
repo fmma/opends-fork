@@ -27,11 +27,15 @@ steps:
     run: |
       {{ config.opends.build_dir }}/test_smoke_ref
 
+  - name: test_sync_read_prep
+    run: |
+      {{ config.opends.build_dir }}/test_sync_read_prep {{ config.test.mount_point }}/opends_sync_read_pattern.bin
+
   - name: test_sync_read_ref
     run: |
-      {{ config.opends.build_dir }}/test_sync_read_ref
+      {{ config.opends.build_dir }}/test_sync_read_ref {{ config.test.mount_point }}/opends_sync_read_pattern.bin
 
   - name: test_sync_read_gds
     run: |
       echo 3 > /proc/sys/vm/drop_caches
-      {{ config.opends.build_dir }}/test_sync_read_gds {{ config.test.mount_point }}
+      {{ config.opends.build_dir }}/test_sync_read_gds {{ config.test.mount_point }}/opends_sync_read_pattern.bin

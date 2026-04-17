@@ -55,6 +55,12 @@ executable('test_smoke_ref',
   dependencies : [opends_ref_dep],
 )
 
+# Prep binary: writes the shared pattern file consumed by every
+# backend's test_sync_read_X. POSIX only, no backend linkage.
+executable('test_sync_read_prep',
+  'tests/test_sync_read_prep.c',
+)
+
 executable('test_sync_read_ref',
   'tests/test_sync_read_ref.c',
   dependencies : [opends_ref_dep],
