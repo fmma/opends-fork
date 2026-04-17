@@ -11,13 +11,15 @@
 #ifndef HOMI_CLIENT_MOCK_H_
 #define HOMI_CLIENT_MOCK_H_
 
+#include "extent_cache.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
 struct homi_extent {
 	uint64_t file_offset;
 	uint64_t slba;
-	uint64_t nlbas;
+	uint64_t length;
 };
 
 struct homi_extent_list {

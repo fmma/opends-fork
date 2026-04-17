@@ -27,25 +27,38 @@ load_extent_cache(struct homi_conn *c, const char *path)
 		return -EINVAL;
 	}
 
-	c->cached_extents =
-	        calloc(hdr.extent_count, sizeof(*c->cached_extents));
-	if (!c->cached_extents) {
+	struct extent_cache_record *records =
+	        calloc(hdr.extent_count, sizeof(*records));
+	if (!records) {
 		fclose(f);
 		return -ENOMEM;
 	}
 
-	if (fread(c->cached_extents, sizeof(*c->cached_extents),
-	          hdr.extent_count, f) != hdr.extent_count) {
-		free(c->cached_extents);
-		c->cached_extents = NULL;
+	if (fread(records, sizeof(*records), hdr.extent_count, f) !=
+	    hdr.extent_count) {
+		free(records);
 		fclose(f);
 		return -EIO;
 	}
+	fclose(f);
+
+	c->cached_extents =
+	        calloc(hdr.extent_count, sizeof(*c->cached_extents));
+	if (!c->cached_extents) {
+		free(records);
+		return -ENOMEM;
+	}
+
+	for (uint32_t i = 0; i < hdr.extent_count; i++) {
+		c->cached_extents[i].file_offset = records[i].file_offset;
+		c->cached_extents[i].slba = records[i].slba;
+		c->cached_extents[i].length = records[i].length;
+	}
+	free(records);
 
 	c->cached_count = hdr.extent_count;
 	memcpy(c->cached_bdf, hdr.bdf, sizeof(c->cached_bdf));
 	c->cached_bdf[sizeof(c->cached_bdf) - 1] = '\0';
-	fclose(f);
 	return 0;
 }
 

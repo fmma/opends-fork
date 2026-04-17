@@ -111,7 +111,7 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		struct homi_extent *e = &elist->extents[i];
 
 		uint64_t ext_start = e->file_offset;
-		uint64_t ext_end = ext_start + e->nlbas * lba_nbytes;
+		uint64_t ext_end = ext_start + e->length;
 
 		uint64_t span_start = max_u64(req_start, ext_start);
 		uint64_t span_end = XNVME_MIN_U64(req_end, ext_end);
