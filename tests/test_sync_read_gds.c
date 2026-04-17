@@ -59,7 +59,6 @@ main(int argc, char **argv)
 
 	struct test_env env = {
 		.fh = fh,
-		.file_size = FILE_SIZE,
 		.buf_to_host = gds_buf_to_host,
 		.buf_zero = gds_buf_zero,
 	};
