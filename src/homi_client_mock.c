@@ -44,6 +44,7 @@ load_extent_cache(struct homi_conn *c, const char *path)
 
 	c->cached_count = hdr.extent_count;
 	memcpy(c->cached_bdf, hdr.bdf, sizeof(c->cached_bdf));
+	c->cached_bdf[sizeof(c->cached_bdf) - 1] = '\0';
 	fclose(f);
 	return 0;
 }
