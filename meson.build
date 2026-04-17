@@ -99,6 +99,17 @@ else
   executable('test_sync_read_gds', 'tests/skip.c')
 endif
 
+aisio_test_enabled = aisio_enabled and cuda_dep.found()
+
+if aisio_test_enabled
+  executable('test_sync_read_aisio',
+    'tests/test_sync_read_aisio.c',
+    dependencies : [opends_aisio_dep, cuda_dep],
+  )
+else
+  executable('test_sync_read_aisio', 'tests/skip.c')
+endif
+
 if aisio_enabled
   executable('cache_extents',
     'tools/cache_extents.c',

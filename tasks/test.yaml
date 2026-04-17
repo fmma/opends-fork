@@ -3,7 +3,9 @@ doc: |
   ==================
 
   Runs all available backend tests. Reference backend tests always run.
-  GDS tests run only when the GDS backend was built.
+  GDS tests run only when the GDS backend was built. aisio tests run
+  when both xNVMe and CUDA were found; they finish by unbinding the
+  NVMe kernel driver so the ref and GDS phases must complete first.
 
   Assumes setup_opends.yaml has been run (sync_and_build.py does this).
 
@@ -38,3 +40,18 @@ steps:
   - name: test_sync_read_gds
     run: |
       {{ config.opends.build_dir }}/test_sync_read_gds {{ config.test.mount_point }}/opends_sync_read_pattern.bin
+
+  - name: cache_extents
+    run: |
+      {{ config.opends.build_dir }}/cache_extents \
+        {{ config.test.mount_point }}/opends_sync_read_pattern.bin \
+        {{ config.opends.build_dir }}/opends_extents.bin
+
+  - name: unbind_nvme
+    run: |
+      {{ config.opends.repository.path }}/tasks/steps/unbind_nvme.sh {{ config.test.nvme_bdf }} {{ config.test.mount_point }}
+
+  - name: test_sync_read_aisio
+    run: |
+      OPENDS_EXTENT_CACHE={{ config.opends.build_dir }}/opends_extents.bin \
+        {{ config.opends.build_dir }}/test_sync_read_aisio
