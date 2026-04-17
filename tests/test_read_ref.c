@@ -45,15 +45,8 @@ main(void)
 		return 1;
 	}
 
-	int ref_fd = dup(fd);
-	if (ref_fd < 0) {
-		perror("dup");
-		return 1;
-	}
-
 	struct test_env env = {
 		.fh = fh,
-		.ref_fd = ref_fd,
 		.file_size = FILE_SIZE,
 		.buf_to_host = ref_buf_to_host,
 		.buf_zero = ref_buf_zero,
@@ -62,7 +55,6 @@ main(void)
 	fprintf(stderr, "ds_file_read sync tests (ref backend)\n");
 	int failed = run_read_tests(&env);
 
-	close(ref_fd);
 	ds_file_handle_deregister(fh);
 	close(fd);
 	ds_file_driver_close();

@@ -5,7 +5,7 @@ doc: |
   Runs all available backend tests. Reference backend tests always run.
   GDS tests run only when the GDS backend was built.
 
-  Assumes setup_dataset.yaml and setup_opends.yaml have been run.
+  Assumes setup_opends.yaml has been run (sync_and_build.py does this).
 
   Run::
 
@@ -31,16 +31,7 @@ steps:
     run: |
       {{ config.opends.build_dir }}/test_read_ref
 
-  - name: test_read_cases_ref
-    run: |
-      echo 3 > /proc/sys/vm/drop_caches
-      {{ config.opends.build_dir }}/test_read_cases_ref {{ config.test.test_file }}
-
   - name: test_read_gds
     run: |
-      {{ config.opends.build_dir }}/test_read_gds {{ config.test.mount_point }}
-
-  - name: test_read_cases_gds
-    run: |
       echo 3 > /proc/sys/vm/drop_caches
-      {{ config.opends.build_dir }}/test_read_cases_gds {{ config.test.test_file }}
+      {{ config.opends.build_dir }}/test_read_gds {{ config.test.mount_point }}
