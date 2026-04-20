@@ -51,11 +51,7 @@ steps:
 
   - name: unbind_nvme
     run: |
-      if [ -e {{ config.opends.build_dir }}/opends_extents.bin ]; then
-        {{ config.opends.repository.path }}/tasks/steps/unbind_nvme.sh {{ config.test.nvme_bdf }} {{ config.test.mount_point }}
-      else
-        echo "skipping: aisio backend not built"
-      fi
+      {{ config.opends.repository.path }}/tasks/steps/unbind_nvme.sh {{ config.opends.build_dir }}/opends_extents.bin {{ config.test.nvme_bdf }} {{ config.test.mount_point }}
 
   - name: test_sync_read_aisio
     run: |
@@ -64,8 +60,4 @@ steps:
 
   - name: rebind_nvme
     run: |
-      if [ -e {{ config.opends.build_dir }}/opends_extents.bin ]; then
-        {{ config.opends.repository.path }}/tasks/steps/rebind_nvme.sh {{ config.test.nvme_bdf }}
-      else
-        echo "skipping: aisio backend not built"
-      fi
+      {{ config.opends.repository.path }}/tasks/steps/rebind_nvme.sh {{ config.opends.build_dir }}/opends_extents.bin {{ config.test.nvme_bdf }}

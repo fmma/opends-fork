@@ -1,8 +1,16 @@
 #!/bin/bash
 # Rebind an NVMe device to the kernel nvme driver.
+# Skips if the guard file is missing, which signals that the aisio
+# backend was not built and the device was never unbound.
 set -e
 
-BDF=$1
+GUARD=$1
+BDF=$2
+
+if [ ! -e "$GUARD" ]; then
+	echo "skipping: $GUARD not present (aisio backend not built)"
+	exit 0
+fi
 
 echo "rebinding $BDF to nvme"
 echo "$BDF" > /sys/bus/pci/drivers/nvme/bind
