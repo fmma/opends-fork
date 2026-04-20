@@ -12,6 +12,15 @@ ds_file API for reading files directly into accelerator memory.
   Storage. Buffers are GPU memory allocated with `cudaMalloc` and
   registered via `cuFileBufRegister`. Requires CUDA toolkit and the
   cuFile (GDS) library. Built conditionally when both are found.
+- **aisio** (`libopends_aisio`): Reads directly from an NVMe device
+  into GPU memory via [xNVMe](https://xnvme.io)'s `upcie-cuda` backend
+  (PCIe P2P DMA, no filesystem or kernel nvme driver in the path).
+  Based on [aisio](https://github.com/xnvme/aisio); file-to-LBA
+  mapping comes from a mock HOMI client that loads an extent cache
+  produced by `cache_extents` while the filesystem is still mounted.
+  The mock will be replaced by aisio's HOMI implementation. Requires
+  xNVMe and the CUDA toolkit. Read-only; `ds_file_write` returns
+  `DS_FILE_IO_NOT_SUPPORTED`.
 
 ## ds_file API
 
@@ -110,6 +119,7 @@ Meson reports which backends are enabled at configure time:
 Backends
   Reference backend: true
   GDS backend      : true
+  aisio backend    : true
 ```
 
 ## Installing
@@ -144,9 +154,13 @@ f=$(mktemp) && ./build/test_sync_read_prep "$f" \
 
 Integration tests run on a remote target via
 [CIJOE](https://github.com/refenv/cijoe). The target needs an NVMe
-device and (for GDS tests) an NVIDIA GPU with GDS support. The
-`test_sync_read_prep` step writes a pattern file on the mounted
-filesystem and each backend test reads it back.
+device, an NVIDIA GPU (for GDS and aisio tests), GDS support (for
+GDS tests), and xNVMe with the `upcie-cuda` backend (for aisio
+tests). The `test_sync_read_prep` step writes a pattern file on the
+mounted filesystem and each backend test reads it back. The aisio
+phase runs last: it builds an extent cache while the filesystem is
+still mounted, then unbinds the NVMe kernel driver so the backend
+can drive the device directly over PCIe.
 
 1. Copy the example configs and fill in target details:
 
@@ -168,5 +182,6 @@ filesystem and each backend test reads it back.
    ```
 
    This runs `tasks/test.yaml`: binds and mounts the NVMe device,
-   writes the pattern file, then exercises each available backend
-   against it.
+   writes the pattern file, exercises the ref and GDS backends, and
+   (if aisio is enabled) caches extents, unbinds the kernel driver,
+   and runs the aisio test against the unbound device.
