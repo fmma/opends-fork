@@ -1,9 +1,17 @@
 #!/bin/bash
 # Unmount and unbind an NVMe device from the kernel nvme driver.
+# Skips if the guard file is missing, which signals that the aisio
+# backend was not built and nothing needs the device detached.
 set -e
 
-BDF=$1
-MOUNT=$2
+GUARD=$1
+BDF=$2
+MOUNT=$3
+
+if [ ! -e "$GUARD" ]; then
+	echo "skipping: $GUARD not present (aisio backend not built)"
+	exit 0
+fi
 
 echo "unmounting $MOUNT"
 umount "$MOUNT"
