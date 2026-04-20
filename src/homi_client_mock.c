@@ -95,34 +95,14 @@ homi_disconnect(struct homi_conn *conn)
 }
 
 int
-homi_get_extents(struct homi_conn *conn, int fd, struct homi_extent_list **out)
+homi_get_extents(struct homi_conn *conn, int fd,
+                 const struct homi_extent **extents, uint32_t *count)
 {
 	(void)fd;
 
-	struct homi_extent_list *list = calloc(1, sizeof(*list));
-	if (!list)
-		return -ENOMEM;
-
-	list->extents = calloc(conn->cached_count, sizeof(*list->extents));
-	if (!list->extents) {
-		free(list);
-		return -ENOMEM;
-	}
-
-	memcpy(list->extents, conn->cached_extents,
-	       conn->cached_count * sizeof(*list->extents));
-	list->count = conn->cached_count;
-	*out = list;
+	*extents = conn->cached_extents;
+	*count = conn->cached_count;
 	return 0;
-}
-
-void
-homi_extent_list_free(struct homi_extent_list *list)
-{
-	if (!list)
-		return;
-	free(list->extents);
-	free(list);
 }
 
 int
