@@ -98,21 +98,20 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		return -EINVAL;
 	uint64_t req_end = req_start + size;
 
-	struct homi_extent_list *elist = NULL;
-	int rc = homi_get_extents(d->homi, h->fd, &elist);
+	const struct homi_extent *extents = NULL;
+	uint32_t extent_count = 0;
+	int rc = homi_get_extents(d->homi, h->fd, &extents, &extent_count);
 	if (rc < 0)
 		return rc;
 
 	size_t total_transferred = 0;
 	struct xnvme_cmd_ctx cmd = xnvme_cmd_ctx_from_dev(d->xdev);
 	uint64_t max_chunk_lbas = d->mdts_nbytes / lba_nbytes;
-	if (max_chunk_lbas == 0) {
-		homi_extent_list_free(elist);
+	if (max_chunk_lbas == 0)
 		return -EINVAL;
-	}
 
-	for (uint32_t i = 0; i < elist->count; i++) {
-		struct homi_extent *e = &elist->extents[i];
+	for (uint32_t i = 0; i < extent_count; i++) {
+		const struct homi_extent *e = &extents[i];
 
 		uint64_t ext_start = e->file_offset;
 		uint64_t ext_end = ext_start + e->length;
@@ -132,10 +131,8 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 
 		/* TODO: bounce buffer for unaligned requests. */
 		if (off_in_ext % lba_nbytes != 0 ||
-		    (span_end - span_start) % lba_nbytes != 0) {
-			homi_extent_list_free(elist);
+		    (span_end - span_start) % lba_nbytes != 0)
 			return -EINVAL;
-		}
 
 		uint64_t first_lba_off = off_in_ext / lba_nbytes;
 		uint64_t nlbas_total = (span_end - span_start) / lba_nbytes;
@@ -154,17 +151,14 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 
 			rc = xnvme_nvm_read(&cmd, d->nsid, cur_slba, nlb,
 			                    dst_chunk, NULL);
-			if (rc || xnvme_cmd_ctx_cpl_status(&cmd)) {
-				homi_extent_list_free(elist);
+			if (rc || xnvme_cmd_ctx_cpl_status(&cmd))
 				return -EIO;
-			}
 
 			lbas_done += chunk_lbas;
 			total_transferred += chunk_lbas * lba_nbytes;
 		}
 	}
 
-	homi_extent_list_free(elist);
 	return (ssize_t)total_transferred;
 }
 
