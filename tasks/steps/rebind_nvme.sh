@@ -1,0 +1,19 @@
+#!/bin/bash
+# Rebind an NVMe device to the kernel nvme driver.
+set -e
+
+BDF=$1
+
+echo "rebinding $BDF to nvme"
+echo "$BDF" > /sys/bus/pci/drivers/nvme/bind
+
+if [ ! -e "/sys/bus/pci/devices/$BDF/driver" ]; then
+	echo "error: $BDF has no driver after bind"
+	exit 1
+fi
+DRIVER=$(basename "$(readlink "/sys/bus/pci/devices/$BDF/driver")")
+if [ "$DRIVER" != "nvme" ]; then
+	echo "error: $BDF bound to $DRIVER, expected nvme"
+	exit 1
+fi
+echo "$BDF bound to nvme"

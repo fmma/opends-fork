@@ -25,6 +25,9 @@ struct test_env {
 	ds_file_handle_t fh;
 	void *(*buf_to_host)(void *dst, const void *src, size_t n);
 	void (*buf_zero)(void *buf, size_t n);
+	/* Optional: backend-specific assertion on buffers from ds_file_alloc
+	 * (e.g. "this is a CUDA device pointer"). NULL means no check. */
+	void (*check_buffer)(const void *buf);
 };
 
 /*
@@ -542,6 +545,16 @@ static const struct test_entry sync_read_tests[] = {
 static int
 run_sync_read_tests(struct test_env *env)
 {
+	if (env->check_buffer) {
+		void *probe = ds_file_alloc(PAGE);
+		if (!probe) {
+			fprintf(stderr, "ds_file_alloc probe failed\n");
+			return 1;
+		}
+		env->check_buffer(probe);
+		ds_file_free(probe);
+	}
+
 	int failed = 0;
 
 	for (size_t i = 0; i < NSYNC_READ_TESTS; i++) {
