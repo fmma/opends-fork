@@ -2,6 +2,11 @@
 # Mount NVMe namespace.
 set -e
 
+if [ $# -ne 2 ]; then
+	echo "usage: mount_nvme.sh NS MOUNT" >&2
+	exit 1
+fi
+
 NS=$1
 MOUNT=$2
 

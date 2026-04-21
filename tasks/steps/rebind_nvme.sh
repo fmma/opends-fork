@@ -4,6 +4,11 @@
 # backend was not built and the device was never unbound.
 set -e
 
+if [ $# -ne 2 ]; then
+	echo "usage: rebind_nvme.sh GUARD BDF" >&2
+	exit 1
+fi
+
 GUARD=$1
 BDF=$2
 

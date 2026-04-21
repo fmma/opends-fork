@@ -4,6 +4,11 @@
 # backend was not built and nothing needs the device detached.
 set -e
 
+if [ $# -ne 3 ]; then
+	echo "usage: unbind_nvme.sh GUARD BDF MOUNT" >&2
+	exit 1
+fi
+
 GUARD=$1
 BDF=$2
 MOUNT=$3
