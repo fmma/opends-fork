@@ -1,0 +1,24 @@
+doc: |
+  Setup xNVMe
+  ============
+
+  Clones or updates the xNVMe repository on the target, checks out the
+  configured branch, then builds and installs xNVMe so its pkg-config
+  file becomes discoverable when building OpenDS. The remote and
+  branch are read from [xnvme.repository] in test.toml, so the same
+  task works against upstream xNVMe or any fork.
+
+  Assumes the OpenDS tree has been synced to the target (setup_deps.py
+  does this).
+
+  Run::
+
+      cijoe \
+        -c configs/transport.toml \
+        -c configs/test.toml \
+        tasks/setup_xnvme.yaml
+
+steps:
+  - name: setup_xnvme
+    run: |
+      '{{ config.opends.repository.path }}/tasks/steps/setup_xnvme.sh' '{{ config.xnvme.repository.remote }}' '{{ config.xnvme.repository.branch }}' '{{ config.xnvme.repository.path }}' '{{ config.xnvme.build_dir }}'
