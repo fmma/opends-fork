@@ -92,14 +92,14 @@ OpenDS takes a plain `int fd`. No descriptor struct, no handle type enum, no Win
 
 | cuFile | hipFile | OpenDS |
 |--------|---------|--------|
-| `cuFileBufRegister(ptr, len, flags)` | `hipFileBufRegister(ptr, len, flags)` | *(none)* |
-| `cuFileBufDeregister(ptr)` | `hipFileBufDeregister(ptr)` | *(none)* |
+| `cuFileBufRegister(ptr, len, flags)` | `hipFileBufRegister(ptr, len, flags)` | `ds_file_buf_register(ptr, len, flags)` |
+| `cuFileBufDeregister(ptr)` | `hipFileBufDeregister(ptr)` | `ds_file_buf_deregister(ptr)` |
 | *(user allocates via cudaMalloc)* | *(user allocates via hipMalloc)* | `ds_file_alloc(size)` |
 | *(user frees via cudaFree)* | *(user frees via hipFree)* | `ds_file_free(buf)` |
 
 cuFile and hipFile separate allocation (GPU runtime) from registration (cuFile/hipFile library). The user allocates with `cudaMalloc`/`hipMalloc` and then registers the pointer for DMA.
 
-OpenDS owns both allocation and deallocation. `ds_file_alloc()` replaces both `cudaMalloc` + `cuFileBufRegister`. This is necessary because the backend must control the allocation to set up DMA mappings (e.g. through xNVMe). There is no flags parameter.
+OpenDS supports both models. Callers may allocate externally (`cudaMalloc`, `aligned_alloc`) and register with `ds_file_buf_register` (matching cuFile/hipFile), or let the backend own both with `ds_file_alloc`. The `flags` parameter of `ds_file_buf_register` is accepted for parity and currently ignored.
 
 ## Synchronous I/O
 
@@ -200,4 +200,4 @@ hipFile adds `hipFileScatefsSupported = 12` to the driver status flags. cuFile s
 
 1. **Plain file descriptor instead of descriptor struct.** `ds_file_handle_register()` takes `int fd` directly. The `CUfileDescr_t` type/union and `USERSPACE_FS` handle type are not supported. Linux only.
 
-2. **Backend-owned allocation replaces buffer registration.** `ds_file_alloc()` / `ds_file_free()` replace `cuFileBufRegister()` / `cuFileBufDeregister()`. The backend must own allocations to set up DMA mappings (e.g. through xNVMe).
+2. **Backend-owned allocation offered alongside buffer registration.** `ds_file_alloc()` / `ds_file_free()` are available in addition to `ds_file_buf_register()` / `ds_file_buf_deregister()`. Callers may bring their own allocation (e.g. `cudaMalloc`) and register it, or let the backend handle both.
