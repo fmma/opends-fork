@@ -8,6 +8,11 @@ doc: |
   branch are read from [xnvme.repository] in test.toml, so the same
   task works against upstream xNVMe or any fork.
 
+  The aisio backend's ds_file_buf_register path requires the
+  fmma/xnvme#feat/upcie-cuda-mem-map fork which adds .mem_map and
+  .mem_unmap hooks to the upcie-cuda backend; test.toml.example
+  points at that fork by default.
+
   Assumes the OpenDS tree has been synced to the target (setup_deps.py
   does this).
 
