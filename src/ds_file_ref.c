@@ -14,6 +14,10 @@ struct ref_handle {
 static bool driver_open;
 static long use_count;
 
+#define REF_MAX_BUFS 64
+static const void *ref_registered[REF_MAX_BUFS];
+static int ref_registered_count;
+
 ds_file_error_t
 ds_file_driver_open(void)
 {
@@ -28,6 +32,7 @@ ds_file_driver_close(void)
 {
 	if (!driver_open)
 		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+	ref_registered_count = 0;
 	driver_open = false;
 	return ds_file_ok();
 }
@@ -105,6 +110,45 @@ void
 ds_file_free(void *buf)
 {
 	free(buf);
+}
+
+ds_file_error_t
+ds_file_buf_register(const void *buf_base, size_t size, int flags)
+{
+	(void)flags;
+
+	if (!driver_open)
+		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+	if (!buf_base || !size)
+		return ds_file_err(DS_FILE_INVALID_VALUE);
+
+	for (int i = 0; i < ref_registered_count; i++) {
+		if (ref_registered[i] == buf_base)
+			return ds_file_err(DS_FILE_MEMORY_ALREADY_REGISTERED);
+	}
+	if (ref_registered_count >= REF_MAX_BUFS)
+		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+
+	ref_registered[ref_registered_count++] = buf_base;
+	return ds_file_ok();
+}
+
+ds_file_error_t
+ds_file_buf_deregister(const void *buf_base)
+{
+	if (!driver_open)
+		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+	if (!buf_base)
+		return ds_file_err(DS_FILE_INVALID_VALUE);
+
+	for (int i = 0; i < ref_registered_count; i++) {
+		if (ref_registered[i] == buf_base) {
+			ref_registered[i] =
+			        ref_registered[--ref_registered_count];
+			return ds_file_ok();
+		}
+	}
+	return ds_file_err(DS_FILE_MEMORY_NOT_REGISTERED);
 }
 
 ssize_t
