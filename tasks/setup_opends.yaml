@@ -18,4 +18,4 @@ steps:
 
   - name: build
     run: |
-      {{ config.opends.repository.path }}/tasks/steps/build_opends.sh {{ config.opends.repository.path }} {{ config.opends.build_dir }}
+      '{{ config.opends.repository.path }}/tasks/steps/build_opends.sh' '{{ config.opends.repository.path }}' '{{ config.opends.build_dir }}'
