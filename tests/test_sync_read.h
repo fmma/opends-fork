@@ -25,9 +25,15 @@ struct test_env {
 	ds_file_handle_t fh;
 	void *(*buf_to_host)(void *dst, const void *src, size_t n);
 	void (*buf_zero)(void *buf, size_t n);
-	/* Optional: backend-specific assertion on buffers from ds_file_alloc
+	/* Optional: backend-specific assertion on acquired buffers
 	 * (e.g. "this is a CUDA device pointer"). NULL means no check. */
 	void (*check_buffer)(const void *buf);
+	/* Buffer acquisition. In alloc-mode these wrap
+	 * ds_file_alloc/ds_file_free; in register-mode they wrap a
+	 * backend-specific allocator plus ds_file_buf_register/deregister. */
+	void *(*buf_acquire)(size_t size);
+	void (*buf_release)(void *buf);
+	const char *mode_label;
 };
 
 /*
@@ -105,13 +111,13 @@ verify_read(struct test_env *env, void *buf, size_t alloc_size, size_t size,
 static int
 test_read_single_block(struct test_env *env)
 {
-	void *buf = ds_file_alloc(PAGE);
+	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
 		return 1;
 
 	int rc = verify_read(env, buf, PAGE, PAGE, 0, 0, "single_block");
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -120,13 +126,13 @@ static int
 test_read_multi_block(struct test_env *env)
 {
 	size_t size = 4 * PAGE;
-	void *buf = ds_file_alloc(size);
+	void *buf = env->buf_acquire(size);
 	if (!buf)
 		return 1;
 
 	int rc = verify_read(env, buf, size, size, 0, 0, "multi_block");
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -134,13 +140,13 @@ test_read_multi_block(struct test_env *env)
 static int
 test_read_at_offset(struct test_env *env)
 {
-	void *buf = ds_file_alloc(PAGE);
+	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
 		return 1;
 
 	int rc = verify_read(env, buf, PAGE, PAGE, 2 * PAGE, 0, "at_offset");
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -149,14 +155,14 @@ static int
 test_read_multi_at_offset(struct test_env *env)
 {
 	size_t size = 2 * PAGE;
-	void *buf = ds_file_alloc(size);
+	void *buf = env->buf_acquire(size);
 	if (!buf)
 		return 1;
 
 	int rc = verify_read(env, buf, size, size, PAGE, 0,
 	                     "multi_at_offset");
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -164,14 +170,14 @@ test_read_multi_at_offset(struct test_env *env)
 static int
 test_read_full_file(struct test_env *env)
 {
-	void *buf = ds_file_alloc(FILE_SIZE);
+	void *buf = env->buf_acquire(FILE_SIZE);
 	if (!buf)
 		return 1;
 
 	int rc = verify_read(env, buf, FILE_SIZE, FILE_SIZE, 0, 0,
 	                     "full_file");
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -180,13 +186,13 @@ static int
 test_read_last_block(struct test_env *env)
 {
 	off_t off = (off_t)((FILE_PAGES - 1) * PAGE);
-	void *buf = ds_file_alloc(PAGE);
+	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
 		return 1;
 
 	int rc = verify_read(env, buf, PAGE, PAGE, off, 0, "last_block");
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -199,13 +205,13 @@ test_read_short_at_eof(struct test_env *env)
 {
 	size_t req = 2 * PAGE;
 	off_t off = (off_t)((FILE_PAGES - 1) * PAGE);
-	void *buf = ds_file_alloc(req);
+	void *buf = env->buf_acquire(req);
 	if (!buf)
 		return 1;
 
 	int rc = verify_read(env, buf, req, req, off, 0, "short_at_eof");
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -213,7 +219,7 @@ test_read_short_at_eof(struct test_env *env)
 static int
 test_read_at_eof(struct test_env *env)
 {
-	void *buf = ds_file_alloc(PAGE);
+	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
 		return 1;
 
@@ -222,11 +228,11 @@ test_read_at_eof(struct test_env *env)
 	if (n < 0) {
 		fprintf(stderr, "  at_eof: %s\n",
 		        ds_file_op_status_error((ds_file_op_error_t)(-n)));
-		ds_file_free(buf);
+		env->buf_release(buf);
 		return 1;
 	}
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	if (n != 0) {
 		fprintf(stderr, "  at_eof: got %zd bytes, expected 0\n", n);
 		return 1;
@@ -238,7 +244,7 @@ test_read_at_eof(struct test_env *env)
 static int
 test_read_beyond_eof(struct test_env *env)
 {
-	void *buf = ds_file_alloc(PAGE);
+	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
 		return 1;
 
@@ -248,11 +254,11 @@ test_read_beyond_eof(struct test_env *env)
 	if (n < 0) {
 		fprintf(stderr, "  beyond_eof: %s\n",
 		        ds_file_op_status_error((ds_file_op_error_t)(-n)));
-		ds_file_free(buf);
+		env->buf_release(buf);
 		return 1;
 	}
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	if (n != 0) {
 		fprintf(stderr, "  beyond_eof: got %zd bytes, expected 0\n", n);
 		return 1;
@@ -264,13 +270,13 @@ test_read_beyond_eof(struct test_env *env)
 static int
 test_read_zero_size(struct test_env *env)
 {
-	void *buf = ds_file_alloc(PAGE);
+	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
 		return 1;
 
 	ssize_t n = ds_file_read(env->fh, buf, 0, 0, 0);
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	if (n != 0) {
 		fprintf(stderr, "  zero_size: got %zd, expected 0\n", n);
 		return 1;
@@ -284,13 +290,13 @@ test_read_buf_offset(struct test_env *env)
 {
 	size_t alloc = 2 * PAGE;
 	off_t boff = PAGE;
-	void *buf = ds_file_alloc(alloc);
+	void *buf = env->buf_acquire(alloc);
 	if (!buf)
 		return 1;
 
 	int rc = verify_read(env, buf, alloc, PAGE, 0, boff, "buf_offset");
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -303,7 +309,7 @@ test_read_buf_offset_boundaries(struct test_env *env)
 {
 	size_t alloc = 3 * PAGE;
 	off_t boff = PAGE;
-	void *buf = ds_file_alloc(alloc);
+	void *buf = env->buf_acquire(alloc);
 	if (!buf)
 		return 1;
 
@@ -312,13 +318,13 @@ test_read_buf_offset_boundaries(struct test_env *env)
 	ssize_t n = ds_file_read(env->fh, buf, PAGE, 0, boff);
 	if (n != (ssize_t)PAGE) {
 		fprintf(stderr, "  buf_offset_bounds: got %zd bytes\n", n);
-		ds_file_free(buf);
+		env->buf_release(buf);
 		return 1;
 	}
 
 	char *host = malloc(alloc);
 	if (!host) {
-		ds_file_free(buf);
+		env->buf_release(buf);
 		return 1;
 	}
 	env->buf_to_host(host, buf, alloc);
@@ -338,7 +344,7 @@ test_read_buf_offset_boundaries(struct test_env *env)
 
 	free(zeroes);
 	free(host);
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -347,7 +353,7 @@ static int
 test_read_sequential_regions(struct test_env *env)
 {
 	size_t quarter = FILE_SIZE / 4;
-	void *buf = ds_file_alloc(quarter);
+	void *buf = env->buf_acquire(quarter);
 	if (!buf)
 		return 1;
 
@@ -361,7 +367,7 @@ test_read_sequential_regions(struct test_env *env)
 			break;
 	}
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -373,7 +379,7 @@ static int
 test_read_overlapping_regions(struct test_env *env)
 {
 	size_t size = 2 * PAGE;
-	void *buf = ds_file_alloc(size);
+	void *buf = env->buf_acquire(size);
 	if (!buf)
 		return 1;
 
@@ -382,7 +388,7 @@ test_read_overlapping_regions(struct test_env *env)
 	if (!host_a || !host_b) {
 		free(host_a);
 		free(host_b);
-		ds_file_free(buf);
+		env->buf_release(buf);
 		return 1;
 	}
 
@@ -393,7 +399,7 @@ test_read_overlapping_regions(struct test_env *env)
 		fprintf(stderr, "  overlap: read A got %zd\n", n1);
 		free(host_a);
 		free(host_b);
-		ds_file_free(buf);
+		env->buf_release(buf);
 		return 1;
 	}
 	env->buf_to_host(host_a, buf, size);
@@ -405,7 +411,7 @@ test_read_overlapping_regions(struct test_env *env)
 		fprintf(stderr, "  overlap: read B got %zd\n", n2);
 		free(host_a);
 		free(host_b);
-		ds_file_free(buf);
+		env->buf_release(buf);
 		return 1;
 	}
 	env->buf_to_host(host_b, buf, size);
@@ -419,7 +425,7 @@ test_read_overlapping_regions(struct test_env *env)
 
 	free(host_a);
 	free(host_b);
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -427,7 +433,7 @@ test_read_overlapping_regions(struct test_env *env)
 static int
 test_read_repeated(struct test_env *env)
 {
-	void *buf = ds_file_alloc(PAGE);
+	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
 		return 1;
 
@@ -436,7 +442,7 @@ test_read_repeated(struct test_env *env)
 	if (!host_a || !host_b) {
 		free(host_a);
 		free(host_b);
-		ds_file_free(buf);
+		env->buf_release(buf);
 		return 1;
 	}
 
@@ -460,7 +466,7 @@ test_read_repeated(struct test_env *env)
 
 	free(host_a);
 	free(host_b);
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -493,7 +499,7 @@ test_read_offset_size_sweep(struct test_env *env)
 			max_size = cases[i].size;
 	}
 
-	void *buf = ds_file_alloc(max_size);
+	void *buf = env->buf_acquire(max_size);
 	if (!buf)
 		return 1;
 
@@ -508,7 +514,7 @@ test_read_offset_size_sweep(struct test_env *env)
 			break;
 	}
 
-	ds_file_free(buf);
+	env->buf_release(buf);
 	return rc;
 }
 
@@ -545,14 +551,17 @@ static const struct test_entry sync_read_tests[] = {
 static int
 run_sync_read_tests(struct test_env *env)
 {
+	fprintf(stderr, "  [%s mode]\n",
+	        env->mode_label ? env->mode_label : "default");
+
 	if (env->check_buffer) {
-		void *probe = ds_file_alloc(PAGE);
+		void *probe = env->buf_acquire(PAGE);
 		if (!probe) {
-			fprintf(stderr, "ds_file_alloc probe failed\n");
+			fprintf(stderr, "  buf_acquire probe failed\n");
 			return 1;
 		}
 		env->check_buffer(probe);
-		ds_file_free(probe);
+		env->buf_release(probe);
 	}
 
 	int failed = 0;
