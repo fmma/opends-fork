@@ -9,9 +9,12 @@ path = "/root/OpenDS"
 [xnvme]
 build_dir = "/tmp/xnvme-build"
 
+# Temporary fork: adds the `.mem_map`/`.mem_unmap` hooks and CUDA BAR1
+# `device_pagesize` handling that the aisio register path needs. Revert
+# to upstream `xnvme/xnvme` once these land upstream.
 [xnvme.repository]
-remote = "https://github.com/xnvme/xnvme"
-branch = "main"
+remote = "https://github.com/fmma/xnvme"
+branch = "feat/upcie-cuda-mem-map"
 path = "/root/xnvme"
 
 [test]
