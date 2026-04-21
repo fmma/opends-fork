@@ -21,43 +21,43 @@ doc: |
 steps:
   - name: bind_nvme
     run: |
-      {{ config.opends.repository.path }}/tasks/steps/bind_nvme.sh {{ config.test.nvme_bdf }} {{ config.test.nvme_ns }}
+      '{{ config.opends.repository.path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.nvme_ns }}'
 
   - name: mount
     run: |
-      {{ config.opends.repository.path }}/tasks/steps/mount_nvme.sh {{ config.test.nvme_ns }} {{ config.test.mount_point }}
+      '{{ config.opends.repository.path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_ns }}' '{{ config.test.mount_point }}'
 
   - name: test_smoke_ref
     run: |
-      {{ config.opends.build_dir }}/test_smoke_ref
+      '{{ config.opends.build_dir }}/test_smoke_ref'
 
   - name: test_sync_read_prep
     run: |
-      {{ config.opends.build_dir }}/test_sync_read_prep {{ config.test.mount_point }}/opends_sync_read_pattern.bin
+      '{{ config.opends.build_dir }}/test_sync_read_prep' '{{ config.test.mount_point }}/opends_sync_read_pattern.bin'
 
   - name: test_sync_read_ref
     run: |
-      {{ config.opends.build_dir }}/test_sync_read_ref {{ config.test.mount_point }}/opends_sync_read_pattern.bin
+      '{{ config.opends.build_dir }}/test_sync_read_ref' '{{ config.test.mount_point }}/opends_sync_read_pattern.bin'
 
   - name: test_sync_read_gds
     run: |
-      {{ config.opends.build_dir }}/test_sync_read_gds {{ config.test.mount_point }}/opends_sync_read_pattern.bin
+      '{{ config.opends.build_dir }}/test_sync_read_gds' '{{ config.test.mount_point }}/opends_sync_read_pattern.bin'
 
   - name: cache_extents
     run: |
-      {{ config.opends.build_dir }}/cache_extents \
-        {{ config.test.mount_point }}/opends_sync_read_pattern.bin \
-        {{ config.opends.build_dir }}/opends_extents.bin
+      '{{ config.opends.build_dir }}/cache_extents' \
+        '{{ config.test.mount_point }}/opends_sync_read_pattern.bin' \
+        '{{ config.opends.build_dir }}/opends_extents.bin'
 
   - name: unbind_nvme
     run: |
-      {{ config.opends.repository.path }}/tasks/steps/unbind_nvme.sh {{ config.opends.build_dir }}/opends_extents.bin {{ config.test.nvme_bdf }} {{ config.test.mount_point }}
+      '{{ config.opends.repository.path }}/tasks/steps/unbind_nvme.sh' '{{ config.opends.build_dir }}/opends_extents.bin' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: test_sync_read_aisio
     run: |
-      OPENDS_EXTENT_CACHE={{ config.opends.build_dir }}/opends_extents.bin \
-        {{ config.opends.build_dir }}/test_sync_read_aisio
+      OPENDS_EXTENT_CACHE='{{ config.opends.build_dir }}/opends_extents.bin' \
+        '{{ config.opends.build_dir }}/test_sync_read_aisio'
 
   - name: rebind_nvme
     run: |
-      {{ config.opends.repository.path }}/tasks/steps/rebind_nvme.sh {{ config.opends.build_dir }}/opends_extents.bin {{ config.test.nvme_bdf }}
+      '{{ config.opends.repository.path }}/tasks/steps/rebind_nvme.sh' '{{ config.opends.build_dir }}/opends_extents.bin' '{{ config.test.nvme_bdf }}'
