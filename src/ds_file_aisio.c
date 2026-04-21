@@ -34,6 +34,8 @@
 struct buf_entry {
 	const void *base;
 	size_t length;
+	bool owned; /* true: from ds_file_alloc (xnvme_buf_alloc);
+	             * false: registered via ds_file_buf_register (xnvme_mem_map). */
 };
 
 struct aisio_handle {
@@ -192,8 +194,13 @@ ds_file_driver_close(void)
 	if (!drv)
 		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
 
-	for (int i = 0; i < drv->buf_count; i++)
-		xnvme_buf_free(drv->xdev, (void *)drv->bufs[i].base);
+	for (int i = 0; i < drv->buf_count; i++) {
+		struct buf_entry *e = &drv->bufs[i];
+		if (e->owned)
+			xnvme_buf_free(drv->xdev, (void *)e->base);
+		else
+			xnvme_mem_unmap(drv->xdev, (void *)e->base);
+	}
 	drv->buf_count = 0;
 
 	if (drv->xdev)
@@ -300,6 +307,7 @@ ds_file_alloc(size_t size)
 	struct buf_entry *e = &drv->bufs[drv->buf_count++];
 	e->base = buf;
 	e->length = size;
+	e->owned = true;
 	return buf;
 }
 
@@ -311,12 +319,67 @@ ds_file_free(void *buf)
 
 	for (int i = 0; i < drv->buf_count; i++) {
 		if (drv->bufs[i].base == buf) {
+			if (!drv->bufs[i].owned)
+				return;
 			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
 			drv->buf_count--;
 			xnvme_buf_free(drv->xdev, buf);
 			return;
 		}
 	}
+}
+
+ds_file_error_t
+ds_file_buf_register(const void *buf_base, size_t size, int flags)
+{
+	(void)flags;
+
+	if (!drv)
+		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+	if (!drv->xdev)
+		return ds_file_err(DS_FILE_DEVICE_NOT_FOUND);
+	if (!buf_base || !size)
+		return ds_file_err(DS_FILE_INVALID_VALUE);
+
+	for (int i = 0; i < drv->buf_count; i++) {
+		if (drv->bufs[i].base == buf_base)
+			return ds_file_err(DS_FILE_MEMORY_ALREADY_REGISTERED);
+	}
+	if (drv->buf_count >= MAX_BUF_ENTRIES)
+		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+
+	int rc = xnvme_mem_map(drv->xdev, (void *)buf_base, size);
+	if (rc < 0)
+		return ds_file_err(DS_FILE_DEVICE_DRIVER_ERROR);
+
+	struct buf_entry *e = &drv->bufs[drv->buf_count++];
+	e->base = buf_base;
+	e->length = size;
+	e->owned = false;
+	return ds_file_ok();
+}
+
+ds_file_error_t
+ds_file_buf_deregister(const void *buf_base)
+{
+	if (!drv)
+		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+	if (!drv->xdev)
+		return ds_file_err(DS_FILE_DEVICE_NOT_FOUND);
+	if (!buf_base)
+		return ds_file_err(DS_FILE_INVALID_VALUE);
+
+	for (int i = 0; i < drv->buf_count; i++) {
+		if (drv->bufs[i].base == buf_base) {
+			if (drv->bufs[i].owned)
+				return ds_file_err(DS_FILE_INVALID_VALUE);
+			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
+			drv->buf_count--;
+			xnvme_mem_unmap(drv->xdev, (void *)buf_base);
+			return ds_file_ok();
+		}
+	}
+	return ds_file_err(DS_FILE_MEMORY_NOT_REGISTERED);
 }
 
 /* ------------------------------------------------------------------ */
