@@ -2,6 +2,11 @@
 # Mount NVMe namespace.
 set -e
 
+if [ $# -ne 2 ]; then
+	echo "usage: mount_nvme.sh NS MOUNT" >&2
+	exit 1
+fi
+
 NS=$1
 MOUNT=$2
 
@@ -13,10 +18,9 @@ fi
 umount -l "$MOUNT" 2>/dev/null || true
 mkdir -p "$MOUNT"
 
-if ! mount "$NS" "$MOUNT"; then
-	echo "error: failed to mount $NS on $MOUNT"
-	echo "dmesg tail:"
-	dmesg | tail -5
-	exit 1
+if [ "$(blkid -o value -s TYPE "$NS" 2>/dev/null)" != "xfs" ]; then
+	echo "no xfs filesystem on $NS; formatting"
+	mkfs.xfs -f -q "$NS"
 fi
+mount "$NS" "$MOUNT"
 echo "$NS mounted on $MOUNT"

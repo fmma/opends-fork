@@ -6,6 +6,14 @@ remote = "https://github.com/fmma/OpenDS"
 branch = "main"
 path = "/root/OpenDS"
 
+[xnvme]
+build_dir = "/tmp/xnvme-build"
+
+[xnvme.repository]
+remote = "https://github.com/xnvme/xnvme"
+branch = "main"
+path = "/root/xnvme"
+
 [test]
 nvme_bdf = "CHANGE_ME"      # PCI BDF of NVMe device (lspci -D -d ::0108)
 nvme_ns = "CHANGE_ME"       # NVMe namespace device (e.g. /dev/nvme0n1)
