@@ -2,6 +2,11 @@
 # Bind NVMe device to kernel driver.
 set -e
 
+if [ $# -ne 2 ]; then
+	echo "usage: bind_nvme.sh BDF NS" >&2
+	exit 1
+fi
+
 BDF=$1
 NS=$2
 

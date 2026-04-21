@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+if [ $# -ne 2 ]; then
+	echo "usage: build_opends.sh SRC_DIR BUILD_DIR" >&2
+	exit 1
+fi
+
 SRC_DIR=$1
 BUILD_DIR=$2
 
