@@ -140,8 +140,9 @@ void ds_file_free(void *buf);
 /*
  * Register an externally allocated buffer for use with ds_file_read
  * and ds_file_write. The caller retains ownership of the allocation;
- * deregister before freeing. flags is accepted for cuFile parity and
- * currently ignored.
+ * deregister before freeing. flags is forwarded to the backend (e.g.
+ * cuFileBufRegister flags for gds); the ref and aisio backends ignore
+ * it.
  */
 ds_file_error_t ds_file_buf_register(const void *buf_base, size_t size,
                                      int flags);
