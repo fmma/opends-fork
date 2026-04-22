@@ -6,21 +6,6 @@ remote = "https://github.com/fmma/OpenDS"
 branch = "main"
 path = "/root/OpenDS"
 
-[xnvme]
-build_dir = "/tmp/xnvme-build"
-
-# Temporary fork: adds the `.mem_map`/`.mem_unmap` hooks and CUDA BAR1
-# `device_pagesize` handling that the aisio register path needs. Revert
-# to upstream `xnvme/xnvme` once these land upstream.
-# Temporary fork: adds the `.mem_map`/`.mem_unmap` hooks and CUDA BAR1
-# `device_pagesize` handling that the aisio register path needs. Pinned
-# to a commit on `feat/upcie-cuda-mem-map`; revert to upstream
-# `xnvme/xnvme` once these land upstream.
-[xnvme.repository]
-remote = "https://github.com/fmma/xnvme"
-ref = "5c09f41c0ca46a330257539183e9d5134271626d"
-path = "/root/xnvme"
-
 [test]
 nvme_bdf = "CHANGE_ME"      # PCI BDF of NVMe device (lspci -D -d ::0108)
 nvme_ns = "CHANGE_ME"       # NVMe namespace device (e.g. /dev/nvme0n1)

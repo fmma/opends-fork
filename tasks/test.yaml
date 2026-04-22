@@ -15,6 +15,7 @@ doc: |
 
       cijoe \
         -c configs/transport.toml \
+        -c configs/deps.toml \
         -c configs/test.toml \
         tasks/test.yaml
 

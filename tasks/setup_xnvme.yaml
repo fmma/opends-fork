@@ -6,12 +6,12 @@ doc: |
   configured ref (branch, tag, or commit), then builds and installs
   xNVMe so its pkg-config file becomes discoverable when building
   OpenDS. The remote and ref are read from [xnvme.repository] in
-  test.toml, so the same task works against upstream xNVMe or any fork.
+  deps.toml, so the same task works against upstream xNVMe or any fork.
 
   The aisio backend's ds_file_buf_register path requires the
   fmma/xnvme#feat/upcie-cuda-mem-map fork which adds .mem_map and
-  .mem_unmap hooks to the upcie-cuda backend; test.toml.example
-  points at that fork by default.
+  .mem_unmap hooks to the upcie-cuda backend; deps.toml points at a
+  pinned commit on that fork.
 
   Assumes the OpenDS tree has been synced to the target (setup_deps.py
   does this).
@@ -20,6 +20,7 @@ doc: |
 
       cijoe \
         -c configs/transport.toml \
+        -c configs/deps.toml \
         -c configs/test.toml \
         tasks/setup_xnvme.yaml
 
