@@ -14,6 +14,6 @@ configs = ["-c", "configs/transport.toml", "-c", "configs/deps.toml",
            "-c", "configs/test.toml"]
 sys.exit(subprocess.run(
     ["cijoe", "-m", "-s", "-o", "cijoe-output-build", *configs,
-     "tasks/setup_opends.yaml", "build"],
+     "tasks/setup_opends.yaml"],
     cwd=root,
 ).returncode)
