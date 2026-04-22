@@ -109,6 +109,13 @@ ds_file_alloc(size_t size)
 void
 ds_file_free(void *buf)
 {
+	if (!buf)
+		return;
+
+	for (int i = 0; i < ref_registered_count; i++) {
+		if (ref_registered[i] == buf)
+			return;
+	}
 	free(buf);
 }
 
