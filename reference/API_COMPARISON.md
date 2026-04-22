@@ -99,7 +99,7 @@ OpenDS takes a plain `int fd`. No descriptor struct, no handle type enum, no Win
 
 cuFile and hipFile separate allocation (GPU runtime) from registration (cuFile/hipFile library). The user allocates with `cudaMalloc`/`hipMalloc` and then registers the pointer for DMA.
 
-OpenDS supports both models. Callers may allocate externally (`cudaMalloc`, `aligned_alloc`) and register with `ds_file_buf_register` (matching cuFile/hipFile), or let the backend own both with `ds_file_alloc`. The `flags` parameter of `ds_file_buf_register` is accepted for parity and currently ignored.
+OpenDS supports both models. Callers may allocate externally (`cudaMalloc`, `aligned_alloc`) and register with `ds_file_buf_register` (matching cuFile/hipFile), or let the backend own both with `ds_file_alloc`. The `flags` parameter of `ds_file_buf_register` is forwarded to the backend (e.g. `cuFileBufRegister` flags for gds); the ref and aisio backends ignore it.
 
 ## Synchronous I/O
 
