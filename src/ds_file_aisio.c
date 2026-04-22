@@ -319,11 +319,11 @@ ds_file_free(void *buf)
 
 	for (int i = 0; i < drv->buf_count; i++) {
 		if (drv->bufs[i].base == buf) {
-			bool owned = drv->bufs[i].owned;
+			if (!drv->bufs[i].owned)
+				return;
+			xnvme_buf_free(drv->xdev, buf);
 			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
 			drv->buf_count--;
-			if (owned)
-				xnvme_buf_free(drv->xdev, buf);
 			return;
 		}
 	}
