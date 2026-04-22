@@ -2,8 +2,8 @@ doc: |
   Setup OpenDS
   =============
 
-  Clones or updates the OpenDS repository on the target, then builds
-  all available backends with meson.
+  Builds all available backends with meson on the target. Assumes
+  scripts/rsync.py has synced the working tree to config.test.repo_path.
 
   Run::
 
@@ -14,9 +14,6 @@ doc: |
         tasks/setup_opends.yaml
 
 steps:
-  - name: fetch_sources
-    uses: core.repository_prep
-
   - name: build
     run: |
-      '{{ config.opends.repository.path }}/tasks/steps/build_opends.sh' '{{ config.opends.repository.path }}' '{{ config.opends.build_dir }}'
+      '{{ config.test.repo_path }}/tasks/steps/build_opends.sh' '{{ config.test.repo_path }}' '{{ config.test.build_dir }}'
