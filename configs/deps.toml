@@ -1,0 +1,14 @@
+# Build dependencies pinned for the target. Tracked in-repo; not a
+# per-machine override. Anyone running the cijoe tasks builds against
+# exactly these refs.
+
+[xnvme]
+build_dir = "/tmp/xnvme-build"
+
+# Temporary fork: adds the `.mem_map`/`.mem_unmap` hooks and CUDA BAR1
+# `device_pagesize` handling that the aisio register path needs. Revert
+# to upstream `xnvme/xnvme` once these land upstream.
+[xnvme.repository]
+remote = "https://github.com/fmma/xnvme"
+ref = "5c09f41c0ca46a330257539183e9d5134271626d"
+path = "/root/xnvme"

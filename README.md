@@ -156,11 +156,15 @@ Integration tests run on a remote target via
 [CIJOE](https://github.com/refenv/cijoe). The target needs an NVMe
 device, an NVIDIA GPU (for GDS and aisio tests), GDS support (for
 GDS tests), and xNVMe with the `upcie-cuda` backend (for aisio
-tests). The `test_sync_read_prep` step writes a pattern file on the
-mounted filesystem and each backend test reads it back. The aisio
-phase runs last: it builds an extent cache while the filesystem is
-still mounted, then unbinds the NVMe kernel driver so the backend
-can drive the device directly over PCIe.
+tests). The xNVMe build dependency is pinned in the tracked
+`configs/deps.toml`; `scripts/setup_deps.py` builds and installs it
+on the target from that pin.
+
+The `test_sync_read_prep` step writes a pattern file on the mounted
+filesystem and each backend test reads it back. The aisio phase runs
+last: it builds an extent cache while the filesystem is still
+mounted, then unbinds the NVMe kernel driver so the backend can
+drive the device directly over PCIe.
 
 1. Copy the example configs and fill in target details:
 
@@ -169,10 +173,21 @@ can drive the device directly over PCIe.
    cp configs/test.toml.example configs/test.toml
    ```
 
-2. Sync code and build on the target:
+   `configs/deps.toml` is tracked in-repo and needs no editing.
+
+2. First-run bootstrap. Sync the tree, install xNVMe on the target,
+   build OpenDS:
 
    ```sh
-   python scripts/sync_and_build.py
+   python scripts/rsync.py
+   python scripts/setup_deps.py   # Only needed once, for the aisio backend.
+   python scripts/build.py
+   ```
+
+   Iterative loop drops `setup_deps.py`:
+
+   ```sh
+   python scripts/rsync.py && python scripts/build.py
    ```
 
 3. Run all test suites:

@@ -14,9 +14,11 @@
  *     cuFileDescr_t type/union and USERSPACE_FS handle type are
  *     not supported.
  *
- *   - Buffer registration (cuFileBufRegister/Deregister) is replaced
- *     by ds_file_alloc/ds_file_free. The backend must own allocations
- *     to set up DMA mappings through xNVMe.
+ *   - Buffer registration (cuFileBufRegister/Deregister) is offered
+ *     alongside backend-owned allocation via ds_file_alloc/ds_file_free.
+ *     Callers may allocate their own memory (e.g. cudaMalloc) and call
+ *     ds_file_buf_register, or let the backend handle both with
+ *     ds_file_alloc.
  *
  * Error reporting:
  *
@@ -129,11 +131,22 @@ void ds_file_handle_deregister(ds_file_handle_t fh);
 
 /*
  * Buffer allocation. Buffers used with ds_file_read/write must be
- * allocated through ds_file_alloc so the backend can set up DMA
- * mappings.
+ * either allocated through ds_file_alloc or registered with
+ * ds_file_buf_register so the backend can set up DMA mappings.
  */
 void *ds_file_alloc(size_t size);
 void ds_file_free(void *buf);
+
+/*
+ * Register an externally allocated buffer for use with ds_file_read
+ * and ds_file_write. The caller retains ownership of the allocation;
+ * deregister before freeing. flags is forwarded to the backend (e.g.
+ * cuFileBufRegister flags for gds); the ref and aisio backends ignore
+ * it.
+ */
+ds_file_error_t ds_file_buf_register(const void *buf_base, size_t size,
+                                     int flags);
+ds_file_error_t ds_file_buf_deregister(const void *buf_base);
 
 /*
  * Synchronous I/O. Returns byte count on success or a negated

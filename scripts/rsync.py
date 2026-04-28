@@ -15,7 +15,7 @@ with open(root / "configs" / "test.toml", "rb") as f:
     test = tomllib.load(f)
 
 ssh = transport["cijoe"]["transport"]["ssh"]
-dest = test["opends"]["repository"]["path"]
+dest = test["test"]["repo_path"]
 target = f"{ssh['username']}@{ssh['hostname']}"
 
 sys.exit(subprocess.run(

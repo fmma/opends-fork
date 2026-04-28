@@ -11,7 +11,8 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
 
-configs = ["-c", "configs/transport.toml", "-c", "configs/test.toml"]
+configs = ["-c", "configs/transport.toml", "-c", "configs/deps.toml",
+           "-c", "configs/test.toml"]
 sys.exit(subprocess.run(
     ["cijoe", "-m", "-s", "-o", "cijoe-output-setup-deps", *configs,
      "tasks/setup_xnvme.yaml"],

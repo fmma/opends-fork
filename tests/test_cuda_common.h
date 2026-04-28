@@ -9,6 +9,8 @@
 #ifndef OPENDS_TEST_CUDA_COMMON_H
 #define OPENDS_TEST_CUDA_COMMON_H
 
+#include "opends.h"
+
 #include <cuda_runtime.h>
 
 #include <stdio.h>
@@ -43,6 +45,56 @@ cuda_check_buffer(const void *buf)
 		                "(type=%d)\n", (int)attrs.type);
 		abort();
 	}
+}
+
+/*
+ * xNVMe's upcie-cuda backend requires mem_map alignment to
+ * cudamem_config.device_pagesize (64 KiB on CUDA, the BAR1 page size).
+ * Pad register-mode allocations up to that granularity.
+ */
+#define CUDA_REGISTER_PAGE  65536
+#define CUDA_REGISTER_ALIGN(x)                                                \
+	(((x) + (CUDA_REGISTER_PAGE - 1)) & ~((size_t)CUDA_REGISTER_PAGE - 1))
+
+static inline void *
+cuda_alloc_acquire(size_t size)
+{
+	return ds_file_alloc(size);
+}
+
+static inline void
+cuda_alloc_release(void *buf)
+{
+	ds_file_free(buf);
+}
+
+static inline void *
+cuda_register_acquire(size_t size)
+{
+	size_t aligned = CUDA_REGISTER_ALIGN(size);
+	void *buf = NULL;
+	cudaError_t rc = cudaMalloc(&buf, aligned);
+	if (rc != cudaSuccess) {
+		fprintf(stderr, "  cudaMalloc: %s\n", cudaGetErrorString(rc));
+		return NULL;
+	}
+	ds_file_error_t err = ds_file_buf_register(buf, aligned, 0);
+	if (err.err != DS_FILE_SUCCESS) {
+		fprintf(stderr, "  buf_register: %s\n",
+		        ds_file_op_status_error(err.err));
+		cudaFree(buf);
+		return NULL;
+	}
+	return buf;
+}
+
+static inline void
+cuda_register_release(void *buf)
+{
+	if (!buf)
+		return;
+	ds_file_buf_deregister(buf);
+	cudaFree(buf);
 }
 
 #endif /* OPENDS_TEST_CUDA_COMMON_H */
