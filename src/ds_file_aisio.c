@@ -35,7 +35,8 @@ struct buf_entry {
 	const void *base;
 	size_t length;
 	bool owned; /* true: from ds_file_alloc (xnvme_buf_alloc);
-	             * false: registered via ds_file_buf_register (xnvme_mem_map). */
+	             * false: registered via ds_file_buf_register
+	             * (xnvme_mem_map). */
 };
 
 struct aisio_handle {
