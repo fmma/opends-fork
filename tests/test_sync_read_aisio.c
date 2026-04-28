@@ -42,15 +42,29 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	struct test_env env = {
+	fprintf(stderr, "ds_file_read sync tests (aisio backend)\n");
+
+	struct test_env env_alloc = {
 		.fh = fh,
 		.buf_to_host = cuda_buf_to_host,
 		.buf_zero = cuda_buf_zero,
 		.check_buffer = cuda_check_buffer,
+		.buf_acquire = cuda_alloc_acquire,
+		.buf_release = cuda_alloc_release,
+		.mode_label = "alloc",
 	};
+	int failed = run_sync_read_tests(&env_alloc);
 
-	fprintf(stderr, "ds_file_read sync tests (aisio backend)\n");
-	int failed = run_sync_read_tests(&env);
+	struct test_env env_register = {
+		.fh = fh,
+		.buf_to_host = cuda_buf_to_host,
+		.buf_zero = cuda_buf_zero,
+		.check_buffer = cuda_check_buffer,
+		.buf_acquire = cuda_register_acquire,
+		.buf_release = cuda_register_release,
+		.mode_label = "register",
+	};
+	failed += run_sync_read_tests(&env_register);
 
 	ds_file_handle_deregister(fh);
 	ds_file_driver_close();

@@ -189,6 +189,32 @@ ds_file_free(void *buf)
 	cudaFree(buf);
 }
 
+ds_file_error_t
+ds_file_buf_register(const void *buf_base, size_t size, int flags)
+{
+	if (!driver_open)
+		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+	if (!buf_base || !size)
+		return ds_file_err(DS_FILE_INVALID_VALUE);
+	CUfileError_t err = cuFileBufRegister(buf_base, size, flags);
+	if (err.err != CU_FILE_SUCCESS)
+		return from_cufile_error(err);
+	return ds_file_ok();
+}
+
+ds_file_error_t
+ds_file_buf_deregister(const void *buf_base)
+{
+	if (!driver_open)
+		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+	if (!buf_base)
+		return ds_file_err(DS_FILE_INVALID_VALUE);
+	CUfileError_t err = cuFileBufDeregister(buf_base);
+	if (err.err != CU_FILE_SUCCESS)
+		return from_cufile_error(err);
+	return ds_file_ok();
+}
+
 /* ------------------------------------------------------------------ */
 /*  Synchronous I/O                                                    */
 /* ------------------------------------------------------------------ */
