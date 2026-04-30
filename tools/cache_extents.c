@@ -1,10 +1,14 @@
 /*
- * cache_extents - Build the HOMI mock extent cache for a file.
+ * cache_extents - Walk a directory tree, FIEMAP each regular file,
+ * and write the resulting extent map to disk in the multi-file
+ * extent_cache format consumed by fs_mock.
  *
- * Runs FS_IOC_FIEMAP to extract the file's physical extents, resolves
- * the backing NVMe namespace's PCI BDF, and writes the result to disk
- * in the extent_cache format consumed by the aisio backend's mock
- * HOMI client.
+ * Usage: cache_extents <root_dir> <output.bin>
+ *
+ * All files under <root_dir> must reside on the same XFS filesystem
+ * sitting on a single NVMe namespace (or partition). The PCI BDF and
+ * LBA size are resolved once from the first file encountered; later
+ * files are assumed to share them.
  */
 
 #define _GNU_SOURCE
@@ -13,6 +17,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <ftw.h>
 #include <linux/fiemap.h>
 #include <linux/fs.h>
 #include <stdio.h>
@@ -25,6 +30,24 @@
 
 #define MAX_EXTENTS 1024
 #define SECTOR_SIZE 512
+#define NFTW_MAX_FDS 32
+
+struct file_entry {
+	char *path;
+	struct homi_extent *extents;
+	uint32_t n_extents;
+};
+
+static struct {
+	struct file_entry *files;
+	uint32_t n_files;
+	uint32_t cap;
+	char bdf[16];
+	uint32_t lba_size;
+	uint64_t part_start;
+	int resolved;
+	int abort_rc;
+} g;
 
 static int
 resolve_nvme_ns_name(int fd, char *ns_name, size_t len)
@@ -165,44 +188,15 @@ resolve_pci_bdf(int fd, char *bdf, size_t len)
 	return 0;
 }
 
-int
-main(int argc, char **argv)
+static int
+fiemap_file(int fd, uint64_t file_size,
+            struct homi_extent **out_extents, uint32_t *out_count)
 {
-	if (argc != 3) {
-		fprintf(stderr, "usage: %s <input_file> <output.bin>\n",
-		        argv[0]);
-		return 1;
-	}
-
-	int fd = open(argv[1], O_RDONLY);
-	if (fd < 0) {
-		perror("open");
-		return 1;
-	}
-
-	struct stat file_st;
-	if (fstat(fd, &file_st) < 0) {
-		perror("fstat");
-		close(fd);
-		return 1;
-	}
-	uint64_t file_size = (uint64_t)file_st.st_size;
-
-	uint32_t lba_size = get_lba_size(fd);
-	uint64_t part_start = get_partition_start_bytes(fd);
-
-	char bdf[16] = {0};
-	if (resolve_pci_bdf(fd, bdf, sizeof(bdf)) < 0)
-		fprintf(stderr, "warning: could not resolve PCI BDF\n");
-
 	size_t buf_size = sizeof(struct fiemap) +
 	                  MAX_EXTENTS * sizeof(struct fiemap_extent);
 	struct fiemap *fm = calloc(1, buf_size);
-	if (!fm) {
-		perror("calloc");
-		close(fd);
-		return 1;
-	}
+	if (!fm)
+		return -ENOMEM;
 
 	fm->fm_start = 0;
 	fm->fm_length = FIEMAP_MAX_OFFSET;
@@ -210,79 +204,217 @@ main(int argc, char **argv)
 	fm->fm_extent_count = MAX_EXTENTS;
 
 	if (ioctl(fd, FS_IOC_FIEMAP, fm) < 0) {
-		perror("FS_IOC_FIEMAP");
+		int rc = -errno;
 		free(fm);
-		close(fd);
-		return 1;
+		return rc;
 	}
 
 	uint32_t count = fm->fm_mapped_extents;
 	if (count == 0) {
-		fprintf(stderr, "no extents found\n");
 		free(fm);
-		close(fd);
-		return 1;
+		*out_extents = NULL;
+		*out_count = 0;
+		return 0;
 	}
 
-	if (count > 0 &&
-	    !(fm->fm_extents[count - 1].fe_flags & FIEMAP_EXTENT_LAST)) {
+	if (!(fm->fm_extents[count - 1].fe_flags & FIEMAP_EXTENT_LAST)) {
 		fprintf(stderr,
 		        "extent list truncated at %u entries (MAX_EXTENTS=%d); "
 		        "raise MAX_EXTENTS and rebuild\n", count, MAX_EXTENTS);
 		free(fm);
-		close(fd);
-		return 1;
+		return -E2BIG;
 	}
 
-	struct extent_cache_record *records = calloc(count, sizeof(*records));
-	if (!records) {
-		perror("calloc");
+	struct homi_extent *ext = calloc(count, sizeof(*ext));
+	if (!ext) {
 		free(fm);
-		close(fd);
-		return 1;
+		return -ENOMEM;
 	}
 
 	for (uint32_t i = 0; i < count; i++) {
 		struct fiemap_extent *fe = &fm->fm_extents[i];
-		records[i].file_offset = fe->fe_logical;
-		records[i].slba = (fe->fe_physical + part_start) / lba_size;
-		records[i].length = fe->fe_length;
+		ext[i].file_offset = fe->fe_logical;
+		ext[i].slba = (fe->fe_physical + g.part_start) / g.lba_size;
+		ext[i].length = fe->fe_length;
 
 		/* Cap the last extent by the file's logical size: FIEMAP
 		 * returns on-disk extent length, which may include trailing
 		 * block padding past EOF. */
-		uint64_t end = records[i].file_offset + records[i].length;
+		uint64_t end = ext[i].file_offset + ext[i].length;
 		if (end > file_size)
-			records[i].length = file_size - records[i].file_offset;
+			ext[i].length = file_size - ext[i].file_offset;
 	}
 
 	free(fm);
-	close(fd);
+	*out_extents = ext;
+	*out_count = count;
+	return 0;
+}
 
-	FILE *out = fopen(argv[2], "wb");
+static int
+ensure_resolved(int fd)
+{
+	if (g.resolved)
+		return 0;
+
+	if (resolve_pci_bdf(fd, g.bdf, sizeof(g.bdf)) < 0) {
+		fprintf(stderr, "error: could not resolve PCI BDF\n");
+		return -ENOENT;
+	}
+	g.lba_size = get_lba_size(fd);
+	g.part_start = get_partition_start_bytes(fd);
+	g.resolved = 1;
+	return 0;
+}
+
+static int
+visit_file(const char *path, uint64_t file_size)
+{
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) {
+		fprintf(stderr, "open %s: %s\n", path, strerror(errno));
+		return -errno;
+	}
+
+	int rc = ensure_resolved(fd);
+	if (rc < 0) {
+		close(fd);
+		return rc;
+	}
+
+	struct homi_extent *extents = NULL;
+	uint32_t count = 0;
+	rc = fiemap_file(fd, file_size, &extents, &count);
+	close(fd);
+	if (rc < 0)
+		return rc;
+	if (count == 0) {
+		free(extents);
+		return 0;
+	}
+
+	if (g.n_files == g.cap) {
+		uint32_t new_cap = g.cap ? g.cap * 2 : 64;
+		struct file_entry *grown = realloc(
+		        g.files, new_cap * sizeof(*grown));
+		if (!grown) {
+			free(extents);
+			return -ENOMEM;
+		}
+		g.files = grown;
+		g.cap = new_cap;
+	}
+
+	char *path_dup = strdup(path);
+	if (!path_dup) {
+		free(extents);
+		return -ENOMEM;
+	}
+
+	struct file_entry *fe = &g.files[g.n_files++];
+	fe->path = path_dup;
+	fe->extents = extents;
+	fe->n_extents = count;
+	return 0;
+}
+
+static int
+nftw_cb(const char *fpath, const struct stat *sb, int typeflag,
+        struct FTW *ftwbuf)
+{
+	(void)ftwbuf;
+	if (typeflag != FTW_F || !S_ISREG(sb->st_mode))
+		return 0;
+	int rc = visit_file(fpath, (uint64_t)sb->st_size);
+	if (rc < 0) {
+		g.abort_rc = rc;
+		return -1;
+	}
+	return 0;
+}
+
+static int
+write_cache(const char *out_path)
+{
+	FILE *out = fopen(out_path, "wb");
 	if (!out) {
 		perror("fopen output");
-		free(records);
-		return 1;
+		return -errno;
 	}
 
 	struct extent_cache_header hdr = {
-	        .extent_count = count,
+	        .magic = EXTENT_CACHE_MAGIC,
+	        .version = EXTENT_CACHE_VERSION,
+	        .n_files = g.n_files,
 	};
-	strncpy(hdr.bdf, bdf, sizeof(hdr.bdf) - 1);
+	memcpy(hdr.bdf, g.bdf, sizeof(hdr.bdf));
 
-	if (fwrite(&hdr, sizeof(hdr), 1, out) != 1 ||
-	    fwrite(records, sizeof(*records), count, out) != count) {
-		perror("fwrite");
-		fclose(out);
-		free(records);
+	if (fwrite(&hdr, sizeof(hdr), 1, out) != 1)
+		goto err;
+
+	for (uint32_t i = 0; i < g.n_files; i++) {
+		struct file_entry *fe = &g.files[i];
+		uint32_t path_len = (uint32_t)strlen(fe->path) + 1;
+		struct extent_cache_file_record fr = {
+		        .path_len = path_len,
+		        .n_extents = fe->n_extents,
+		};
+		if (fwrite(&fr, sizeof(fr), 1, out) != 1)
+			goto err;
+		if (fwrite(fe->path, 1, path_len, out) != path_len)
+			goto err;
+		if (fwrite(fe->extents, sizeof(*fe->extents),
+		           fe->n_extents, out) != fe->n_extents)
+			goto err;
+	}
+
+	fclose(out);
+	return 0;
+
+err:
+	perror("fwrite");
+	fclose(out);
+	return -EIO;
+}
+
+int
+main(int argc, char **argv)
+{
+	if (argc != 3) {
+		fprintf(stderr, "usage: %s <root_dir> <output.bin>\n", argv[0]);
 		return 1;
 	}
-	fclose(out);
 
-	fprintf(stderr, "wrote %u extents to %s (bdf=%s part_start=%lu)\n",
-	        count, argv[2], bdf, part_start);
+	if (nftw(argv[1], nftw_cb, NFTW_MAX_FDS, FTW_PHYS) != 0) {
+		if (g.abort_rc < 0)
+			fprintf(stderr, "walk aborted: %s\n",
+			        strerror(-g.abort_rc));
+		else
+			perror("nftw");
+		return 1;
+	}
 
-	free(records);
+	if (g.n_files == 0) {
+		fprintf(stderr, "no regular files under %s\n", argv[1]);
+		return 1;
+	}
+	if (!g.resolved) {
+		fprintf(stderr, "could not resolve NVMe device for %s\n",
+		        argv[1]);
+		return 1;
+	}
+
+	if (write_cache(argv[2]) < 0)
+		return 1;
+
+	fprintf(stderr,
+	        "wrote %u files to %s (bdf=%s lba=%u part_start=%lu)\n",
+	        g.n_files, argv[2], g.bdf, g.lba_size, g.part_start);
+
+	for (uint32_t i = 0; i < g.n_files; i++) {
+		free(g.files[i].path);
+		free(g.files[i].extents);
+	}
+	free(g.files);
 	return 0;
 }

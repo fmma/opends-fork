@@ -3,4 +3,4 @@ repo_path = "/root/OpenDS"    # Where scripts/rsync.py lands the tree on the tar
 build_dir = "/tmp/opends-build"
 nvme_bdf = "CHANGE_ME"        # PCI BDF of NVMe device (lspci -D -d ::0108)
 nvme_ns = "CHANGE_ME"         # NVMe namespace device (e.g. /dev/nvme0n1)
-mount_point = "CHANGE_ME"     # Where the NVMe namespace is mounted (e.g. /mnt/opends_test_nvme)
+mount_point = "CHANGE_ME"     # Where the NVMe namespace is mounted (e.g. /mnt/datasets). Tests write only into <mount>/opends_tests/.
