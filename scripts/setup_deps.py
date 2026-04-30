@@ -20,8 +20,9 @@ tasks = [
     "tasks/setup_fil.yaml",
 ]
 for task in tasks:
+    out = f"cijoe-output-{Path(task).stem}"
     rc = subprocess.run(
-        ["cijoe", "-m", "-s", "-o", "cijoe-output-setup-deps", *configs, task],
+        ["cijoe", "-m", "-s", "-o", out, *configs, task],
         cwd=root,
     ).returncode
     if rc:
