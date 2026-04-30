@@ -13,7 +13,7 @@
 #ifndef FS_MOCK_H_
 #define FS_MOCK_H_
 
-#include "homi_client_mock.h"
+#include "homi_types.h"
 
 #include <stdint.h>
 
