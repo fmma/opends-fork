@@ -11,7 +11,7 @@ build_dir = "/tmp/xnvme-build"
 # upstream (upcie is vendored under xNVMe's toolbox/third-party).
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
-ref = "33221b93fcae7b3361244d203aa52e09b0d6de77"
+ref = "9d1981a8dfdea17ab7c946ad99c31b056eb33eb2"
 path = "/root/xnvme"
 
 [xal]
