@@ -9,7 +9,13 @@ doc: |
   must complete first. The final rebind step restores the original
   driver binding so iterative test runs leave the target usable.
 
-  Assumes setup_opends.yaml has been run (sync_and_build.py does this).
+  Prerequisites:
+    - setup_opends.yaml has been run (sync_and_build.py does this).
+    - The XFS filesystem on the test namespace already exists. The
+      mount step will not format the device; provision it externally
+      (e.g. via aisio's setup_dataset.yaml). The test writes only into
+      ``<mount>/opends_tests/`` so any sibling dataset directory is
+      left untouched.
 
   Run::
 
@@ -28,26 +34,30 @@ steps:
     run: |
       '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_ns }}' '{{ config.test.mount_point }}'
 
+  - name: prepare_test_dir
+    run: |
+      mkdir -p '{{ config.test.mount_point }}/opends_tests'
+
   - name: test_smoke_ref
     run: |
       '{{ config.test.build_dir }}/test_smoke_ref'
 
   - name: test_sync_read_prep
     run: |
-      '{{ config.test.build_dir }}/test_sync_read_prep' '{{ config.test.mount_point }}/opends_sync_read_pattern.bin'
+      '{{ config.test.build_dir }}/test_sync_read_prep' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: test_sync_read_ref
     run: |
-      '{{ config.test.build_dir }}/test_sync_read_ref' '{{ config.test.mount_point }}/opends_sync_read_pattern.bin'
+      '{{ config.test.build_dir }}/test_sync_read_ref' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: test_sync_read_gds
     run: |
-      '{{ config.test.build_dir }}/test_sync_read_gds' '{{ config.test.mount_point }}/opends_sync_read_pattern.bin'
+      '{{ config.test.build_dir }}/test_sync_read_gds' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: cache_extents
     run: |
       '{{ config.test.build_dir }}/cache_extents' \
-        '{{ config.test.mount_point }}/opends_sync_read_pattern.bin' \
+        '{{ config.test.mount_point }}/opends_tests' \
         '{{ config.test.build_dir }}/opends_extents.bin'
 
   - name: unbind_nvme
@@ -56,8 +66,9 @@ steps:
 
   - name: test_sync_read_aisio
     run: |
-      OPENDS_EXTENT_CACHE='{{ config.test.build_dir }}/opends_extents.bin' \
-        '{{ config.test.build_dir }}/test_sync_read_aisio'
+      '{{ config.test.build_dir }}/test_sync_read_aisio' \
+        '{{ config.test.build_dir }}/opends_extents.bin' \
+        '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: rebind_nvme
     run: |
