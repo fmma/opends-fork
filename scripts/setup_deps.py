@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Install OpenDS target dependencies (xNVMe) on the target.
+"""Install OpenDS target dependencies (xNVMe, xal, fil) on the target.
 
-Required only when the aisio backend is needed. Assumes the tree has
-been synced to the target (rsync.py).
+xNVMe is required for the aisio backend; xal and fil are required for
+the filperf-driven benchmark suite. Assumes the tree has been synced
+to the target (rsync.py).
 """
 
 import subprocess
@@ -13,8 +14,15 @@ root = Path(__file__).resolve().parent.parent
 
 configs = ["-c", "configs/transport.toml", "-c", "configs/deps.toml",
            "-c", "configs/test.toml"]
-sys.exit(subprocess.run(
-    ["cijoe", "-m", "-s", "-o", "cijoe-output-setup-deps", *configs,
-     "tasks/setup_xnvme.yaml"],
-    cwd=root,
-).returncode)
+tasks = [
+    "tasks/setup_xnvme.yaml",
+    "tasks/setup_xal.yaml",
+    "tasks/setup_fil.yaml",
+]
+for task in tasks:
+    rc = subprocess.run(
+        ["cijoe", "-m", "-s", "-o", "cijoe-output-setup-deps", *configs, task],
+        cwd=root,
+    ).returncode
+    if rc:
+        sys.exit(rc)
