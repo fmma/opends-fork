@@ -2,7 +2,7 @@
 set -e
 
 if [ $# -ne 4 ]; then
-	echo "usage: setup_xnvme.sh REMOTE REF SRC_DIR BUILD_DIR" >&2
+	echo "usage: setup_meson_dep.sh REMOTE REF SRC_DIR BUILD_DIR" >&2
 	echo "  REF is a branch, tag, or commit hash" >&2
 	exit 1
 fi
@@ -18,6 +18,7 @@ if [ ! -d "$SRC_DIR/.git" ]; then
 fi
 
 cd "$SRC_DIR"
+git remote set-url origin "$REMOTE"
 git fetch --all --tags
 # Prefer origin/REF so branch refs pick up the latest remote tip; fall
 # back to REF directly for tags and commit hashes.
