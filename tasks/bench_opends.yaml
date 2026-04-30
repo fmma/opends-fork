@@ -1,0 +1,65 @@
+doc: |
+  OpenDS Benchmarks
+  =================
+
+  Drives filperf to produce throughput numbers across the three
+  reference datasets (filesize8gib, tiktokish, imagenetish) currently
+  for the `gds` backend (cuFile reference baseline). An `opends`
+  backend leg will land once fil's fmma fork grows
+  `filperf --backend opends`; this file is the home for those steps.
+
+  Prerequisites:
+    * scripts/setup_deps.py has installed xnvme, xal, fil on the target.
+    * scripts/build.py has built OpenDS on the target.
+    * aisio's tasks/setup_dataset.yaml has run on the target, formatting
+      the NVMe with XFS and populating the three datasets. The
+      [filesystems.dset] and [datasets.*] tables in aisio's
+      configs/datasets.toml are reused here unmodified, so pass that
+      file in via -c when running.
+    * The NVMe device is bound to the kernel `nvme` driver and the
+      filesystem at filesystems.dset.mountpoint is mounted (gds and
+      posix backends both go through the kernel FS).
+
+  Run::
+
+      cijoe \
+        -c configs/transport.toml \
+        -c configs/deps.toml \
+        -c configs/test.toml \
+        -c <path-to-aisio>/configs/datasets.toml \
+        tasks/bench_opends.yaml
+
+  Each filperf invocation drops page caches first so cold-cache
+  numbers are measured. CSV output (Time, Batches, IOPS, MiB/s) goes
+  to cijoe's report directory.
+
+steps:
+  - name: gds_filesize8gib
+    run: |
+      echo 3 > /proc/sys/vm/drop_caches
+      filperf '{{ config.filesystems.dset.bdev }}' \
+        --backend gds \
+        --mnt '{{ config.filesystems.dset.mountpoint }}' \
+        --data-dir filesize8gib \
+        --batches 1 --batch-size 1 \
+        --summary
+
+  - name: gds_tiktokish
+    run: |
+      echo 3 > /proc/sys/vm/drop_caches
+      filperf '{{ config.filesystems.dset.bdev }}' \
+        --backend gds \
+        --mnt '{{ config.filesystems.dset.mountpoint }}' \
+        --data-dir tiktokish \
+        --batches 1 --batch-size 26 \
+        --summary
+
+  - name: gds_imagenetish
+    run: |
+      echo 3 > /proc/sys/vm/drop_caches
+      filperf '{{ config.filesystems.dset.bdev }}' \
+        --backend gds \
+        --mnt '{{ config.filesystems.dset.mountpoint }}' \
+        --data-dir imagenetish \
+        --batches 300 --batch-size 4096 \
+        --summary

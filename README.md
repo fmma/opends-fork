@@ -158,9 +158,11 @@ Integration tests run on a remote target via
 [CIJOE](https://github.com/refenv/cijoe). The target needs an NVMe
 device, an NVIDIA GPU (for GDS and aisio tests), GDS support (for
 GDS tests), and xNVMe with the `upcie-cuda` backend (for aisio
-tests). The xNVMe build dependency is pinned in the tracked
-`configs/deps.toml`; `scripts/setup_deps.py` builds and installs it
-on the target from that pin.
+tests). Build dependencies (xNVMe, xal, fil) are pinned in the
+tracked `configs/deps.toml`; `scripts/setup_deps.py` builds and
+installs them on the target from those pins. xal and fil are only
+needed for the benchmark suite, but `setup_deps.py` installs them
+unconditionally so the bootstrap is one command.
 
 The XFS filesystem on the test namespace must already exist; the
 mount step does not format the device. Provision it externally (for
@@ -186,12 +188,12 @@ touching the (now unmounted) filesystem.
 
    `configs/deps.toml` is tracked in-repo and needs no editing.
 
-2. First-run bootstrap. Sync the tree, install xNVMe on the target,
-   build OpenDS:
+2. First-run bootstrap. Sync the tree, install build dependencies on
+   the target, build OpenDS:
 
    ```sh
    python scripts/rsync.py
-   python scripts/setup_deps.py   # Only needed once, for the aisio backend.
+   python scripts/setup_deps.py   # Installs xNVMe, xal, fil. Only needed once.
    python scripts/build.py
    ```
 
@@ -211,3 +213,41 @@ touching the (now unmounted) filesystem.
    writes the pattern file, exercises the ref and GDS backends, and
    (if aisio is enabled) caches extents, unbinds the kernel driver,
    and runs the aisio test against the unbound device.
+
+### Benchmarking with filperf
+
+Throughput benchmarks are driven by `filperf` from
+[fil](https://github.com/xnvme/fil), running against three reference
+datasets (`filesize8gib`, `tiktokish`, `imagenetish`). Today
+`tasks/bench_opends.yaml` only exercises the `gds` backend (cuFile
+reference baseline); an `opends` leg lands once the fmma/fil fork
+grows `filperf --backend opends`.
+
+Datasets are produced by aisio's `tasks/setup_dataset.yaml`, which
+formats the NVMe device with XFS and populates the three datasets
+into the mountpoint declared in aisio's `configs/datasets.toml`. That
+file is read directly by `bench_opends.yaml` (via the
+`filesystems.dset` and `datasets.*` tables) and must be passed in
+as an additional `-c` config; nothing about the dataset layout is
+duplicated here.
+
+Prerequisites:
+
+- `scripts/setup_deps.py` has installed xNVMe, xal, fil on the target.
+- `scripts/build.py` has built OpenDS on the target.
+- aisio's `tasks/setup_dataset.yaml` has been run on the target,
+  formatting the NVMe with XFS and populating the three datasets.
+- The NVMe device is bound to the kernel `nvme` driver and the XFS
+  filesystem at `filesystems.dset.mountpoint` is mounted (the `gds`
+  and `posix` backends both go through the kernel FS).
+
+Run:
+
+```sh
+python scripts/run_bench.py \
+    --datasets-config <path-to-aisio>/configs/datasets.toml
+```
+
+Each `filperf` invocation drops page caches first so cold-cache
+numbers are measured. CSV output (Time, Batches, IOPS, MiB/s) lands
+in cijoe's `cijoe-output-bench` report directory.
