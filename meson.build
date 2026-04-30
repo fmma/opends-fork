@@ -105,6 +105,7 @@ aisio_test_enabled = aisio_enabled and cuda_dep.found()
 if aisio_test_enabled
   executable('test_sync_read_aisio',
     'tests/test_sync_read_aisio.c',
+    include_directories : opends_internal_inc,
     dependencies : [opends_aisio_dep, cuda_dep],
   )
 else
