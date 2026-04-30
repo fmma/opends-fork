@@ -3,8 +3,8 @@
  *
  * HOMI (Hyperscale Object-storage Metadata Interface) will provide
  * file-to-physical-extent mapping and device metadata over a shared
- * memory channel. This mock stands in for that service by loading a
- * pre-generated cache file (see tools/cache_extents).
+ * memory channel. This mock stands in for that service by delegating
+ * lookups to fs_mock, which holds the loaded extent cache.
  *
  * Internal to the aisio backend. Not part of the public API.
  */
@@ -25,8 +25,8 @@ struct homi_conn;
 int homi_connect(const char *shm_name, struct homi_conn **conn);
 void homi_disconnect(struct homi_conn *conn);
 
-/* Borrowed pointer into the connection's cached extents. Valid until
- * homi_disconnect. Caller must not free or mutate. */
+/* Borrowed pointer into fs_mock's loaded extents. Valid until
+ * fs_mock_reset. Caller must not free or mutate. */
 int homi_get_extents(struct homi_conn *conn, int fd,
                      const struct homi_extent **extents, uint32_t *count);
 
