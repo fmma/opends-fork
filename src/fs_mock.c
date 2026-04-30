@@ -44,14 +44,9 @@ load_file_record(FILE *f, struct fs_mock_entry *e)
 	if (!e->extents)
 		return -ENOMEM;
 
-	for (uint32_t i = 0; i < fr.n_extents; i++) {
-		struct extent_cache_extent rec;
-		if (fread(&rec, sizeof(rec), 1, f) != 1)
-			return -EIO;
-		e->extents[i].file_offset = rec.file_offset;
-		e->extents[i].slba = rec.slba;
-		e->extents[i].length = rec.length;
-	}
+	if (fread(e->extents, sizeof(*e->extents), fr.n_extents, f) !=
+	    fr.n_extents)
+		return -EIO;
 	return 0;
 }
 

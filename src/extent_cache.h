@@ -10,13 +10,15 @@
  *   for each file:
  *     extent_cache_file_record
  *     path[path_len]                      (null-terminated)
- *     extent_cache_extent[n_extents]
+ *     homi_extent[n_extents]
  *
  * Lengths are bytes (not LBAs) so the consumer can reject requests
  * that overlap partial trailing LBAs past EOF.
  */
 #ifndef EXTENT_CACHE_H_
 #define EXTENT_CACHE_H_
+
+#include "homi_types.h"
 
 #include <stdint.h>
 
@@ -33,12 +35,6 @@ struct extent_cache_header {
 struct extent_cache_file_record {
 	uint32_t path_len;   /* bytes, including the trailing null */
 	uint32_t n_extents;
-};
-
-struct extent_cache_extent {
-	uint64_t file_offset;
-	uint64_t slba;
-	uint64_t length;
 };
 
 #endif /* EXTENT_CACHE_H_ */

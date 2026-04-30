@@ -34,7 +34,7 @@
 
 struct file_entry {
 	char *path;
-	struct extent_cache_extent *extents;
+	struct homi_extent *extents;
 	uint32_t n_extents;
 };
 
@@ -190,7 +190,7 @@ resolve_pci_bdf(int fd, char *bdf, size_t len)
 
 static int
 fiemap_file(int fd, uint64_t file_size,
-            struct extent_cache_extent **out_extents, uint32_t *out_count)
+            struct homi_extent **out_extents, uint32_t *out_count)
 {
 	size_t buf_size = sizeof(struct fiemap) +
 	                  MAX_EXTENTS * sizeof(struct fiemap_extent);
@@ -225,7 +225,7 @@ fiemap_file(int fd, uint64_t file_size,
 		return -E2BIG;
 	}
 
-	struct extent_cache_extent *ext = calloc(count, sizeof(*ext));
+	struct homi_extent *ext = calloc(count, sizeof(*ext));
 	if (!ext) {
 		free(fm);
 		return -ENOMEM;
@@ -282,7 +282,7 @@ visit_file(const char *path, uint64_t file_size)
 		return rc;
 	}
 
-	struct extent_cache_extent *extents = NULL;
+	struct homi_extent *extents = NULL;
 	uint32_t count = 0;
 	rc = fiemap_file(fd, file_size, &extents, &count);
 	close(fd);
@@ -305,14 +305,16 @@ visit_file(const char *path, uint64_t file_size)
 		g.cap = new_cap;
 	}
 
-	struct file_entry *fe = &g.files[g.n_files++];
-	fe->path = strdup(path);
-	fe->extents = extents;
-	fe->n_extents = count;
-	if (!fe->path) {
+	char *path_dup = strdup(path);
+	if (!path_dup) {
 		free(extents);
 		return -ENOMEM;
 	}
+
+	struct file_entry *fe = &g.files[g.n_files++];
+	fe->path = path_dup;
+	fe->extents = extents;
+	fe->n_extents = count;
 	return 0;
 }
 
