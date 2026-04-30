@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 
+#include "fs_mock.h"
 #include "test_cuda_common.h"
 #include "test_sync_read.h"
 
@@ -8,11 +9,26 @@
 int
 main(int argc, char **argv)
 {
-	(void)argc;
-	(void)argv;
+	if (argc != 3) {
+		fprintf(stderr, "usage: %s <extent_cache.bin> <pattern_path>\n",
+		        argv[0]);
+		return 1;
+	}
+	const char *cache_path = argv[1];
+	const char *pattern_path = argv[2];
 
-	if (!getenv("OPENDS_EXTENT_CACHE")) {
-		fprintf(stderr, "OPENDS_EXTENT_CACHE must be set\n");
+	int rc = fs_mock_init(cache_path);
+	if (rc < 0) {
+		fprintf(stderr, "fs_mock_init(%s): %s\n", cache_path,
+		        strerror(-rc));
+		return 1;
+	}
+
+	int mock_fh = fs_mock_open(pattern_path);
+	if (mock_fh < 0) {
+		fprintf(stderr, "fs_mock_open(%s): %s\n", pattern_path,
+		        strerror(-mock_fh));
+		fs_mock_reset();
 		return 1;
 	}
 
@@ -30,15 +46,17 @@ main(int argc, char **argv)
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "driver_open: %s\n",
 		        ds_file_op_status_error(err.err));
+		fs_mock_reset();
 		return 1;
 	}
 
 	ds_file_handle_t fh;
-	err = ds_file_handle_register(&fh, -1);
+	err = ds_file_handle_register(&fh, mock_fh);
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "handle_register: %s\n",
 		        ds_file_op_status_error(err.err));
 		ds_file_driver_close();
+		fs_mock_reset();
 		return 1;
 	}
 
@@ -69,6 +87,7 @@ main(int argc, char **argv)
 	ds_file_handle_deregister(fh);
 	ds_file_driver_close();
 	cuCtxDestroy(cuctx);
+	fs_mock_reset();
 
 	if (failed)
 		fprintf(stderr, "%d test(s) failed\n", failed);

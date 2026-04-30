@@ -15,12 +15,14 @@ ds_file API for reading files directly into accelerator memory.
 - **aisio** (`libopends_aisio`): Reads directly from an NVMe device
   into GPU memory via [xNVMe](https://xnvme.io)'s `upcie-cuda` backend
   (PCIe P2P DMA, no filesystem or kernel nvme driver in the path).
-  Based on [aisio](https://github.com/xnvme/aisio); file-to-LBA
-  mapping comes from a mock HOMI client that loads an extent cache
-  produced by `cache_extents` while the filesystem is still mounted.
-  The mock will be replaced by aisio's HOMI implementation. Requires
-  xNVMe and the CUDA toolkit. Read-only; `ds_file_write` returns
-  `DS_FILE_IO_NOT_SUPPORTED`.
+  Based on [aisio](https://github.com/xnvme/aisio). File-to-LBA
+  mapping comes from a mock HOMI client that delegates path lookup
+  and extent retrieval to a small `fs_mock` module; `fs_mock` loads a
+  multi-file extent cache produced offline by `cache_extents` while
+  the filesystem is mounted, so the backend itself never touches a
+  filesystem. Both mocks will be replaced by aisio's HOMI
+  implementation. Requires xNVMe and the CUDA toolkit. Read-only;
+  `ds_file_write` returns `DS_FILE_IO_NOT_SUPPORTED`.
 
 ## ds_file API
 
@@ -160,11 +162,20 @@ tests). The xNVMe build dependency is pinned in the tracked
 `configs/deps.toml`; `scripts/setup_deps.py` builds and installs it
 on the target from that pin.
 
+The XFS filesystem on the test namespace must already exist; the
+mount step does not format the device. Provision it externally (for
+example via aisio's `setup_dataset.yaml`). All test artifacts are
+written under `<mount_point>/opends_tests/`, leaving any sibling
+benchmark dataset directories untouched.
+
 The `test_sync_read_prep` step writes a pattern file on the mounted
 filesystem and each backend test reads it back. The aisio phase runs
-last: it builds an extent cache while the filesystem is still
-mounted, then unbinds the NVMe kernel driver so the backend can
-drive the device directly over PCIe.
+last: `cache_extents` walks `<mount_point>/opends_tests/` and writes
+a multi-file extent cache while the filesystem is mounted, then the
+NVMe kernel driver is unbound so the aisio test can drive the device
+directly over PCIe. The aisio test loads the cache via `fs_mock`
+which resolves the pattern path to a mock file handle without
+touching the (now unmounted) filesystem.
 
 1. Copy the example configs and fill in target details:
 

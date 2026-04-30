@@ -61,6 +61,7 @@ if aisio_enabled
   libopends_aisio = shared_library('opends_aisio',
     'src/ds_file_common.c',
     'src/ds_file_aisio.c',
+    'src/fs_mock.c',
     'src/homi_client_mock.c',
     include_directories : [opends_inc, opends_internal_inc],
     dependencies : [xnvme_dep],
@@ -104,6 +105,7 @@ aisio_test_enabled = aisio_enabled and cuda_dep.found()
 if aisio_test_enabled
   executable('test_sync_read_aisio',
     'tests/test_sync_read_aisio.c',
+    include_directories : opends_internal_inc,
     dependencies : [opends_aisio_dep, cuda_dep],
   )
 else
