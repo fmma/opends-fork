@@ -18,3 +18,5 @@ rm -rf "$BUILD_DIR"
 cd "$SRC_DIR"
 meson setup "$BUILD_DIR"
 meson compile -C "$BUILD_DIR"
+meson install -C "$BUILD_DIR"
+ldconfig
