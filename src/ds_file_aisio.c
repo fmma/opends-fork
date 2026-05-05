@@ -114,6 +114,22 @@ open_device(struct aisio_driver *d, int fd)
 	d->mdts_nbytes =
 	        geo->mdts_nbytes ? geo->mdts_nbytes : DEFAULT_BOUNCE_SIZE;
 
+	/* xnvme_dev_open can return success with a zeroed geometry if the
+	 * controller wasn't fully identified (e.g. opened directly after
+	 * the kernel nvme driver shut it down without a PCI reset). Fail
+	 * loudly here instead of letting every subsequent read return
+	 * -EIO with no context. */
+	if (d->lba_size == 0) {
+		fprintf(stderr,
+		        "aisio open_device: zero geometry from xnvme_dev_open "
+		        "(lba_nbytes=%u nbytes=%zu mdts_nbytes=%zu) — "
+		        "controller likely needs a PCI reset before this open\n",
+		        geo->lba_nbytes, geo->nbytes, geo->mdts_nbytes);
+		xnvme_dev_close(d->xdev);
+		d->xdev = NULL;
+		return -EIO;
+	}
+
 	return 0;
 }
 
@@ -122,8 +138,6 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
                    size_t size, off_t file_offset)
 {
 	uint32_t lba_nbytes = d->lba_size;
-	if (lba_nbytes == 0)
-		return -EIO;
 
 	uint64_t req_start = (uint64_t)file_offset;
 	if (size > UINT64_MAX - req_start)
@@ -133,14 +147,19 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 	const struct homi_extent *extents = NULL;
 	uint32_t extent_count = 0;
 	int rc = homi_get_extents(d->homi, h->fd, &extents, &extent_count);
-	if (rc < 0)
+	if (rc < 0) {
+		fprintf(stderr, "aisio prelude: homi_get_extents fd=%d rc=%d\n", h->fd, rc);
 		return rc;
+	}
 
 	size_t total_transferred = 0;
 	struct xnvme_cmd_ctx cmd = xnvme_cmd_ctx_from_dev(d->xdev);
 	uint64_t max_chunk_lbas = d->mdts_nbytes / lba_nbytes;
-	if (max_chunk_lbas == 0)
+	if (max_chunk_lbas == 0) {
+		fprintf(stderr, "aisio prelude: max_chunk_lbas=0 (mdts=%zu lba=%u)\n",
+		        d->mdts_nbytes, lba_nbytes);
 		return -EINVAL;
+	}
 
 	for (uint32_t i = 0; i < extent_count; i++) {
 		const struct homi_extent *e = &extents[i];
