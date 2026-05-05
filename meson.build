@@ -80,6 +80,20 @@ if aisio_enabled
     include_directories : opends_inc,
     link_with : libopends_aisio,
   )
+
+  # Transitional consumer-facing headers. Installed alongside the
+  # aisio library so external benchmarks can drive the mock fs until
+  # real HOMI lands. See src/fs_mock.h for the deprecation note.
+  install_headers(
+    'src/fs_mock.h',
+    'src/homi_types.h',
+  )
+
+  pkg.generate(libopends_aisio,
+    name : 'opends_aisio',
+    description : 'OpenDS aisio backend (raw NVMe via xNVMe upcie-cuda)',
+    requires : ['xnvme'],
+  )
 endif
 
 # Test binaries

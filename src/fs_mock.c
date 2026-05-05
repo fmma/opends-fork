@@ -123,6 +123,38 @@ fs_mock_get_device_uri(int fh, const char **uri)
 	return 0;
 }
 
+uint32_t
+fs_mock_get_n_files(void)
+{
+	return state.n_entries;
+}
+
+int
+fs_mock_get_path(uint32_t i, const char **path)
+{
+	if (i >= state.n_entries)
+		return -ENOENT;
+	*path = state.entries[i].path;
+	return 0;
+}
+
+int
+fs_mock_get_size(uint32_t i, uint64_t *size)
+{
+	if (i >= state.n_entries)
+		return -ENOENT;
+
+	const struct fs_mock_entry *e = &state.entries[i];
+	if (e->n_extents == 0) {
+		*size = 0;
+		return 0;
+	}
+
+	const struct homi_extent *last = &e->extents[e->n_extents - 1];
+	*size = last->file_offset + last->length;
+	return 0;
+}
+
 void
 fs_mock_reset(void)
 {
