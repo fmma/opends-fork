@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -350,8 +351,12 @@ ds_file_buf_register(const void *buf_base, size_t size, int flags)
 		return ds_file_err(DS_FILE_INTERNAL_ERROR);
 
 	int rc = xnvme_mem_map(drv->xdev, (void *)buf_base, size);
-	if (rc < 0)
+	if (rc < 0) {
+		fprintf(stderr,
+		        "ds_file_buf_register: xnvme_mem_map(%p, %zu) rc=%d\n",
+		        buf_base, size, rc);
 		return ds_file_err(DS_FILE_DEVICE_DRIVER_ERROR);
+	}
 
 	struct buf_entry *e = &drv->bufs[drv->buf_count++];
 	e->base = buf_base;
@@ -399,8 +404,12 @@ ds_file_read(ds_file_handle_t fh, void *buf_base, size_t size,
 	void *dst = (uint8_t *)buf_base + buf_offset;
 	ssize_t n = aisio_read_extents(drv, (struct aisio_handle *)fh, dst,
 	                               size, file_offset);
-	if (n < 0)
+	if (n < 0) {
+		fprintf(stderr,
+		        "ds_file_read: aisio_read_extents(size=%zu, off=%ld) rc=%zd\n",
+		        size, (long)file_offset, n);
 		return -(ssize_t)DS_FILE_DEVICE_DRIVER_ERROR;
+	}
 
 	return n;
 }
