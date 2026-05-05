@@ -130,8 +130,14 @@ if aisio_test_enabled
     include_directories : opends_internal_inc,
     dependencies : [opends_aisio_dep, cuda_dep],
   )
+  executable('test_register_large_aisio',
+    'tests/test_register_large_aisio.c',
+    include_directories : opends_internal_inc,
+    dependencies : [opends_aisio_dep, cuda_dep],
+  )
 else
   executable('test_sync_read_aisio', 'tests/skip.c')
+  executable('test_register_large_aisio', 'tests/skip.c')
 endif
 
 if aisio_enabled
