@@ -20,6 +20,10 @@ doc: |
   to cijoe's report directory.
 
 steps:
+  - name: cpu_governor
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/cpu_governor.sh'
+
   - name: bind_nvme
     run: |
       '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.nvme_ns }}'
