@@ -26,10 +26,10 @@ path = "/root/xal"
 [fil]
 build_dir = "/tmp/fil-build"
 
-# Placeholder pin: tracks upstream xnvme/fil HEAD until fmma/fil exists.
-# Swap remote to https://github.com/fmma/fil and ref to a fork SHA once
-# the OpenDS-aware bench backend lands there.
+# Fork pin: adds the `opends` backend that drives OpenDS aisio through
+# fs_mock. Revert to upstream xnvme/fil once the OpenDS-aware bench
+# backend lands upstream.
 [fil.repository]
-remote = "https://github.com/xnvme/fil"
-ref = "6383ad9d38e04b8ec1d47f41a03f54f61dc38326"
+remote = "https://github.com/fmma/fil"
+ref = "a000687d021ff197473811902889d65343171c7f"
 path = "/root/fil"
