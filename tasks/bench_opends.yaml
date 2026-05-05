@@ -58,32 +58,39 @@ steps:
         '{{ config.test.nvme_bdf }}' \
         '{{ config.test.mount_point }}'
 
+  # cudamem_mapping holds one dma-buf fd per alloc_granularity-aligned
+  # chunk (2 MiB on NVIDIA discrete GPUs); 8 GiB per buffer needs 4096
+  # fds. prlimit sets both soft and hard atomically (raising hard
+  # requires CAP_SYS_RESOURCE; the cijoe runner is root).
   - name: opends_filesize8gib
     run: |
       echo "=== opends_filesize8gib ==="
-      filperf '{{ config.test.nvme_ns }}' \
-        --backend opends \
-        --opends-fs-mock-path '{{ config.test.build_dir }}/opends_extents_filesize8gib.bin' \
-        --batches 1 --batch-size 1 \
-        --summary
+      prlimit --nofile=65536:65536 -- \
+        filperf '{{ config.test.nvme_ns }}' \
+          --backend opends \
+          --opends-fs-mock-path '{{ config.test.build_dir }}/opends_extents_filesize8gib.bin' \
+          --batches 1 --batch-size 1 \
+          --summary
 
   - name: opends_tiktokish
     run: |
       echo "=== opends_tiktokish ==="
-      filperf '{{ config.test.nvme_ns }}' \
-        --backend opends \
-        --opends-fs-mock-path '{{ config.test.build_dir }}/opends_extents_tiktokish.bin' \
-        --batches 1 --batch-size 26 \
-        --summary
+      prlimit --nofile=65536:65536 -- \
+        filperf '{{ config.test.nvme_ns }}' \
+          --backend opends \
+          --opends-fs-mock-path '{{ config.test.build_dir }}/opends_extents_tiktokish.bin' \
+          --batches 1 --batch-size 26 \
+          --summary
 
   - name: opends_imagenetish
     run: |
       echo "=== opends_imagenetish ==="
-      filperf '{{ config.test.nvme_ns }}' \
-        --backend opends \
-        --opends-fs-mock-path '{{ config.test.build_dir }}/opends_extents_imagenetish.bin' \
-        --batches 300 --batch-size 4096 \
-        --summary
+      prlimit --nofile=65536:65536 -- \
+        filperf '{{ config.test.nvme_ns }}' \
+          --backend opends \
+          --opends-fs-mock-path '{{ config.test.build_dir }}/opends_extents_imagenetish.bin' \
+          --batches 300 --batch-size 4096 \
+          --summary
 
   - name: rebind_nvme
     run: |
