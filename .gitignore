@@ -4,3 +4,5 @@ cijoe-archive/
 configs/transport.toml
 configs/test.toml
 CLAUDE.md
+.claude/
+__pycache__/
