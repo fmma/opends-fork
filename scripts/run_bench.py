@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _helpers import fail
+
 root = Path(__file__).resolve().parent.parent
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -29,8 +31,11 @@ if not datasets_config.is_file():
 configs = ["-c", "configs/transport.toml", "-c", "configs/deps.toml",
            "-c", "configs/test.toml", "-c", str(datasets_config)]
 
-sys.exit(subprocess.run(
+rc = subprocess.run(
     ["cijoe", "-m", "-s", "-o", "cijoe-output-bench", *configs,
      "tasks/bench_opends.yaml"],
     cwd=root,
-).returncode)
+).returncode
+if rc:
+    fail(f"run_bench (rc={rc})")
+sys.exit(rc)

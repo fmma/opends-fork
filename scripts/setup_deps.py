@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _helpers import fail
+
 root = Path(__file__).resolve().parent.parent
 
 configs = ["-c", "configs/transport.toml", "-c", "configs/deps.toml",
@@ -29,4 +31,5 @@ for task in tasks:
         cwd=root,
     ).returncode
     if rc:
+        fail(f"{task} (rc={rc})")
         sys.exit(rc)
