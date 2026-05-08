@@ -1,15 +1,12 @@
 #define _GNU_SOURCE
 
 #include "fs_mock.h"
-#include "extent_cache.h"
 
 #include <errno.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 struct fs_mock_entry {
-	char *path;
 	struct homi_extent *extents;
 	uint32_t n_extents;
 };
@@ -17,90 +14,50 @@ struct fs_mock_entry {
 static struct {
 	struct fs_mock_entry *entries;
 	uint32_t n_entries;
-	char bdf[16];
+	uint32_t cap;
+	char uri[64];
 } state;
 
-static int
-load_file_record(FILE *f, struct fs_mock_entry *e)
+int
+fs_mock_init(const char *device_uri)
 {
-	struct extent_cache_file_record fr;
-	if (fread(&fr, sizeof(fr), 1, f) != 1)
-		return -EIO;
-	if (fr.path_len == 0)
+	if (!device_uri)
+		return -EINVAL;
+	if (strlen(device_uri) >= sizeof(state.uri))
 		return -EINVAL;
 
-	e->path = malloc(fr.path_len);
-	if (!e->path)
-		return -ENOMEM;
-	if (fread(e->path, 1, fr.path_len, f) != fr.path_len)
-		return -EIO;
-	e->path[fr.path_len - 1] = '\0';
-
-	e->n_extents = fr.n_extents;
-	if (fr.n_extents == 0)
-		return 0;
-
-	e->extents = calloc(fr.n_extents, sizeof(*e->extents));
-	if (!e->extents)
-		return -ENOMEM;
-
-	if (fread(e->extents, sizeof(*e->extents), fr.n_extents, f) !=
-	    fr.n_extents)
-		return -EIO;
-	return 0;
-}
-
-int
-fs_mock_init(const char *cache_path)
-{
 	fs_mock_reset();
-
-	FILE *f = fopen(cache_path, "rb");
-	if (!f)
-		return -errno;
-
-	struct extent_cache_header hdr;
-	if (fread(&hdr, sizeof(hdr), 1, f) != 1) {
-		fclose(f);
-		return -EIO;
-	}
-	if (hdr.magic != EXTENT_CACHE_MAGIC ||
-	    hdr.version != EXTENT_CACHE_VERSION) {
-		fclose(f);
-		return -EINVAL;
-	}
-
-	state.entries = calloc(hdr.n_files, sizeof(*state.entries));
-	if (!state.entries) {
-		fclose(f);
-		return -ENOMEM;
-	}
-	state.n_entries = hdr.n_files;
-	memcpy(state.bdf, hdr.bdf, sizeof(state.bdf));
-
-	for (uint32_t i = 0; i < hdr.n_files; i++) {
-		int rc = load_file_record(f, &state.entries[i]);
-		if (rc < 0) {
-			fclose(f);
-			fs_mock_reset();
-			return rc;
-		}
-	}
-
-	fclose(f);
+	strcpy(state.uri, device_uri);
 	return 0;
 }
 
 int
-fs_mock_open(const char *path)
+fs_mock_register(const struct homi_extent *extents, uint32_t count)
 {
-	if (!path)
+	if (count > 0 && !extents)
 		return -EINVAL;
-	for (uint32_t i = 0; i < state.n_entries; i++) {
-		if (strcmp(state.entries[i].path, path) == 0)
-			return (int)i;
+
+	if (state.n_entries == state.cap) {
+		uint32_t new_cap = state.cap ? state.cap * 2 : 64;
+		struct fs_mock_entry *grown = realloc(
+		        state.entries, new_cap * sizeof(*grown));
+		if (!grown)
+			return -ENOMEM;
+		state.entries = grown;
+		state.cap = new_cap;
 	}
-	return -ENOENT;
+
+	struct fs_mock_entry *e = &state.entries[state.n_entries];
+	e->extents = NULL;
+	e->n_extents = count;
+	if (count > 0) {
+		e->extents = malloc(count * sizeof(*e->extents));
+		if (!e->extents)
+			return -ENOMEM;
+		memcpy(e->extents, extents, count * sizeof(*e->extents));
+	}
+
+	return (int)state.n_entries++;
 }
 
 int
@@ -119,19 +76,18 @@ fs_mock_get_device_uri(int fh, const char **uri)
 {
 	if (fh < 0 || (uint32_t)fh >= state.n_entries)
 		return -ENOENT;
-	*uri = state.bdf;
+	*uri = state.uri;
 	return 0;
 }
 
 void
 fs_mock_reset(void)
 {
-	for (uint32_t i = 0; i < state.n_entries; i++) {
-		free(state.entries[i].path);
+	for (uint32_t i = 0; i < state.n_entries; i++)
 		free(state.entries[i].extents);
-	}
 	free(state.entries);
 	state.entries = NULL;
 	state.n_entries = 0;
-	memset(state.bdf, 0, sizeof(state.bdf));
+	state.cap = 0;
+	memset(state.uri, 0, sizeof(state.uri));
 }

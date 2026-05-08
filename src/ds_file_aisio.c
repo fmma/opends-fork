@@ -4,7 +4,8 @@
  * Reads go straight from an NVMe device into GPU memory via xNVMe's
  * upcie-cuda backend (PCIe P2P DMA, no filesystem in the path). File
  * offsets are translated to physical LBAs through a HOMI mock client
- * that reads a pre-built extent cache (see tools/cache_extents).
+ * (src/homi_client_mock.c) that delegates to fs_mock; consumers
+ * populate fs_mock with extents at setup time via fs_mock_register.
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must
  * be unbound from the target device before ds_file_driver_open runs.
