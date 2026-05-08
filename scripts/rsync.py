@@ -6,6 +6,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from _helpers import fail, ok
+
 root = Path(__file__).resolve().parent.parent
 
 with open(root / "configs" / "transport.toml", "rb") as f:
@@ -28,5 +30,7 @@ rc = subprocess.run(
 ).returncode
 
 if rc == 0:
-    print(f"ok: synced to {target}:{dest}")
+    ok(f"synced to {target}:{dest}")
+else:
+    fail(f"rsync (rc={rc})")
 sys.exit(rc)
