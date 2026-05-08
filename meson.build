@@ -59,11 +59,14 @@ if gds_enabled
 endif
 
 # aisio backend (xNVMe upcie-cuda + mock HOMI extent cache).
-# The library itself only links libxnvme; CUDA context management is
-# the caller's responsibility (xnvme's upcie-cuda plug-in loads CUDA
-# at runtime). Tests pull in cuda_dep separately.
+# Links libxnvme and the CUDA runtime: cudaMemcpy is used to move the
+# trailing partial-LBA bytes from the DMA-coherent scratch (which lives
+# on the GPU under upcie-cuda) into the caller's buffer. CUDA context
+# management itself remains the caller's responsibility (xnvme's
+# upcie-cuda plug-in loads CUDA at runtime). Tests pull in cuda_dep
+# separately.
 xnvme_dep = dependency('xnvme', required : false)
-aisio_enabled = xnvme_dep.found()
+aisio_enabled = xnvme_dep.found() and cuda_dep.found()
 
 if aisio_enabled
   libopends_aisio = shared_library('opends_aisio',
@@ -72,7 +75,7 @@ if aisio_enabled
     'src/fs_mock.c',
     'src/homi_client_mock.c',
     include_directories : [opends_inc, opends_internal_inc],
-    dependencies : [xnvme_dep],
+    dependencies : [xnvme_dep, cuda_dep],
     install : true,
   )
 
@@ -116,8 +119,14 @@ if aisio_test_enabled
     include_directories : opends_internal_inc,
     dependencies : [opends_aisio_dep, cuda_dep],
   )
+  executable('test_register_large_aisio',
+    'tests/test_register_large_aisio.c',
+    include_directories : opends_internal_inc,
+    dependencies : [opends_aisio_dep, cuda_dep],
+  )
 else
   executable('test_sync_read_aisio', 'tests/skip.c')
+  executable('test_register_large_aisio', 'tests/skip.c')
 endif
 
 if aisio_enabled
