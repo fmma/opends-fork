@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -113,6 +114,22 @@ open_device(struct aisio_driver *d, int fd)
 	d->mdts_nbytes =
 	        geo->mdts_nbytes ? geo->mdts_nbytes : DEFAULT_BOUNCE_SIZE;
 
+	/* xnvme_dev_open can return success with a zeroed geometry if the
+	 * controller wasn't fully identified (e.g. opened directly after
+	 * the kernel nvme driver shut it down without a PCI reset). Fail
+	 * loudly here instead of letting every subsequent read return
+	 * -EIO with no context. */
+	if (d->lba_size == 0) {
+		fprintf(stderr,
+		        "aisio open_device: zero geometry from xnvme_dev_open "
+		        "(lba_nbytes=%u nbytes=%u mdts_nbytes=%u) — "
+		        "controller likely needs a PCI reset before this open\n",
+		        geo->lba_nbytes, geo->nbytes, geo->mdts_nbytes);
+		xnvme_dev_close(d->xdev);
+		d->xdev = NULL;
+		return -EIO;
+	}
+
 	return 0;
 }
 
@@ -121,8 +138,6 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
                    size_t size, off_t file_offset)
 {
 	uint32_t lba_nbytes = d->lba_size;
-	if (lba_nbytes == 0)
-		return -EIO;
 
 	uint64_t req_start = (uint64_t)file_offset;
 	if (size > UINT64_MAX - req_start)
@@ -132,14 +147,19 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 	const struct homi_extent *extents = NULL;
 	uint32_t extent_count = 0;
 	int rc = homi_get_extents(d->homi, h->fd, &extents, &extent_count);
-	if (rc < 0)
+	if (rc < 0) {
+		fprintf(stderr, "aisio prelude: homi_get_extents fd=%d rc=%d\n", h->fd, rc);
 		return rc;
+	}
 
 	size_t total_transferred = 0;
 	struct xnvme_cmd_ctx cmd = xnvme_cmd_ctx_from_dev(d->xdev);
 	uint64_t max_chunk_lbas = d->mdts_nbytes / lba_nbytes;
-	if (max_chunk_lbas == 0)
+	if (max_chunk_lbas == 0) {
+		fprintf(stderr, "aisio prelude: max_chunk_lbas=0 (mdts=%u lba=%u)\n",
+		        d->mdts_nbytes, lba_nbytes);
 		return -EINVAL;
+	}
 
 	for (uint32_t i = 0; i < extent_count; i++) {
 		const struct homi_extent *e = &extents[i];
@@ -479,8 +499,12 @@ ds_file_buf_register(const void *buf_base, size_t size, int flags)
 		return ds_file_err(DS_FILE_INTERNAL_ERROR);
 
 	int rc = xnvme_mem_map(drv->xdev, (void *)buf_base, size);
-	if (rc < 0)
+	if (rc < 0) {
+		fprintf(stderr,
+		        "ds_file_buf_register: xnvme_mem_map(%p, %zu) rc=%d\n",
+		        buf_base, size, rc);
 		return ds_file_err(DS_FILE_DEVICE_DRIVER_ERROR);
+	}
 
 	struct buf_entry *e = &drv->bufs[drv->buf_count++];
 	e->base = buf_base;
@@ -528,8 +552,12 @@ ds_file_read(ds_file_handle_t fh, void *buf_base, size_t size,
 	void *dst = (uint8_t *)buf_base + buf_offset;
 	ssize_t n = aisio_read_extents(drv, (struct aisio_handle *)fh, dst,
 	                               size, file_offset);
-	if (n < 0)
+	if (n < 0) {
+		fprintf(stderr,
+		        "ds_file_read: aisio_read_extents(size=%zu, off=%ld) rc=%zd\n",
+		        size, (long)file_offset, n);
 		return -(ssize_t)DS_FILE_DEVICE_DRIVER_ERROR;
+	}
 
 	return n;
 }
