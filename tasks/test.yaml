@@ -70,6 +70,12 @@ steps:
         '{{ config.test.build_dir }}/opends_extents.bin' \
         '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
+  - name: test_register_large_aisio
+    run: |
+      '{{ config.test.build_dir }}/test_register_large_aisio' \
+        '{{ config.test.build_dir }}/opends_extents.bin' \
+        '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
+
   - name: rebind_nvme
     run: |
       '{{ config.test.repo_path }}/tasks/steps/rebind_nvme.sh' '{{ config.test.build_dir }}/opends_extents.bin' '{{ config.test.nvme_bdf }}'
