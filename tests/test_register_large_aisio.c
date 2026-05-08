@@ -14,34 +14,46 @@
 
 #include "fs_mock.h"
 #include "opends.h"
+#include "test_extents_io.h"
 
 #include <cuda_runtime.h>
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define BUF_SIZE ((size_t)8 * 1024 * 1024 * 1024)
 
 int
 main(int argc, char **argv)
 {
-	if (argc != 3) {
-		fprintf(stderr, "usage: %s <extent_cache.bin> <pattern_path>\n",
-		        argv[0]);
+	if (argc != 2) {
+		fprintf(stderr, "usage: %s <extents_path>\n", argv[0]);
 		return 1;
 	}
-	const char *cache_path = argv[1];
-	const char *pattern_path = argv[2];
+	const char *extents_path = argv[1];
 
-	int rc = fs_mock_init(cache_path);
+	char uri[64];
+	struct homi_extent *extents = NULL;
+	uint32_t n_extents = 0;
+	int rc = test_extents_load(extents_path, uri, &extents, &n_extents);
 	if (rc < 0) {
-		fprintf(stderr, "fs_mock_init(%s): %d\n", cache_path, rc);
+		fprintf(stderr, "test_extents_load(%s): %s\n", extents_path,
+		        strerror(-rc));
 		return 1;
 	}
 
-	int mock_fh = fs_mock_open(pattern_path);
+	rc = fs_mock_init(uri);
+	if (rc < 0) {
+		fprintf(stderr, "fs_mock_init(%s): %d\n", uri, rc);
+		free(extents);
+		return 1;
+	}
+
+	int mock_fh = fs_mock_register(extents, n_extents);
+	free(extents);
 	if (mock_fh < 0) {
-		fprintf(stderr, "fs_mock_open(%s): %d\n", pattern_path, mock_fh);
+		fprintf(stderr, "fs_mock_register: %d\n", mock_fh);
 		fs_mock_reset();
 		return 1;
 	}

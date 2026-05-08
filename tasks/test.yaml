@@ -44,7 +44,9 @@ steps:
 
   - name: test_sync_read_prep
     run: |
-      '{{ config.test.build_dir }}/test_sync_read_prep' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
+      '{{ config.test.build_dir }}/test_sync_read_prep' \
+        '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin' \
+        '{{ config.test.build_dir }}/sync_read_extents.bin'
 
   - name: test_sync_read_ref
     run: |
@@ -54,34 +56,28 @@ steps:
     run: |
       '{{ config.test.build_dir }}/test_sync_read_gds' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
-  - name: cache_extents
-    run: |
-      '{{ config.test.build_dir }}/cache_extents' \
-        '{{ config.test.mount_point }}/opends_tests' \
-        '{{ config.test.build_dir }}/opends_extents.bin'
-
   - name: unbind_nvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/unbind_nvme.sh' '{{ config.test.build_dir }}/opends_extents.bin' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/tasks/steps/unbind_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: test_sync_read_aisio
     run: |
       '{{ config.test.build_dir }}/test_sync_read_aisio' \
-        '{{ config.test.build_dir }}/opends_extents.bin' \
-        '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
+        '{{ config.test.build_dir }}/sync_read_extents.bin'
 
   - name: test_register_large_aisio
     run: |
       # cudamem_mapping holds one dma-buf fd per alloc_granularity-aligned
-      # chunk (2 MiB on NVIDIA discrete GPUs); 8 GiB needs 4096 fds.
-      # prlimit sets both soft and hard atomically (raising hard requires
-      # CAP_SYS_RESOURCE; the cijoe runner is root).
+      # chunk (2 MiB on NVIDIA discrete GPUs); 8 GiB needs 4096 fds per
+      # registration. 1 Mi headroom absorbs multi-buffer flows and matches
+      # the kernel default fs.nr_open. prlimit sets both soft and hard
+      # atomically (raising hard requires CAP_SYS_RESOURCE; the cijoe
+      # runner is root).
       echo "fd limit (soft/hard): $(ulimit -Sn)/$(ulimit -Hn)"
-      prlimit --nofile=65536:65536 -- \
+      prlimit --nofile=1048576:1048576 -- \
         '{{ config.test.build_dir }}/test_register_large_aisio' \
-          '{{ config.test.build_dir }}/opends_extents.bin' \
-          '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
+          '{{ config.test.build_dir }}/sync_read_extents.bin'
 
   - name: rebind_nvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/rebind_nvme.sh' '{{ config.test.build_dir }}/opends_extents.bin' '{{ config.test.nvme_bdf }}'
+      '{{ config.test.repo_path }}/tasks/steps/rebind_nvme.sh' '{{ config.test.nvme_bdf }}'
