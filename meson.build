@@ -6,6 +6,14 @@ project('OpenDS', 'c',
 opends_inc = include_directories('include')
 opends_internal_inc = include_directories('src')
 
+public_headers = files(
+  'include/ds_file.h',
+  'include/ds_file_async.h',
+  'include/ds_file_batch.h',
+  'include/opends.h',
+)
+install_headers(public_headers)
+
 # Reference backend (pread/pwrite on host buffers, no external dependencies)
 libopends_ref = shared_library('opends_ref',
   'src/ds_file_common.c',
