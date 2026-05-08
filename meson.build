@@ -5,6 +5,7 @@ project('OpenDS', 'c',
 
 opends_inc = include_directories('include')
 opends_internal_inc = include_directories('src')
+tests_inc = include_directories('tests')
 
 public_headers = files(
   'include/ds_file.h',
@@ -58,7 +59,7 @@ if gds_enabled
   )
 endif
 
-# aisio backend (xNVMe upcie-cuda + mock HOMI extent cache).
+# aisio backend (xNVMe upcie-cuda + mock HOMI client over fs_mock).
 # Links libxnvme and the CUDA runtime: cudaMemcpy is used to move the
 # trailing partial-LBA bytes from the DMA-coherent scratch (which lives
 # on the GPU under upcie-cuda) into the caller's buffer. CUDA context
@@ -106,9 +107,12 @@ executable('test_smoke_ref',
 )
 
 # Prep binary: writes the shared pattern file consumed by every
-# backend's test_sync_read_X. POSIX only, no backend linkage.
+# backend's test_sync_read_X, and the small extents record consumed by
+# the aisio leg (which runs after the FS is unmounted).
 executable('test_sync_read_prep',
   'tests/test_sync_read_prep.c',
+  'tests/test_extents_io.c',
+  include_directories : [opends_internal_inc, tests_inc],
 )
 
 executable('test_sync_read_ref',
@@ -130,26 +134,19 @@ aisio_test_enabled = aisio_enabled and cuda_dep.found()
 if aisio_test_enabled
   executable('test_sync_read_aisio',
     'tests/test_sync_read_aisio.c',
-    include_directories : opends_internal_inc,
+    'tests/test_extents_io.c',
+    include_directories : [opends_internal_inc, tests_inc],
     dependencies : [opends_aisio_dep, cuda_dep],
   )
   executable('test_register_large_aisio',
     'tests/test_register_large_aisio.c',
-    include_directories : opends_internal_inc,
+    'tests/test_extents_io.c',
+    include_directories : [opends_internal_inc, tests_inc],
     dependencies : [opends_aisio_dep, cuda_dep],
   )
 else
   executable('test_sync_read_aisio', 'tests/skip.c')
   executable('test_register_large_aisio', 'tests/skip.c')
-endif
-
-if aisio_enabled
-  executable('cache_extents',
-    'tools/cache_extents.c',
-    include_directories : opends_internal_inc,
-  )
-else
-  executable('cache_extents', 'tests/skip.c')
 endif
 
 summary({

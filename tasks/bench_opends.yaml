@@ -6,11 +6,11 @@ doc: |
   upcie-cuda, exercised through fil's fmma fork) across the three
   reference datasets (filesize8gib, tiktokish, imagenetish).
 
-  Per-dataset extent caches are generated via `cache_extents` while
-  the kernel `nvme` driver owns the device, then the device is
-  unbound (umount + detach), the opends legs run against the unbound
-  device, and a trailing rebind step restores the original binding so
-  iterative bench runs leave the target usable.
+  fil walks XAL on the unbound device to enumerate files and resolve
+  extents, then registers them with OpenDS' fs_mock at setup time.
+  The mount step is preserved only because the dataset directories
+  must exist on the FS for setup_dataset.yaml to populate them; the
+  bench itself does not depend on the FS being mounted.
 
   Prerequisites:
     * scripts/setup_deps.py has installed xnvme, xal, OpenDS, and fil
@@ -37,67 +37,46 @@ steps:
     run: |
       '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_ns }}' '{{ config.test.mount_point }}'
 
-  - name: cache_extents_filesize8gib
-    run: |
-      '{{ config.test.build_dir }}/cache_extents' \
-        '{{ config.test.mount_point }}/filesize8gib' \
-        '{{ config.test.build_dir }}/opends_extents_filesize8gib.bin'
-
-  - name: cache_extents_tiktokish
-    run: |
-      '{{ config.test.build_dir }}/cache_extents' \
-        '{{ config.test.mount_point }}/tiktokish' \
-        '{{ config.test.build_dir }}/opends_extents_tiktokish.bin'
-
-  - name: cache_extents_imagenetish
-    run: |
-      '{{ config.test.build_dir }}/cache_extents' \
-        '{{ config.test.mount_point }}/imagenetish' \
-        '{{ config.test.build_dir }}/opends_extents_imagenetish.bin'
-
   - name: unbind_nvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/unbind_nvme.sh' \
-        '{{ config.test.build_dir }}/opends_extents_filesize8gib.bin' \
-        '{{ config.test.nvme_bdf }}' \
-        '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/tasks/steps/unbind_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   # cudamem_mapping holds one dma-buf fd per alloc_granularity-aligned
   # chunk (2 MiB on NVIDIA discrete GPUs); 8 GiB per buffer needs 4096
-  # fds. prlimit sets both soft and hard atomically (raising hard
-  # requires CAP_SYS_RESOURCE; the cijoe runner is root).
+  # fds per registration. 1 Mi headroom absorbs multi-buffer flows and
+  # matches the kernel default fs.nr_open. prlimit sets both soft and
+  # hard atomically (raising hard requires CAP_SYS_RESOURCE; the cijoe
+  # runner is root).
   - name: opends_filesize8gib
     run: |
       echo "=== opends_filesize8gib ==="
-      prlimit --nofile=65536:65536 -- \
-        filperf '{{ config.test.nvme_ns }}' \
+      prlimit --nofile=1048576:1048576 -- \
+        filperf '{{ config.test.nvme_bdf }}' \
           --backend opends \
-          --opends-fs-mock-path '{{ config.test.build_dir }}/opends_extents_filesize8gib.bin' \
+          --data-dir filesize8gib \
           --batches 1 --batch-size 1 \
           --summary
 
   - name: opends_tiktokish
     run: |
       echo "=== opends_tiktokish ==="
-      prlimit --nofile=65536:65536 -- \
-        filperf '{{ config.test.nvme_ns }}' \
+      prlimit --nofile=1048576:1048576 -- \
+        filperf '{{ config.test.nvme_bdf }}' \
           --backend opends \
-          --opends-fs-mock-path '{{ config.test.build_dir }}/opends_extents_tiktokish.bin' \
+          --data-dir tiktokish \
           --batches 1 --batch-size 26 \
           --summary
 
   - name: opends_imagenetish
     run: |
       echo "=== opends_imagenetish ==="
-      prlimit --nofile=65536:65536 -- \
-        filperf '{{ config.test.nvme_ns }}' \
+      prlimit --nofile=1048576:1048576 -- \
+        filperf '{{ config.test.nvme_bdf }}' \
           --backend opends \
-          --opends-fs-mock-path '{{ config.test.build_dir }}/opends_extents_imagenetish.bin' \
+          --data-dir imagenetish \
           --batches 300 --batch-size 4096 \
           --summary
 
   - name: rebind_nvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/rebind_nvme.sh' \
-        '{{ config.test.build_dir }}/opends_extents_filesize8gib.bin' \
-        '{{ config.test.nvme_bdf }}'
+      '{{ config.test.repo_path }}/tasks/steps/rebind_nvme.sh' '{{ config.test.nvme_bdf }}'

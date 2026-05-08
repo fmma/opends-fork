@@ -31,5 +31,5 @@ build_dir = "/tmp/fil-build"
 # backend lands upstream.
 [fil.repository]
 remote = "https://github.com/fmma/fil"
-ref = "a000687d021ff197473811902889d65343171c7f"
+ref = "71489a2acd753ed301cff02c91898caeed4735a8"
 path = "/root/fil"

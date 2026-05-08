@@ -1,15 +1,13 @@
 /*
  * fs_mock.h - File-system layer mock for the aisio backend.
  *
- * Stands in for the kernel FS layer in tests and benchmarks. Loads a
- * multi-file extent cache produced by tools/cache_extents (FIEMAP walk
- * over a mounted dataset) and resolves absolute paths to stable mock
- * file handles. The aisio backend's HOMI mock delegates extent and
- * device-URI lookups here.
+ * Stands in for HOMI in tests and benchmarks. Holds an in-memory
+ * (device_uri, registered files) state and answers homi_get_extents
+ * and homi_get_device_uri lookups out of it.
  *
  * Transitional consumer interface: installed alongside the aisio
- * library so external benchmarks can drive the backend until real
- * HOMI lands. Goes away once HOMI replaces the mock.
+ * library so external benchmarks can drive the mock until real HOMI
+ * lands. Goes away once HOMI replaces the mock.
  */
 #ifndef FS_MOCK_H_
 #define FS_MOCK_H_
@@ -18,14 +16,17 @@
 
 #include <stdint.h>
 
-/* Load the cache file at `cache_path`, replacing any prior state.
- * Returns 0 on success or -errno on failure. */
-int fs_mock_init(const char *cache_path);
+/* Set the device URI returned by fs_mock_get_device_uri for every
+ * subsequently registered file, and clear any prior registrations.
+ * Returns 0 on success or -EINVAL if uri is NULL/too long. */
+int fs_mock_init(const char *device_uri);
 
-/* Resolve `path` to a stable mock fh (>= 0), or -ENOENT if the path
- * is not present in the loaded cache. The returned fh is suitable as
- * the fd argument to ds_file_handle_register. */
-int fs_mock_open(const char *path);
+/* Register an extent list and return a stable mock fh (>= 0) suitable
+ * as the fd argument to ds_file_handle_register. The caller's extent
+ * array is copied; subsequent fs_mock state changes do not invalidate
+ * pointers returned via fs_mock_get_extents. Returns -ENOMEM on
+ * allocation failure or -EINVAL if extents is NULL with count > 0. */
+int fs_mock_register(const struct homi_extent *extents, uint32_t count);
 
 /* Used by homi_client_mock to satisfy homi_get_extents/_get_device_uri.
  * The returned `extents` and `uri` pointers reference state owned by
@@ -34,20 +35,7 @@ int fs_mock_get_extents(int fh, const struct homi_extent **extents,
                         uint32_t *count);
 int fs_mock_get_device_uri(int fh, const char **uri);
 
-/* Path-table enumeration. Lets consumers walk the dataset without
- * needing to mount the filesystem or know paths up front. The
- * indices match those returned by fs_mock_open for the same path,
- * so a consumer can iterate i < fs_mock_get_n_files() and pass i
- * directly to ds_file_handle_register. */
-uint32_t fs_mock_get_n_files(void);
-int fs_mock_get_path(uint32_t i, const char **path);
-
-/* Logical file size derived from the last extent's file_offset +
- * length. The cache does not store the original stat size, so
- * tail bytes past the last extent (sparse holes) are not represented. */
-int fs_mock_get_size(uint32_t i, uint64_t *size);
-
-/* Free all loaded state. */
+/* Free all registered state. */
 void fs_mock_reset(void);
 
 #endif /* FS_MOCK_H_ */
