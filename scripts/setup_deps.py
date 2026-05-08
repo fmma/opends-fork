@@ -8,25 +8,14 @@ against installed libopends_aisio, so OpenDS is installed before fil
 is built. Assumes the tree has been synced to the target (rsync.py).
 """
 
-import subprocess
-import sys
-from pathlib import Path
+from _helpers import ok, run_cijoe
 
-root = Path(__file__).resolve().parent.parent
-
-configs = ["-c", "configs/transport.toml", "-c", "configs/deps.toml",
-           "-c", "configs/test.toml"]
-tasks = [
+for task in [
     "tasks/setup_xnvme.yaml",
     "tasks/setup_xal.yaml",
     "tasks/setup_opends.yaml",
     "tasks/setup_fil.yaml",
-]
-for task in tasks:
-    out = f"cijoe-output-{Path(task).stem}"
-    rc = subprocess.run(
-        ["cijoe", "-m", "-s", "-o", out, *configs, task],
-        cwd=root,
-    ).returncode
-    if rc:
-        sys.exit(rc)
+]:
+    run_cijoe(task)
+
+ok("setup_deps")
