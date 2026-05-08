@@ -72,9 +72,15 @@ steps:
 
   - name: test_register_large_aisio
     run: |
-      '{{ config.test.build_dir }}/test_register_large_aisio' \
-        '{{ config.test.build_dir }}/opends_extents.bin' \
-        '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
+      # cudamem_mapping holds one dma-buf fd per alloc_granularity-aligned
+      # chunk (2 MiB on NVIDIA discrete GPUs); 8 GiB needs 4096 fds.
+      # prlimit sets both soft and hard atomically (raising hard requires
+      # CAP_SYS_RESOURCE; the cijoe runner is root).
+      echo "fd limit (soft/hard): $(ulimit -Sn)/$(ulimit -Hn)"
+      prlimit --nofile=65536:65536 -- \
+        '{{ config.test.build_dir }}/test_register_large_aisio' \
+          '{{ config.test.build_dir }}/opends_extents.bin' \
+          '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: rebind_nvme
     run: |
