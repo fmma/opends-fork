@@ -21,13 +21,18 @@ doc: |
       (filesize8gib, tiktokish, imagenetish) under
       config.test.mount_point.
 
-  CSV output (Time, Batches, IOPS, MiB/s) goes to cijoe's report
-  directory.
+  bench_meta records the build commit + target platform to
+  artifacts/meta.json; each bench_run stashes filperf's verbatim
+  stdout to artifacts/<backend>_<data_dir>.log for downstream
+  parsing by scripts/bench_report.py.
 
 steps:
   - name: cpu_governor
     run: |
       '{{ config.test.repo_path }}/tasks/steps/cpu_governor.sh'
+
+  - name: meta
+    uses: bench_meta
 
   - name: bind_nvme
     run: |
@@ -41,41 +46,29 @@ steps:
     run: |
       '{{ config.test.repo_path }}/tasks/steps/unbind_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
-  # cudamem_mapping holds one dma-buf fd per alloc_granularity-aligned
-  # chunk (2 MiB on NVIDIA discrete GPUs); 8 GiB per buffer needs 4096
-  # fds per registration. 1 Mi headroom absorbs multi-buffer flows and
-  # matches the kernel default fs.nr_open. prlimit sets both soft and
-  # hard atomically (raising hard requires CAP_SYS_RESOURCE; the cijoe
-  # runner is root).
   - name: opends_filesize8gib
-    run: |
-      echo "=== opends_filesize8gib ==="
-      prlimit --nofile=1048576:1048576 -- \
-        filperf '{{ config.test.nvme_bdf }}' \
-          --backend opends \
-          --data-dir filesize8gib \
-          --batches 1 --batch-size 1 \
-          --summary
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: filesize8gib
+      batches: 1
+      batch-size: 1
 
   - name: opends_tiktokish
-    run: |
-      echo "=== opends_tiktokish ==="
-      prlimit --nofile=1048576:1048576 -- \
-        filperf '{{ config.test.nvme_bdf }}' \
-          --backend opends \
-          --data-dir tiktokish \
-          --batches 1 --batch-size 26 \
-          --summary
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: tiktokish
+      batches: 1
+      batch-size: 26
 
   - name: opends_imagenetish
-    run: |
-      echo "=== opends_imagenetish ==="
-      prlimit --nofile=1048576:1048576 -- \
-        filperf '{{ config.test.nvme_bdf }}' \
-          --backend opends \
-          --data-dir imagenetish \
-          --batches 300 --batch-size 4096 \
-          --summary
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: imagenetish
+      batches: 300
+      batch-size: 4096
 
   - name: rebind_nvme
     run: |
