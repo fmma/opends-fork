@@ -24,6 +24,28 @@ ds_file API for reading files directly into accelerator memory.
   implementation. Requires xNVMe and the CUDA toolkit. Read-only;
   `ds_file_write` returns `DS_FILE_IO_NOT_SUPPORTED`.
 
+## Performance
+
+Headline read throughput across the three reference datasets,
+cold-cache, N=1. `scripts/bench_report.py` regenerates the block
+below from bench artifacts; see "Benchmarking with filperf" for how
+to run the suites.
+
+<!-- bench:start -->
+_Commit `0d6f204` on host `swissknife` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU `NVIDIA RTX 2000 Ada Generation`)._
+
+| Dataset       | gds (MiB/s) | opends (MiB/s) |
+|---------------|--------------|--------------|
+| filesize8gib  |         6267 |         1887 |
+| tiktokish     |         2645 |         1399 |
+| imagenetish   |          612 |           51 |
+<!-- bench:end -->
+
+The `opends imagenetish` gap is sub-LBA bounce buffering: the dataset
+averages ~110 KiB per file, so most reads end on a partial-LBA tail
+that aisio copies through a host bounce buffer instead of straight
+to GPU memory.
+
 ## ds_file API
 
 ### Basic read
@@ -216,38 +238,28 @@ touching the (now unmounted) filesystem.
 
 ### Benchmarking with filperf
 
-Throughput benchmarks are driven by `filperf` from
-[fil](https://github.com/xnvme/fil), running against three reference
-datasets (`filesize8gib`, `tiktokish`, `imagenetish`). Today
-`tasks/bench_opends.yaml` only exercises the `gds` backend (cuFile
-reference baseline); an `opends` leg lands once the fmma/fil fork
-grows `filperf --backend opends`.
+Throughput benchmarks use `filperf` from
+[fil](https://github.com/xnvme/fil) against three reference datasets
+(`filesize8gib`, `tiktokish`, `imagenetish`). Two suites:
+`tasks/bench_gds.yaml` (cuFile, kernel `nvme` bound) and
+`tasks/bench_opends.yaml` (OpenDS aisio, kernel driver unbound).
+Datasets are populated by aisio's `tasks/setup_dataset.yaml` under
+`config.test.mount_point`.
 
-Datasets are produced by aisio's `tasks/setup_dataset.yaml`, which
-formats the NVMe device with XFS and populates the three datasets
-into the mountpoint declared in aisio's `configs/datasets.toml`. That
-file is read directly by `bench_opends.yaml` (via the
-`filesystems.dset` and `datasets.*` tables) and must be passed in
-as an additional `-c` config; nothing about the dataset layout is
-duplicated here.
+Prerequisites: `scripts/setup_deps.py` and `scripts/build.py` have
+run on the target, and aisio's `tasks/setup_dataset.yaml` has
+populated the three datasets.
 
-Prerequisites:
-
-- `scripts/setup_deps.py` has installed xNVMe, xal, fil on the target.
-- `scripts/build.py` has built OpenDS on the target.
-- aisio's `tasks/setup_dataset.yaml` has been run on the target,
-  formatting the NVMe with XFS and populating the three datasets.
-- The NVMe device is bound to the kernel `nvme` driver and the XFS
-  filesystem at `filesystems.dset.mountpoint` is mounted (the `gds`
-  and `posix` backends both go through the kernel FS).
-
-Run:
+Run, then render:
 
 ```sh
-python scripts/run_bench.py \
-    --datasets-config <path-to-aisio>/configs/datasets.toml
+python scripts/run_bench.py [--suite gds|opends]
+python scripts/bench_report.py
 ```
 
-Each `filperf` invocation drops page caches first so cold-cache
-numbers are measured. CSV output (Time, Batches, IOPS, MiB/s) lands
-in cijoe's `cijoe-output-bench` report directory.
+Each suite writes artifacts to
+`cijoe-output-bench-<backend>/artifacts/`: `meta.json` (commit from
+`.commit_stamp` plus host/kernel/NVMe/GPU info) and
+`<backend>_<dataset>.log` (verbatim `filperf` stdout).
+`bench_report.py` parses these to rewrite the perf block above. Each
+`filperf` drops page caches first so numbers are cold-cache.
