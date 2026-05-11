@@ -15,14 +15,18 @@ doc: |
       (filesize8gib, tiktokish, imagenetish) under
       config.test.mount_point.
 
-  Each filperf invocation drops page caches first so cold-cache
-  numbers are measured. CSV output (Time, Batches, IOPS, MiB/s) goes
-  to cijoe's report directory.
+  bench_meta records the build commit + target platform to
+  artifacts/meta.json; each bench_run stashes filperf's verbatim
+  stdout to artifacts/<backend>_<data_dir>.log for downstream
+  parsing by scripts/bench_report.py.
 
 steps:
   - name: cpu_governor
     run: |
       '{{ config.test.repo_path }}/tasks/steps/cpu_governor.sh'
+
+  - name: meta
+    uses: bench_meta
 
   - name: bind_nvme
     run: |
@@ -33,34 +37,28 @@ steps:
       '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_ns }}' '{{ config.test.mount_point }}'
 
   - name: gds_filesize8gib
-    run: |
-      echo "=== gds_filesize8gib ==="
-      echo 3 > /proc/sys/vm/drop_caches
-      filperf '{{ config.test.nvme_ns }}' \
-        --backend gds \
-        --mnt '{{ config.test.mount_point }}' \
-        --data-dir filesize8gib \
-        --batches 1 --batch-size 1 \
-        --summary
+    uses: bench_run
+    with:
+      backend: gds
+      data-dir: filesize8gib
+      batches: 1
+      batch-size: 1
+      mnt: "{{ config.test.mount_point }}"
 
   - name: gds_tiktokish
-    run: |
-      echo "=== gds_tiktokish ==="
-      echo 3 > /proc/sys/vm/drop_caches
-      filperf '{{ config.test.nvme_ns }}' \
-        --backend gds \
-        --mnt '{{ config.test.mount_point }}' \
-        --data-dir tiktokish \
-        --batches 1 --batch-size 26 \
-        --summary
+    uses: bench_run
+    with:
+      backend: gds
+      data-dir: tiktokish
+      batches: 1
+      batch-size: 26
+      mnt: "{{ config.test.mount_point }}"
 
   - name: gds_imagenetish
-    run: |
-      echo "=== gds_imagenetish ==="
-      echo 3 > /proc/sys/vm/drop_caches
-      filperf '{{ config.test.nvme_ns }}' \
-        --backend gds \
-        --mnt '{{ config.test.mount_point }}' \
-        --data-dir imagenetish \
-        --batches 300 --batch-size 4096 \
-        --summary
+    uses: bench_run
+    with:
+      backend: gds
+      data-dir: imagenetish
+      batches: 300
+      batch-size: 4096
+      mnt: "{{ config.test.mount_point }}"
