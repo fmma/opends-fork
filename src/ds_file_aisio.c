@@ -42,6 +42,9 @@
  * non-aligned PRP1 with status code 0x13 ("PRP Offset Invalid"). The
  * NVMe MPSMIN page is 4 KiB in practice. */
 #define NVME_PRP_PAGE 4096
+/* Depth > 1 lets the middle loop pipeline MDTS-sized chunks; 32 keeps
+ * PCIe Gen4 x4 fed. Must be a power of 2 in [1, 4096]. */
+#define AISIO_QUEUE_DEPTH 32
 
 struct buf_entry {
 	const void *base;
@@ -104,6 +107,29 @@ aisio_completion_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 {
 	(void)ctx;
 	*(bool *)opaque = true;
+}
+
+/* First-error capture for the middle pipeline callback. */
+struct aisio_middle_state {
+	int outstanding;
+	int err_rc;
+	struct xnvme_spec_cpl err_cpl;
+	uint64_t err_slba;
+	uint16_t err_nlb;
+};
+
+static void
+aisio_middle_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
+{
+	struct aisio_middle_state *s = opaque;
+	if (xnvme_cmd_ctx_cpl_status(ctx) && !s->err_rc) {
+		s->err_rc = -EIO;
+		s->err_cpl = ctx->cpl;
+		s->err_slba = ctx->cmd.nvm.slba;
+		s->err_nlb = (uint16_t)ctx->cmd.nvm.nlb;
+	}
+	xnvme_queue_put_cmd_ctx(ctx->async.queue, ctx);
+	s->outstanding--;
 }
 
 static int
@@ -191,7 +217,7 @@ open_device(struct aisio_driver *d, int fd)
 	}
 	d->lba_shift = (uint32_t)__builtin_ctz(d->lba_size);
 
-	rc = xnvme_queue_init(d->xdev, 1, 0, &d->queue);
+	rc = xnvme_queue_init(d->xdev, AISIO_QUEUE_DEPTH, 0, &d->queue);
 	if (rc < 0) {
 		fprintf(stderr, "aisio open_device: xnvme_queue_init rc=%d\n",
 		        rc);
@@ -203,14 +229,182 @@ open_device(struct aisio_driver *d, int fd)
 	return 0;
 }
 
+/* Read-loop state: geometry constants up top, per-extent cursor below.
+ * Threaded through the head/middle/tail helpers, which each advance the
+ * cursor by however many bytes they consumed. */
+struct aisio_read_state {
+	struct aisio_driver *d;
+	uint32_t lba_nbytes;
+	uint32_t lba_shift;
+	uint32_t lba_mask;
+	uint64_t max_chunk_lbas;
+	uint64_t cur_slba;
+	uint8_t *abs_dst;
+	size_t remaining;
+	size_t total_transferred;
+};
+
+/* head bounce: NVMe PRP1 must be page-aligned on this controller.
+ * cudaMalloc only guarantees 256-byte alignment, so for fil's small
+ * per-buffer allocations (e.g. imagenetish ~152 KiB) the destination
+ * can land mid-page. Bounce just enough leading bytes through scratch
+ * to advance abs_dst onto the next page boundary, then DMA the rest
+ * direct. */
+static int
+read_head_bounce(struct aisio_read_state *s)
+{
+	size_t dst_pg_off = (uintptr_t)s->abs_dst & (NVME_PRP_PAGE - 1);
+	size_t head_bytes = 0;
+	if (dst_pg_off && s->remaining)
+		head_bytes = NVME_PRP_PAGE - dst_pg_off;
+	if (head_bytes > s->remaining)
+		head_bytes = s->remaining;
+	if (!head_bytes)
+		return 0;
+
+	int rc = ensure_bounce_buf(s->d);
+	if (rc < 0)
+		return rc;
+
+	uint64_t head_lbas = (head_bytes + s->lba_mask) >> s->lba_shift;
+	uint16_t nlb = (uint16_t)(head_lbas - 1);
+	struct xnvme_spec_cpl cpl;
+	rc = aisio_nvm_read_sync(s->d, s->cur_slba, nlb, s->d->bounce_buf,
+	                         &cpl);
+	if (rc) {
+		fprintf(stderr,
+		        "aisio head: rc=%d sc=%u sct=%u slba=%llu nlb=%u "
+		        "dst_pg_off=%zu head_bytes=%zu\n",
+		        rc, cpl.status.sc, cpl.status.sct,
+		        (unsigned long long)s->cur_slba, nlb, dst_pg_off,
+		        head_bytes);
+		return -EIO;
+	}
+
+	cudaError_t cerr = cudaMemcpy(s->abs_dst, s->d->bounce_buf, head_bytes,
+	                              cudaMemcpyDefault);
+	if (cerr != cudaSuccess)
+		return -EIO;
+
+	s->cur_slba += head_lbas;
+	s->abs_dst += head_bytes;
+	s->remaining -= head_bytes;
+	s->total_transferred += head_bytes;
+	return 0;
+}
+
+/* middle: aligned DMA chunks straight into the caller's buffer. Pipeline
+ * up to AISIO_QUEUE_DEPTH MDTS-sized reads, draining a slot whenever
+ * the queue is full. abs_dst is page-aligned on entry (head has run).
+ * Caller passes pre-computed middle_lbas so it can keep tail_bytes
+ * around for the tail phase. */
+static int
+read_middle_pipeline(struct aisio_read_state *s, uint64_t middle_lbas)
+{
+	struct aisio_middle_state mst = {0};
+	uint64_t lbas_done = 0;
+	while (lbas_done < middle_lbas) {
+		uint64_t chunk_lbas = XNVME_MIN_U64(middle_lbas - lbas_done,
+		                                    s->max_chunk_lbas);
+		chunk_lbas = XNVME_MIN_U64(chunk_lbas, NVME_MAX_NLB);
+
+		uint16_t nlb = (uint16_t)(chunk_lbas - 1);
+		uint8_t *dst_chunk = s->abs_dst + lbas_done * s->lba_nbytes;
+
+		/* xnvme's ctx pool is capacity+1 but submit rejects
+		 * -EBUSY at outstanding == capacity, so gate on the
+		 * in-flight count directly. */
+		while (mst.outstanding >= AISIO_QUEUE_DEPTH) {
+			int r = xnvme_queue_poke(s->d->queue, 0);
+			if (r < 0) {
+				mst.err_rc = r;
+				break;
+			}
+		}
+		if (mst.err_rc)
+			break;
+
+		struct xnvme_cmd_ctx *ctx =
+		        xnvme_queue_get_cmd_ctx(s->d->queue);
+		if (!ctx) {
+			mst.err_rc = -errno;
+			break;
+		}
+
+		xnvme_cmd_ctx_set_cb(ctx, aisio_middle_cb, &mst);
+		int srq =
+		        xnvme_nvm_read(ctx, s->d->nsid, s->cur_slba + lbas_done,
+		                       nlb, dst_chunk, NULL);
+		if (srq) {
+			xnvme_queue_put_cmd_ctx(s->d->queue, ctx);
+			mst.err_rc = srq;
+			break;
+		}
+		mst.outstanding++;
+		lbas_done += chunk_lbas;
+	}
+
+	while (mst.outstanding > 0) {
+		/* Cannot break out while commands are in flight:
+		 * aisio_middle_cb still references the stack-local mst.
+		 * xnvme has no cancel path, so spin until every callback
+		 * fires. Capture the first poke error for the post-loop
+		 * report. */
+		int r = xnvme_queue_poke(s->d->queue, 0);
+		if (r < 0 && !mst.err_rc)
+			mst.err_rc = r;
+	}
+
+	if (mst.err_rc) {
+		fprintf(stderr,
+		        "aisio middle: rc=%d sc=%u sct=%u slba=%llu nlb=%u\n",
+		        mst.err_rc, mst.err_cpl.status.sc,
+		        mst.err_cpl.status.sct,
+		        (unsigned long long)mst.err_slba, mst.err_nlb);
+		return -EIO;
+	}
+
+	s->cur_slba += middle_lbas;
+	s->abs_dst += middle_lbas * s->lba_nbytes;
+	s->remaining -= middle_lbas * s->lba_nbytes;
+	s->total_transferred += middle_lbas * s->lba_nbytes;
+	return 0;
+}
+
+/* tail: trailing partial LBA (file size not LBA-multiple). The FS
+ * allocates a full block, so the LBA is on disk; only the first
+ * tail_bytes within it are file content. */
+static int
+read_tail_bounce(struct aisio_read_state *s, size_t tail_bytes)
+{
+	int rc = ensure_bounce_buf(s->d);
+	if (rc < 0)
+		return rc;
+
+	struct xnvme_spec_cpl cpl;
+	rc = aisio_nvm_read_sync(s->d, s->cur_slba, 0, s->d->bounce_buf, &cpl);
+	if (rc) {
+		fprintf(stderr,
+		        "aisio tail: rc=%d sc=%u sct=%u slba=%llu "
+		        "tail_bytes=%zu\n",
+		        rc, cpl.status.sc, cpl.status.sct,
+		        (unsigned long long)s->cur_slba, tail_bytes);
+		return -EIO;
+	}
+
+	cudaError_t cerr = cudaMemcpy(s->abs_dst, s->d->bounce_buf, tail_bytes,
+	                              cudaMemcpyDefault);
+	if (cerr != cudaSuccess)
+		return -EIO;
+
+	s->total_transferred += tail_bytes;
+	return 0;
+}
+
 static ssize_t
 aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
                    size_t size, off_t file_offset)
 {
-	uint32_t lba_nbytes = d->lba_size;
-	uint32_t lba_shift = d->lba_shift;
-	uint32_t lba_mask = lba_nbytes - 1;
-
 	uint64_t req_start = (uint64_t)file_offset;
 	if (size > UINT64_MAX - req_start)
 		return -EINVAL;
@@ -225,12 +419,17 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		return rc;
 	}
 
-	size_t total_transferred = 0;
-	uint64_t max_chunk_lbas = d->mdts_nbytes >> lba_shift;
-	if (max_chunk_lbas == 0) {
+	struct aisio_read_state s = {
+	        .d = d,
+	        .lba_nbytes = d->lba_size,
+	        .lba_shift = d->lba_shift,
+	        .lba_mask = d->lba_size - 1,
+	        .max_chunk_lbas = d->mdts_nbytes >> d->lba_shift,
+	};
+	if (s.max_chunk_lbas == 0) {
 		fprintf(stderr,
 		        "aisio prelude: max_chunk_lbas=0 (mdts=%u lba=%u)\n",
-		        d->mdts_nbytes, lba_nbytes);
+		        d->mdts_nbytes, s.lba_nbytes);
 		return -EINVAL;
 	}
 
@@ -258,137 +457,40 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		 * extents land on FS-block boundaries, which are multiples
 		 * of the LBA size). Reject explicitly until a use case
 		 * appears. */
-		if (off_in_ext & lba_mask)
+		if (off_in_ext & s.lba_mask)
 			return -EINVAL;
 
-		uint8_t *abs_dst = (uint8_t *)dst + buf_off;
-		size_t remaining = span_end - span_start;
-		uint64_t cur_slba = e->slba + (off_in_ext >> lba_shift);
+		s.abs_dst = (uint8_t *)dst + buf_off;
+		s.remaining = span_end - span_start;
+		s.cur_slba = e->slba + (off_in_ext >> s.lba_shift);
 
 		/* xnvme reads are LBA-granular, so the caller's buffer
 		 * must be LBA-aligned for the partial-byte copies below to
-		 * land at the right offsets. cudaMalloc on this driver
-		 * happens to return >=512 B alignment, so this is a
-		 * defensive check; anything finer needs a real bounce of
-		 * arbitrary spans. */
-		if ((uintptr_t)abs_dst & lba_mask)
+		 * land at the right offsets. cudaMalloc happens to return
+		 * >=512 B alignment, so this is a defensive check;
+		 * anything finer needs a real bounce of arbitrary spans. */
+		if ((uintptr_t)s.abs_dst & s.lba_mask)
 			return -EINVAL;
 
-		/* HEAD bounce: NVMe PRP1 must be page-aligned on this
-		 * controller. cudaMalloc only guarantees 256-byte
-		 * alignment, so for fil's small per-buffer allocations
-		 * (e.g. imagenetish ~152 KiB) the destination can land
-		 * mid-page. Bounce just enough leading bytes through
-		 * scratch to advance abs_dst onto the next page boundary,
-		 * then DMA the rest direct. */
-		size_t dst_pg_off = (uintptr_t)abs_dst & (NVME_PRP_PAGE - 1);
-		size_t head_bytes = 0;
-		if (dst_pg_off && remaining)
-			head_bytes = NVME_PRP_PAGE - dst_pg_off;
-		if (head_bytes > remaining)
-			head_bytes = remaining;
-		if (head_bytes) {
-			rc = ensure_bounce_buf(d);
-			if (rc < 0)
-				return rc;
+		rc = read_head_bounce(&s);
+		if (rc)
+			return rc;
 
-			uint64_t head_lbas =
-			        (head_bytes + lba_mask) >> lba_shift;
-			uint16_t nlb = (uint16_t)(head_lbas - 1);
-			struct xnvme_spec_cpl cpl;
-			rc = aisio_nvm_read_sync(d, cur_slba, nlb,
-			                         d->bounce_buf, &cpl);
-			if (rc) {
-				fprintf(stderr,
-				        "aisio HEAD: rc=%d sc=%u sct=%u "
-				        "slba=%llu nlb=%u dst_pg_off=%zu "
-				        "head_bytes=%zu\n",
-				        rc, cpl.status.sc, cpl.status.sct,
-				        (unsigned long long)cur_slba, nlb,
-				        dst_pg_off, head_bytes);
-				return -EIO;
-			}
+		size_t tail_bytes = s.remaining & s.lba_mask;
+		uint64_t middle_lbas =
+		        (s.remaining - tail_bytes) >> s.lba_shift;
+		rc = read_middle_pipeline(&s, middle_lbas);
+		if (rc)
+			return rc;
 
-			cudaError_t cerr =
-			        cudaMemcpy(abs_dst, d->bounce_buf, head_bytes,
-			                   cudaMemcpyDefault);
-			if (cerr != cudaSuccess)
-				return -EIO;
-
-			cur_slba += head_lbas;
-			abs_dst += head_bytes;
-			remaining -= head_bytes;
-			total_transferred += head_bytes;
-		}
-
-		/* MIDDLE: aligned DMA chunks straight into the caller's
-		 * buffer. abs_dst is now NVME_PRP_PAGE-aligned (or
-		 * remaining is zero / sub-LBA, in which case the loop is
-		 * skipped). */
-		uint64_t tail_bytes = remaining & lba_mask;
-		uint64_t middle_lbas = (remaining - tail_bytes) >> lba_shift;
-		uint64_t lbas_done = 0;
-		while (lbas_done < middle_lbas) {
-			uint64_t chunk_lbas = XNVME_MIN_U64(
-			        middle_lbas - lbas_done, max_chunk_lbas);
-			chunk_lbas = XNVME_MIN_U64(chunk_lbas, NVME_MAX_NLB);
-
-			uint16_t nlb = (uint16_t)(chunk_lbas - 1);
-			uint8_t *dst_chunk = abs_dst + lbas_done * lba_nbytes;
-
-			struct xnvme_spec_cpl cpl;
-			rc = aisio_nvm_read_sync(d, cur_slba + lbas_done, nlb,
-			                         dst_chunk, &cpl);
-			if (rc) {
-				fprintf(stderr,
-				        "aisio MID: rc=%d sc=%u sct=%u "
-				        "slba=%llu nlb=%u dst=%p\n",
-				        rc, cpl.status.sc, cpl.status.sct,
-				        (unsigned long long)(cur_slba +
-				                             lbas_done),
-				        nlb, (void *)dst_chunk);
-				return -EIO;
-			}
-
-			lbas_done += chunk_lbas;
-			total_transferred += chunk_lbas * lba_nbytes;
-		}
-		cur_slba += middle_lbas;
-		abs_dst += middle_lbas * lba_nbytes;
-		remaining -= middle_lbas * lba_nbytes;
-
-		/* TAIL: trailing partial LBA (file size not LBA-multiple).
-		 * The FS allocates a full block, so the LBA is on disk;
-		 * only the first tail_bytes within it are file content. */
 		if (tail_bytes) {
-			rc = ensure_bounce_buf(d);
-			if (rc < 0)
+			rc = read_tail_bounce(&s, tail_bytes);
+			if (rc)
 				return rc;
-
-			struct xnvme_spec_cpl cpl;
-			rc = aisio_nvm_read_sync(d, cur_slba, 0, d->bounce_buf,
-			                         &cpl);
-			if (rc) {
-				fprintf(stderr,
-				        "aisio TAIL: rc=%d sc=%u sct=%u "
-				        "slba=%llu tail_bytes=%llu\n",
-				        rc, cpl.status.sc, cpl.status.sct,
-				        (unsigned long long)cur_slba,
-				        (unsigned long long)tail_bytes);
-				return -EIO;
-			}
-
-			cudaError_t cerr =
-			        cudaMemcpy(abs_dst, d->bounce_buf, tail_bytes,
-			                   cudaMemcpyDefault);
-			if (cerr != cudaSuccess)
-				return -EIO;
-
-			total_transferred += tail_bytes;
 		}
 	}
 
-	return (ssize_t)total_transferred;
+	return (ssize_t)s.total_transferred;
 }
 
 /* ------------------------------------------------------------------ */
