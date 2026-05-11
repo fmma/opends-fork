@@ -58,8 +58,14 @@ struct aisio_handle {
 struct aisio_driver {
 	struct homi_conn *homi;
 	struct xnvme_dev *xdev;
+	/* xNVMe's sync command context polls completions with a 1 ms
+	 * sleep, dominating sub-millisecond read latency. Submit through
+	 * an async queue and busy-poll instead. */
+	struct xnvme_queue *queue;
 	uint32_t nsid;
 	uint32_t lba_size;
+	/* log2(lba_size); NVMe LBA size is always 2^LBADS. */
+	uint32_t lba_shift;
 	uint32_t mdts_nbytes;
 	struct buf_entry bufs[MAX_BUF_ENTRIES];
 	int buf_count;
@@ -93,6 +99,50 @@ ensure_bounce_buf(struct aisio_driver *d)
 	return d->bounce_buf ? 0 : -ENOMEM;
 }
 
+static void
+aisio_completion_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
+{
+	(void)ctx;
+	*(bool *)opaque = true;
+}
+
+static int
+aisio_nvm_read_sync(struct aisio_driver *d, uint64_t slba, uint16_t nlb,
+                    void *dst, struct xnvme_spec_cpl *cpl_out)
+{
+	if (cpl_out)
+		memset(cpl_out, 0, sizeof(*cpl_out));
+
+	struct xnvme_cmd_ctx *ctx = xnvme_queue_get_cmd_ctx(d->queue);
+	if (!ctx)
+		return -errno;
+
+	bool done = false;
+	xnvme_cmd_ctx_set_cb(ctx, aisio_completion_cb, &done);
+
+	int rc = xnvme_nvm_read(ctx, d->nsid, slba, nlb, dst, NULL);
+	if (rc) {
+		xnvme_queue_put_cmd_ctx(d->queue, ctx);
+		return rc;
+	}
+
+	while (!done) {
+		/* Errors from poke can't terminate this loop while the
+		 * command is in flight: aisio_completion_cb still
+		 * references the stack-local `done`. xnvme has no cancel
+		 * path, so ignore the error and keep polling until the
+		 * device reports completion. */
+		(void)xnvme_queue_poke(d->queue, 1);
+	}
+
+	int status = xnvme_cmd_ctx_cpl_status(ctx);
+	if (status && cpl_out)
+		*cpl_out = ctx->cpl;
+
+	xnvme_queue_put_cmd_ctx(d->queue, ctx);
+	return status ? -EIO : 0;
+}
+
 static int
 open_device(struct aisio_driver *d, int fd)
 {
@@ -124,11 +174,30 @@ open_device(struct aisio_driver *d, int fd)
 		fprintf(stderr,
 		        "aisio open_device: zero geometry from xnvme_dev_open "
 		        "(lba_nbytes=%u nbytes=%u mdts_nbytes=%u) — "
-		        "controller likely needs a PCI reset before this open\n",
+		        "controller likely needs a PCI reset before this "
+		        "open\n",
 		        geo->lba_nbytes, geo->nbytes, geo->mdts_nbytes);
 		xnvme_dev_close(d->xdev);
 		d->xdev = NULL;
 		return -EIO;
+	}
+	if (d->lba_size & (d->lba_size - 1)) {
+		fprintf(stderr,
+		        "aisio open_device: lba_size=%u is not a power of 2\n",
+		        d->lba_size);
+		xnvme_dev_close(d->xdev);
+		d->xdev = NULL;
+		return -EIO;
+	}
+	d->lba_shift = (uint32_t)__builtin_ctz(d->lba_size);
+
+	rc = xnvme_queue_init(d->xdev, 1, 0, &d->queue);
+	if (rc < 0) {
+		fprintf(stderr, "aisio open_device: xnvme_queue_init rc=%d\n",
+		        rc);
+		xnvme_dev_close(d->xdev);
+		d->xdev = NULL;
+		return rc;
 	}
 
 	return 0;
@@ -139,6 +208,8 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
                    size_t size, off_t file_offset)
 {
 	uint32_t lba_nbytes = d->lba_size;
+	uint32_t lba_shift = d->lba_shift;
+	uint32_t lba_mask = lba_nbytes - 1;
 
 	uint64_t req_start = (uint64_t)file_offset;
 	if (size > UINT64_MAX - req_start)
@@ -149,15 +220,16 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 	uint32_t extent_count = 0;
 	int rc = homi_get_extents(d->homi, h->fd, &extents, &extent_count);
 	if (rc < 0) {
-		fprintf(stderr, "aisio prelude: homi_get_extents fd=%d rc=%d\n", h->fd, rc);
+		fprintf(stderr, "aisio prelude: homi_get_extents fd=%d rc=%d\n",
+		        h->fd, rc);
 		return rc;
 	}
 
 	size_t total_transferred = 0;
-	struct xnvme_cmd_ctx cmd = xnvme_cmd_ctx_from_dev(d->xdev);
-	uint64_t max_chunk_lbas = d->mdts_nbytes / lba_nbytes;
+	uint64_t max_chunk_lbas = d->mdts_nbytes >> lba_shift;
 	if (max_chunk_lbas == 0) {
-		fprintf(stderr, "aisio prelude: max_chunk_lbas=0 (mdts=%u lba=%u)\n",
+		fprintf(stderr,
+		        "aisio prelude: max_chunk_lbas=0 (mdts=%u lba=%u)\n",
 		        d->mdts_nbytes, lba_nbytes);
 		return -EINVAL;
 	}
@@ -186,12 +258,12 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		 * extents land on FS-block boundaries, which are multiples
 		 * of the LBA size). Reject explicitly until a use case
 		 * appears. */
-		if (off_in_ext % lba_nbytes != 0)
+		if (off_in_ext & lba_mask)
 			return -EINVAL;
 
 		uint8_t *abs_dst = (uint8_t *)dst + buf_off;
 		size_t remaining = span_end - span_start;
-		uint64_t cur_slba = e->slba + (off_in_ext / lba_nbytes);
+		uint64_t cur_slba = e->slba + (off_in_ext >> lba_shift);
 
 		/* xnvme reads are LBA-granular, so the caller's buffer
 		 * must be LBA-aligned for the partial-byte copies below to
@@ -199,7 +271,7 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		 * happens to return >=512 B alignment, so this is a
 		 * defensive check; anything finer needs a real bounce of
 		 * arbitrary spans. */
-		if ((uintptr_t)abs_dst % lba_nbytes != 0)
+		if ((uintptr_t)abs_dst & lba_mask)
 			return -EINVAL;
 
 		/* HEAD bounce: NVMe PRP1 must be page-aligned on this
@@ -220,24 +292,26 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 			if (rc < 0)
 				return rc;
 
-			uint64_t head_lbas = (head_bytes + lba_nbytes - 1) /
-			                     lba_nbytes;
+			uint64_t head_lbas =
+			        (head_bytes + lba_mask) >> lba_shift;
 			uint16_t nlb = (uint16_t)(head_lbas - 1);
-			rc = xnvme_nvm_read(&cmd, d->nsid, cur_slba, nlb,
-			                    d->bounce_buf, NULL);
-			if (rc || xnvme_cmd_ctx_cpl_status(&cmd)) {
-				fprintf(stderr, "aisio HEAD: rc=%d sc=%u sct=%u "
-				                "slba=%llu nlb=%u dst_pg_off=%zu "
-				                "head_bytes=%zu\n",
-				        rc, cmd.cpl.status.sc, cmd.cpl.status.sct,
+			struct xnvme_spec_cpl cpl;
+			rc = aisio_nvm_read_sync(d, cur_slba, nlb,
+			                         d->bounce_buf, &cpl);
+			if (rc) {
+				fprintf(stderr,
+				        "aisio HEAD: rc=%d sc=%u sct=%u "
+				        "slba=%llu nlb=%u dst_pg_off=%zu "
+				        "head_bytes=%zu\n",
+				        rc, cpl.status.sc, cpl.status.sct,
 				        (unsigned long long)cur_slba, nlb,
 				        dst_pg_off, head_bytes);
 				return -EIO;
 			}
 
-			cudaError_t cerr = cudaMemcpy(abs_dst, d->bounce_buf,
-			                              head_bytes,
-			                              cudaMemcpyDefault);
+			cudaError_t cerr =
+			        cudaMemcpy(abs_dst, d->bounce_buf, head_bytes,
+			                   cudaMemcpyDefault);
 			if (cerr != cudaSuccess)
 				return -EIO;
 
@@ -251,8 +325,8 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		 * buffer. abs_dst is now NVME_PRP_PAGE-aligned (or
 		 * remaining is zero / sub-LBA, in which case the loop is
 		 * skipped). */
-		uint64_t tail_bytes = remaining % lba_nbytes;
-		uint64_t middle_lbas = (remaining - tail_bytes) / lba_nbytes;
+		uint64_t tail_bytes = remaining & lba_mask;
+		uint64_t middle_lbas = (remaining - tail_bytes) >> lba_shift;
 		uint64_t lbas_done = 0;
 		while (lbas_done < middle_lbas) {
 			uint64_t chunk_lbas = XNVME_MIN_U64(
@@ -262,13 +336,16 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 			uint16_t nlb = (uint16_t)(chunk_lbas - 1);
 			uint8_t *dst_chunk = abs_dst + lbas_done * lba_nbytes;
 
-			rc = xnvme_nvm_read(&cmd, d->nsid, cur_slba + lbas_done,
-			                    nlb, dst_chunk, NULL);
-			if (rc || xnvme_cmd_ctx_cpl_status(&cmd)) {
-				fprintf(stderr, "aisio MID: rc=%d sc=%u sct=%u "
-				                "slba=%llu nlb=%u dst=%p\n",
-				        rc, cmd.cpl.status.sc, cmd.cpl.status.sct,
-				        (unsigned long long)(cur_slba + lbas_done),
+			struct xnvme_spec_cpl cpl;
+			rc = aisio_nvm_read_sync(d, cur_slba + lbas_done, nlb,
+			                         dst_chunk, &cpl);
+			if (rc) {
+				fprintf(stderr,
+				        "aisio MID: rc=%d sc=%u sct=%u "
+				        "slba=%llu nlb=%u dst=%p\n",
+				        rc, cpl.status.sc, cpl.status.sct,
+				        (unsigned long long)(cur_slba +
+				                             lbas_done),
 				        nlb, (void *)dst_chunk);
 				return -EIO;
 			}
@@ -288,20 +365,22 @@ aisio_read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 			if (rc < 0)
 				return rc;
 
-			rc = xnvme_nvm_read(&cmd, d->nsid, cur_slba, 0,
-			                    d->bounce_buf, NULL);
-			if (rc || xnvme_cmd_ctx_cpl_status(&cmd)) {
-				fprintf(stderr, "aisio TAIL: rc=%d sc=%u sct=%u "
-				                "slba=%llu tail_bytes=%llu\n",
-				        rc, cmd.cpl.status.sc, cmd.cpl.status.sct,
+			struct xnvme_spec_cpl cpl;
+			rc = aisio_nvm_read_sync(d, cur_slba, 0, d->bounce_buf,
+			                         &cpl);
+			if (rc) {
+				fprintf(stderr,
+				        "aisio TAIL: rc=%d sc=%u sct=%u "
+				        "slba=%llu tail_bytes=%llu\n",
+				        rc, cpl.status.sc, cpl.status.sct,
 				        (unsigned long long)cur_slba,
 				        (unsigned long long)tail_bytes);
 				return -EIO;
 			}
 
-			cudaError_t cerr = cudaMemcpy(abs_dst, d->bounce_buf,
-			                              tail_bytes,
-			                              cudaMemcpyDefault);
+			cudaError_t cerr =
+			        cudaMemcpy(abs_dst, d->bounce_buf, tail_bytes,
+			                   cudaMemcpyDefault);
 			if (cerr != cudaSuccess)
 				return -EIO;
 
@@ -354,6 +433,8 @@ ds_file_driver_close(void)
 	if (drv->bounce_buf)
 		xnvme_buf_free(drv->xdev, drv->bounce_buf);
 
+	if (drv->queue)
+		xnvme_queue_term(drv->queue);
 	if (drv->xdev)
 		xnvme_dev_close(drv->xdev);
 	if (drv->homi)
@@ -555,7 +636,8 @@ ds_file_read(ds_file_handle_t fh, void *buf_base, size_t size,
 	                               size, file_offset);
 	if (n < 0) {
 		fprintf(stderr,
-		        "ds_file_read: aisio_read_extents(size=%zu, off=%ld) rc=%zd\n",
+		        "ds_file_read: aisio_read_extents(size=%zu, off=%ld) "
+		        "rc=%zd\n",
 		        size, (long)file_offset, n);
 		return -(ssize_t)DS_FILE_DEVICE_DRIVER_ERROR;
 	}
