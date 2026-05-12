@@ -1,7 +1,8 @@
 # OpenDS
 
-Open source accelerator direct storage. Provides a vendor-neutral
-ds_file API for reading files directly into accelerator memory.
+Open source accelerator direct storage. Vendor-neutral, drop-in
+replacement for NVIDIA's cuFile (GDS), powered by aisio for
+high-throughput PCIe P2P DMA from NVMe straight into GPU memory.
 
 ## Backends
 
@@ -12,17 +13,14 @@ ds_file API for reading files directly into accelerator memory.
   Storage. Buffers are GPU memory allocated with `cudaMalloc` and
   registered via `cuFileBufRegister`. Requires CUDA toolkit and the
   cuFile (GDS) library. Built conditionally when both are found.
-- **aisio** (`libopends_aisio`): Reads directly from an NVMe device
-  into GPU memory via [xNVMe](https://xnvme.io)'s `upcie-cuda` backend
-  (PCIe P2P DMA, no filesystem or kernel nvme driver in the path).
-  Based on [aisio](https://github.com/xnvme/aisio). File-to-LBA
-  mapping comes from a mock HOMI client that delegates path lookup
-  and extent retrieval to a small `fs_mock` module; `fs_mock` loads a
-  multi-file extent cache produced offline by `cache_extents` while
-  the filesystem is mounted, so the backend itself never touches a
-  filesystem. Both mocks will be replaced by aisio's HOMI
-  implementation. Requires xNVMe and the CUDA toolkit. Read-only;
-  `ds_file_write` returns `DS_FILE_IO_NOT_SUPPORTED`.
+- **aisio** (`libopends_aisio`): PCIe P2P DMA from NVMe into GPU
+  memory via [xNVMe](https://xnvme.io)'s `upcie-cuda` backend (no
+  filesystem or kernel `nvme` driver in the path). Based on
+  [aisio](https://github.com/xnvme/aisio). File-to-LBA mapping uses
+  a mock HOMI client backed by `fs_mock`; callers register extents
+  (obtained from the live FS via XAL or FIEMAP) before the driver is
+  unbound. Both mocks will be replaced by aisio's HOMI implementation.
+  Requires xNVMe and the CUDA toolkit; read-only.
 
 ## Performance
 
@@ -56,35 +54,29 @@ but not yet implemented.
 
 ```c
 #include <opends.h>
+#include <cuda_runtime.h>
 #include <fcntl.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 int main(void)
 {
-    ds_file_error_t err = ds_file_driver_open();
-    if (err.err != DS_FILE_SUCCESS) {
-        fprintf(stderr, "driver open: %s\n", ds_file_op_status_error(err.err));
-        return 1;
-    }
+    ds_file_driver_open();
 
     int fd = open("/mnt/nvme/data.bin", O_RDONLY | O_DIRECT);
 
     ds_file_handle_t fh;
-    err = ds_file_handle_register(&fh, fd);
+    ds_file_handle_register(&fh, fd);
 
-    size_t buf_size = 1 << 20;  /* 1 MiB */
-    void *buf = ds_file_alloc(buf_size);
+    size_t size = 1024 * 1024;
+    void *buf;
+    cudaMalloc(&buf, size);
+    ds_file_buf_register(buf, size, 0);
 
-    ssize_t nread = ds_file_read(fh, buf, buf_size, 0, 0);
-    if (nread < 0) {
-        fprintf(stderr, "read: %s\n",
-                ds_file_op_status_error((ds_file_op_error_t)-nread));
-    } else {
-        printf("read %zd bytes\n", nread);
-    }
+    ssize_t nread = ds_file_read(fh, buf, size, 0, 0);
+    printf("read %zd bytes\n", nread);
 
-    ds_file_free(buf);
+    ds_file_buf_deregister(buf);
+    cudaFree(buf);
     ds_file_handle_deregister(fh);
     close(fd);
     ds_file_driver_close();
@@ -177,29 +169,32 @@ f=$(mktemp) && ./build/test_sync_read_prep "$f" \
 ### Remote testing with CIJOE
 
 Integration tests run on a remote target via
-[CIJOE](https://github.com/refenv/cijoe). The target needs an NVMe
-device, an NVIDIA GPU (for GDS and aisio tests), GDS support (for
-GDS tests), and xNVMe with the `upcie-cuda` backend (for aisio
-tests). Build dependencies (xNVMe, xal, fil) are pinned in the
-tracked `configs/deps.toml`; `scripts/setup_deps.py` builds and
-installs them on the target from those pins. xal and fil are only
-needed for the benchmark suite, but `setup_deps.py` installs them
-unconditionally so the bootstrap is one command.
+[CIJOE](https://github.com/refenv/cijoe). Target requirements:
 
-The XFS filesystem on the test namespace must already exist; the
-mount step does not format the device. Provision it externally (for
-example via aisio's `setup_dataset.yaml`). All test artifacts are
-written under `<mount_point>/opends_tests/`, leaving any sibling
-benchmark dataset directories untouched.
+- A dedicated NVMe device (not the boot disk; the aisio phase
+  unbinds it from the kernel `nvme` driver).
+- An NVIDIA GPU with the CUDA toolkit; GDS (GPUDirect Storage) for
+  the gds tests; xNVMe's `upcie-cuda` backend for the aisio tests.
+- A kernel built with UDMABUF-import support, IOMMU disabled, and
+  2 MiB hugepages allocated (prerequisites for the GPU↔NVMe dma-buf
+  P2P path that aisio uses).
+- An XFS filesystem on the test namespace; the mount step does not
+  format. Test artifacts live under `<mount_point>/opends_tests/`.
 
-The `test_sync_read_prep` step writes a pattern file on the mounted
-filesystem and each backend test reads it back. The aisio phase runs
-last: `cache_extents` walks `<mount_point>/opends_tests/` and writes
-a multi-file extent cache while the filesystem is mounted, then the
-NVMe kernel driver is unbound so the aisio test can drive the device
-directly over PCIe. The aisio test loads the cache via `fs_mock`
-which resolves the pattern path to a mock file handle without
-touching the (now unmounted) filesystem.
+The [aisio](https://github.com/xnvme/aisio) project ships cijoe
+tasks that take a fresh Ubuntu 24.04 install through every step
+above (custom kernel, NVIDIA stack, hugepages, XFS format, reference
+datasets). Follow its README first to bring up a target that meets
+these requirements. OpenDS then pins its own xNVMe/xal/fil refs in
+`configs/deps.toml` and installs them via `scripts/setup_deps.py`
+for reproducible test runs.
+
+`test_sync_read_prep` writes both a pattern file and an extents file
+(`sync_read_extents.bin`) while the FS is mounted. The ref and gds
+tests read the pattern back through the kernel FS. The aisio phase
+runs last: the kernel driver is unbound, then the aisio tests load
+the extents file and register entries into `fs_mock` to resolve
+handles without touching the (now unmounted) filesystem.
 
 1. Copy the example configs and fill in target details:
 
@@ -208,33 +203,23 @@ touching the (now unmounted) filesystem.
    cp configs/test.toml.example configs/test.toml
    ```
 
-   `configs/deps.toml` is tracked in-repo and needs no editing.
+   `configs/deps.toml` is tracked and needs no editing.
 
-2. First-run bootstrap. Sync the tree, install build dependencies on
-   the target, build OpenDS:
+2. Bootstrap (first run only):
 
    ```sh
    python scripts/rsync.py
-   python scripts/setup_deps.py   # Installs xNVMe, xal, fil. Only needed once.
+   python scripts/setup_deps.py   # Installs xNVMe, xal, fil
    python scripts/build.py
    ```
 
-   Iterative loop drops `setup_deps.py`:
-
-   ```sh
-   python scripts/rsync.py && python scripts/build.py
-   ```
+   Iterative loop: `python scripts/rsync.py && python scripts/build.py`.
 
 3. Run all test suites:
 
    ```sh
    python scripts/run_tests.py
    ```
-
-   This runs `tasks/test.yaml`: binds and mounts the NVMe device,
-   writes the pattern file, exercises the ref and GDS backends, and
-   (if aisio is enabled) caches extents, unbinds the kernel driver,
-   and runs the aisio test against the unbound device.
 
 ### Benchmarking with filperf
 
@@ -258,8 +243,8 @@ python scripts/bench_report.py
 ```
 
 Each suite writes artifacts to
-`cijoe-output-bench-<backend>/artifacts/`: `meta.json` (commit from
-`.commit_stamp` plus host/kernel/NVMe/GPU info) and
-`<backend>_<dataset>.log` (verbatim `filperf` stdout).
-`bench_report.py` parses these to rewrite the perf block above. Each
-`filperf` drops page caches first so numbers are cold-cache.
+`cijoe-output-bench-<backend>/artifacts/`: `meta.json` (commit plus
+host/kernel/NVMe/GPU info) and `<backend>_<dataset>.log` (verbatim
+`filperf` stdout). `bench_report.py` parses these to rewrite the
+perf block above. Each `filperf` drops page caches first so numbers
+are cold-cache.
