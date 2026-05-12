@@ -30,19 +30,14 @@ below from bench artifacts; see "Benchmarking with filperf" for how
 to run the suites.
 
 <!-- bench:start -->
-_Commit `0d6f204` on host `swissknife` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU `NVIDIA RTX 2000 Ada Generation`)._
+_Commit `d9ed71f` on host `swissknife` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU `NVIDIA RTX 2000 Ada Generation`)._
 
 | Dataset       | gds (MiB/s) | opends (MiB/s) |
 |---------------|--------------|--------------|
-| filesize8gib  |         6267 |         1887 |
-| tiktokish     |         2645 |         1399 |
-| imagenetish   |          612 |           51 |
+| filesize8gib  |         6560 |         7122 |
+| tiktokish     |         2525 |         5310 |
+| imagenetish   |          608 |          645 |
 <!-- bench:end -->
-
-The `opends imagenetish` gap is sub-LBA bounce buffering: the dataset
-averages ~110 KiB per file, so most reads end on a partial-LBA tail
-that aisio copies through a host bounce buffer instead of straight
-to GPU memory.
 
 ## ds_file API
 
