@@ -1,5 +1,6 @@
 #!/bin/bash
-# Unmount and unbind an NVMe device from the kernel nvme driver.
+# Unmount and hand an NVMe device to userspace (xnvme upcie-cuda), leaving
+# the controller in a clean, verified power-on state.
 set -e
 
 if [ $# -ne 2 ]; then
@@ -9,9 +10,38 @@ fi
 
 BDF=$1
 MOUNT=$2
+HERE=$(dirname "$0")
 
 echo "unmounting $MOUNT"
 umount "$MOUNT"
+
+# Re-enumerate the function before unbinding. A bare FLR (echo 1 > reset) is
+# not enough on the Samsung 990 PRO: a userspace owner killed mid-DMA wedges
+# the controller in a way FLR cannot clear, and even from a healthy state the
+# FLR races xnvme's open and yields zero geometry (lba_nbytes=0) now and then.
+# A PCI remove + rescan forces the kernel nvme probe, which resets the
+# controller, waits for CSTS.RDY, and runs identify; if the namespace
+# reappears the controller is verified live.
+echo "re-enumerating $BDF"
+echo 1 > "/sys/bus/pci/devices/$BDF/remove"
+echo 1 > /sys/bus/pci/rescan
+
+NS=""
+for _ in $(seq 1 50); do
+	if [ -d "/sys/bus/pci/devices/$BDF/nvme" ]; then
+		if NS=$("$HERE/resolve_nvme_ns.sh" "$BDF" 2>/dev/null) &&
+		   [ -b "$NS" ]; then
+			break
+		fi
+	fi
+	NS=""
+	sleep 0.2
+done
+if [ -z "$NS" ]; then
+	echo "error: $BDF did not come back as a live nvme namespace after rescan" >&2
+	exit 1
+fi
+echo "$BDF live as $NS"
 
 echo "unbinding $BDF from nvme"
 echo "$BDF" > /sys/bus/pci/drivers/nvme/unbind
@@ -23,9 +53,9 @@ if [ -e "/sys/bus/pci/devices/$BDF/driver" ]; then
 fi
 echo "$BDF unbound"
 
-# After the kernel nvme driver detaches, the controller is left in
-# whatever state the prior owner ended in (e.g. CC.SHN after gds/cuFile
-# closes its handles). Reset the function so xnvme upcie-cuda sees a
-# power-on controller and can run a clean CC.EN + identify.
+# Unbinding shuts the controller down (CC.SHN). Follow with an FLR to return
+# it to a clean power-on state xnvme's open can enable, then settle so the
+# open does not race the controller-level reset.
 echo "resetting $BDF"
 echo 1 > "/sys/bus/pci/devices/$BDF/reset"
+sleep 1
