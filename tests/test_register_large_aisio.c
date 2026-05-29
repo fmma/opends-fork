@@ -50,7 +50,7 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	int mock_fh = fs_mock_register(extents, n_extents);
+	int mock_fh = fs_mock_register(extents, n_extents, 0, NULL);
 	free(extents);
 	if (mock_fh < 0) {
 		fprintf(stderr, "fs_mock_register: %d\n", mock_fh);
