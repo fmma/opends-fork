@@ -4,8 +4,9 @@
 Reads artifacts written by the bench suites
 (`cijoe-output-bench-<backend>/artifacts/`):
 
-  meta.json                       -- commit, hostname, kernel, NVMe, GPU
-  <backend>_<data_dir>.log        -- verbatim filperf stdout (CSV + summary)
+  meta.json                              -- commit, hostname, kernel, NVMe, GPU
+  <backend>_<data_dir>.log               -- sync filperf stdout (CSV + summary)
+  <backend>_<data_dir>_async.log         -- async filperf stdout (CSV + summary)
 
 and rewrites the block between <!-- bench:start --> and
 <!-- bench:end --> in README.md. Run scripts/run_bench.py first.
@@ -25,6 +26,7 @@ MARK_END = "<!-- bench:end -->"
 
 BACKENDS = ["gds", "opends"]
 DATASETS = ["filesize8gib", "tiktokish", "imagenetish"]
+MODES = ["sync", "async"]
 
 
 def _artifacts_dir(backend):
@@ -40,9 +42,14 @@ def _parse_mib_per_s(log_path):
     return float(m.group(1)) if m else None
 
 
+def _log_path(backend, ds, mode):
+    suffix = "_async" if mode == "async" else ""
+    return _artifacts_dir(backend) / f"{backend}_{ds}{suffix}.log"
+
+
 def _collect(backend):
-    runs = {ds: _parse_mib_per_s(_artifacts_dir(backend) / f"{backend}_{ds}.log")
-            for ds in DATASETS}
+    runs = {(ds, mode): _parse_mib_per_s(_log_path(backend, ds, mode))
+            for ds in DATASETS for mode in MODES}
     meta_path = _artifacts_dir(backend) / "meta.json"
     meta = json.loads(meta_path.read_text()) if meta_path.is_file() else None
     return meta, runs
@@ -56,15 +63,19 @@ def _render(metas, results):
              f"NVMe `{meta.get('nvme_model', '?')}`, "
              f"GPU `{meta.get('gpu_model', '?')}`)._")
 
-    header = "| Dataset       | " + " | ".join(f"{b} (MiB/s)" for b in BACKENDS) + " |"
-    sep    = "|---------------|" + "|".join(["-" * 14 for _ in BACKENDS]) + "|"
+    header = ("| Dataset       | mode  | "
+              + " | ".join(f"{b} (MiB/s)" for b in BACKENDS) + " |")
+    sep    = ("|---------------|-------|"
+              + "|".join(["-" * 14 for _ in BACKENDS]) + "|")
     rows = [header, sep]
     for ds in DATASETS:
-        cells = []
-        for b in BACKENDS:
-            v = results[b].get(ds)
-            cells.append(f"{v:.0f}" if v is not None else "—")
-        rows.append(f"| {ds:<13} | " + " | ".join(f"{c:>12}" for c in cells) + " |")
+        for mode in MODES:
+            cells = []
+            for b in BACKENDS:
+                v = results[b].get((ds, mode))
+                cells.append(f"{v:.0f}" if v is not None else "-")
+            rows.append(f"| {ds:<13} | {mode:<5} | "
+                        + " | ".join(f"{c:>12}" for c in cells) + " |")
 
     return stamp + "\n\n" + "\n".join(rows)
 
