@@ -36,11 +36,11 @@ steps:
 
   - name: bind_nvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.nvme_ns }}'
+      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
 
   - name: mount
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_ns }}' '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: unbind_nvme
     run: |
@@ -54,6 +54,15 @@ steps:
       batches: 1
       batch-size: 1
 
+  - name: opends_filesize8gib_async
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: filesize8gib
+      batches: 1
+      batch-size: 1
+      mode: async
+
   - name: opends_tiktokish
     uses: bench_run
     with:
@@ -62,6 +71,15 @@ steps:
       batches: 1
       batch-size: 26
 
+  - name: opends_tiktokish_async
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: tiktokish
+      batches: 1
+      batch-size: 26
+      mode: async
+
   - name: opends_imagenetish
     uses: bench_run
     with:
@@ -69,6 +87,15 @@ steps:
       data-dir: imagenetish
       batches: 300
       batch-size: 4096
+
+  - name: opends_imagenetish_async
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: imagenetish
+      batches: 300
+      batch-size: 4096
+      mode: async
 
   - name: rebind_nvme
     run: |

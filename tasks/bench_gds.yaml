@@ -25,16 +25,20 @@ steps:
     run: |
       '{{ config.test.repo_path }}/tasks/steps/cpu_governor.sh'
 
+  - name: load_nvidia_fs
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/load_nvidia_fs.sh'
+
   - name: meta
     uses: bench_meta
 
   - name: bind_nvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.nvme_ns }}'
+      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
 
   - name: mount
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_ns }}' '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: gds_filesize8gib
     uses: bench_run
@@ -43,6 +47,16 @@ steps:
       data-dir: filesize8gib
       batches: 1
       batch-size: 1
+      mnt: "{{ config.test.mount_point }}"
+
+  - name: gds_filesize8gib_async
+    uses: bench_run
+    with:
+      backend: gds
+      data-dir: filesize8gib
+      batches: 1
+      batch-size: 1
+      mode: async
       mnt: "{{ config.test.mount_point }}"
 
   - name: gds_tiktokish
@@ -54,6 +68,16 @@ steps:
       batch-size: 26
       mnt: "{{ config.test.mount_point }}"
 
+  - name: gds_tiktokish_async
+    uses: bench_run
+    with:
+      backend: gds
+      data-dir: tiktokish
+      batches: 1
+      batch-size: 26
+      mode: async
+      mnt: "{{ config.test.mount_point }}"
+
   - name: gds_imagenetish
     uses: bench_run
     with:
@@ -61,4 +85,14 @@ steps:
       data-dir: imagenetish
       batches: 300
       batch-size: 4096
+      mnt: "{{ config.test.mount_point }}"
+
+  - name: gds_imagenetish_async
+    uses: bench_run
+    with:
+      backend: gds
+      data-dir: imagenetish
+      batches: 300
+      batch-size: 4096
+      mode: async
       mnt: "{{ config.test.mount_point }}"
