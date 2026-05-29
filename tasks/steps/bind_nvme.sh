@@ -1,41 +1,51 @@
 #!/bin/bash
-# Bind NVMe device to kernel driver.
+# Bind NVMe device to kernel driver, print the resolved namespace path.
+#
+# The kernel allocates a fresh nvmeXnY name on each bind whenever the
+# prior numbers cannot be reused (e.g. when nvidia_fs leaks a module
+# refcount across runs), so callers cannot assume a stable /dev/nvme0n1.
+# Use resolve_nvme_ns.sh to discover the actual namespace and print it
+# on stdout so the caller can capture it.
 set -e
 
-if [ $# -ne 2 ]; then
-	echo "usage: bind_nvme.sh BDF NS" >&2
+if [ $# -ne 1 ]; then
+	echo "usage: bind_nvme.sh BDF" >&2
 	exit 1
 fi
 
 BDF=$1
-NS=$2
+HERE=$(dirname "$0")
 
 if [ ! -d "/sys/bus/pci/devices/$BDF" ]; then
-	echo "error: PCI device $BDF not found in sysfs"
-	ls /sys/bus/pci/devices/
+	echo "error: PCI device $BDF not found in sysfs" >&2
+	ls /sys/bus/pci/devices/ >&2
 	exit 1
 fi
 
 DRIVER=$(basename "$(readlink "/sys/bus/pci/devices/$BDF/driver")" 2>/dev/null)
 if [ "$DRIVER" != "nvme" ]; then
 	if [ -n "$DRIVER" ]; then
-		echo "unbinding $BDF from $DRIVER"
+		echo "unbinding $BDF from $DRIVER" >&2
 		echo "$BDF" > "/sys/bus/pci/drivers/$DRIVER/unbind"
 	fi
 
-	echo "resetting $BDF"
+	echo "resetting $BDF" >&2
 	echo 1 > "/sys/bus/pci/devices/$BDF/reset"
 
-	echo "binding $BDF to nvme"
+	echo "binding $BDF to nvme" >&2
 	echo "$BDF" > /sys/bus/pci/drivers/nvme/bind
 	udevadm settle
 fi
 
+NS=$("$HERE/resolve_nvme_ns.sh" "$BDF") || {
+	echo "available block devices:" >&2
+	ls /dev/nvme* >&2 || true
+	exit 1
+}
+
 if [ ! -b "$NS" ]; then
-	echo "error: $NS did not appear after binding $BDF to nvme"
-	echo "available block devices:"
-	ls /dev/nvme* || true
+	echo "error: $NS resolved from $BDF is not a block device" >&2
 	exit 1
 fi
 
-echo "$NS is ready"
+echo "$NS"

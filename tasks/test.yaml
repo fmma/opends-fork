@@ -28,11 +28,11 @@ doc: |
 steps:
   - name: bind_nvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.nvme_ns }}'
+      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
 
   - name: mount
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_ns }}' '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: prepare_test_dir
     run: |
@@ -77,6 +77,11 @@ steps:
       prlimit --nofile=1048576:1048576 -- \
         '{{ config.test.build_dir }}/test_register_large_aisio' \
           '{{ config.test.build_dir }}/sync_read_extents.bin'
+
+  - name: test_async_read_aisio
+    run: |
+      '{{ config.test.build_dir }}/test_async_read_aisio' \
+        '{{ config.test.build_dir }}/sync_read_extents.bin'
 
   - name: rebind_nvme
     run: |
