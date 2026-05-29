@@ -102,8 +102,8 @@ verify_async_read(struct async_test_env *env, void *buf, size_t alloc_size,
 	off_t boff = buf_offset;
 	ssize_t bytes_read = 0;
 
-	ds_file_error_t err = ds_file_read_async(env->fh, buf, &sz, &foff, &boff,
-	                                         &bytes_read, env->stream);
+	ds_file_error_t err = ds_file_read_async(
+	        env->fh, buf, &sz, &foff, &boff, &bytes_read, env->stream);
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "  %s: ds_file_read_async: %s\n", label,
 		        ds_file_op_status_error(err.err));
@@ -248,8 +248,8 @@ async_test_buf_offset(struct async_test_env *env)
 	void *buf = env->buf_acquire(alloc);
 	if (!buf)
 		return 1;
-	int rc = verify_async_read(env, buf, alloc, PAGE, 0, PAGE,
-	                           "buf_offset");
+	int rc =
+	        verify_async_read(env, buf, alloc, PAGE, 0, PAGE, "buf_offset");
 	env->buf_release(buf);
 	return rc;
 }
@@ -261,14 +261,8 @@ async_test_offset_size_sweep(struct async_test_env *env)
 		off_t offset;
 		size_t size;
 	} cases[] = {
-		{    0,  4096},
-		{    0, 65536},
-		{ 4096,  4096},
-		{ 8192,  4096},
-		{    0, 32768},
-		{ 4096, 65536},
-		{    0, 16384},
-		{ 8192, 32768},
+	        {0, 4096},  {0, 65536},    {4096, 4096}, {8192, 4096},
+	        {0, 32768}, {4096, 65536}, {0, 16384},   {8192, 32768},
 	};
 
 	size_t max_size = 0;
@@ -306,8 +300,10 @@ async_test_stream_ordering(struct async_test_env *env)
 	void *buf_a = env->buf_acquire(PAGE);
 	void *buf_b = env->buf_acquire(PAGE);
 	if (!buf_a || !buf_b) {
-		if (buf_a) env->buf_release(buf_a);
-		if (buf_b) env->buf_release(buf_b);
+		if (buf_a)
+			env->buf_release(buf_a);
+		if (buf_b)
+			env->buf_release(buf_b);
 		return 1;
 	}
 
@@ -416,9 +412,10 @@ async_test_concurrent_streams(struct async_test_env *env)
 	}
 
 	for (int i = 0; i < n; i++) {
-		if (cuStreamSynchronize(env->extra_streams[i]) != CUDA_SUCCESS) {
-			fprintf(stderr, "  concurrent: stream[%d] sync failed\n",
-			        i);
+		if (cuStreamSynchronize(env->extra_streams[i]) !=
+		    CUDA_SUCCESS) {
+			fprintf(stderr,
+			        "  concurrent: stream[%d] sync failed\n", i);
 			goto out_free_bufs;
 		}
 	}
@@ -505,9 +502,8 @@ async_test_concurrent_short_reads(struct async_test_env *env)
 		        env->fh, bufs[i], &sizes[i], &foffs[i], &boffs[i],
 		        &brs[i], env->extra_streams[i]);
 		if (err.err != DS_FILE_SUCCESS) {
-			fprintf(stderr,
-			        "  concurrent_short[%d]: submit: %s\n", i,
-			        ds_file_op_status_error(err.err));
+			fprintf(stderr, "  concurrent_short[%d]: submit: %s\n",
+			        i, ds_file_op_status_error(err.err));
 			goto out_free_bufs;
 		}
 	}
@@ -515,16 +511,15 @@ async_test_concurrent_short_reads(struct async_test_env *env)
 	for (int i = 0; i < n; i++) {
 		char label[64];
 		snprintf(label, sizeof(label), "concurrent_short[%d]", i);
-		if (async_test_stream_sync_timeout(env->extra_streams[i],
-		                                   20.0, label) != 0)
+		if (async_test_stream_sync_timeout(env->extra_streams[i], 20.0,
+		                                   label) != 0)
 			goto out_free_bufs;
 	}
 
 	for (int i = 0; i < n; i++) {
 		if (brs[i] != (ssize_t)short_size) {
-			fprintf(stderr,
-			        "  concurrent_short[%d]: bytes=%zd\n", i,
-			        brs[i]);
+			fprintf(stderr, "  concurrent_short[%d]: bytes=%zd\n",
+			        i, brs[i]);
 			goto out_free_bufs;
 		}
 		char *host = malloc(short_size);
@@ -540,8 +535,8 @@ async_test_concurrent_short_reads(struct async_test_env *env)
 		free(host);
 		free(exp);
 		if (mm != 0) {
-			fprintf(stderr,
-			        "  concurrent_short[%d]: mismatch\n", i);
+			fprintf(stderr, "  concurrent_short[%d]: mismatch\n",
+			        i);
 			goto out_free_bufs;
 		}
 	}
@@ -673,12 +668,12 @@ async_test_deferred_eval(struct async_test_env *env)
 	ssize_t br = 0;
 
 	struct deferred_mutate_args mut = {
-		.size_p = &sz,
-		.file_offset_p = &foff,
-		.buf_offset_p = &boff,
-		.target_size = PAGE,
-		.target_file_offset = 3 * PAGE,
-		.target_buf_offset = PAGE,
+	        .size_p = &sz,
+	        .file_offset_p = &foff,
+	        .buf_offset_p = &boff,
+	        .target_size = PAGE,
+	        .target_file_offset = 3 * PAGE,
+	        .target_buf_offset = PAGE,
 	};
 
 	int rc = 1;
@@ -688,8 +683,8 @@ async_test_deferred_eval(struct async_test_env *env)
 		goto out;
 	}
 
-	ds_file_error_t err = ds_file_read_async(env->fh, buf, &sz, &foff, &boff,
-	                                         &br, env->stream);
+	ds_file_error_t err = ds_file_read_async(env->fh, buf, &sz, &foff,
+	                                         &boff, &br, env->stream);
 	if (err.err != DS_FILE_SUCCESS) {
 		fprintf(stderr, "  deferred_eval: submit: %s\n",
 		        ds_file_op_status_error(err.err));
@@ -700,8 +695,9 @@ async_test_deferred_eval(struct async_test_env *env)
 		goto out;
 
 	if (br != (ssize_t)PAGE) {
-		fprintf(stderr, "  deferred_eval: bytes=%zd (call-time values "
-		                "leaked through)\n",
+		fprintf(stderr,
+		        "  deferred_eval: bytes=%zd (call-time values "
+		        "leaked through)\n",
 		        br);
 		goto out;
 	}
@@ -792,9 +788,10 @@ async_test_multi_stream_burst(struct async_test_env *env)
 	}
 
 	for (int s = 0; s < n; s++) {
-		if (cuStreamSynchronize(env->extra_streams[s]) != CUDA_SUCCESS) {
-			fprintf(stderr, "  multi_burst: stream[%d] sync failed\n",
-			        s);
+		if (cuStreamSynchronize(env->extra_streams[s]) !=
+		    CUDA_SUCCESS) {
+			fprintf(stderr,
+			        "  multi_burst: stream[%d] sync failed\n", s);
 			goto out_free_bufs;
 		}
 	}
@@ -812,15 +809,17 @@ async_test_multi_stream_burst(struct async_test_env *env)
 		for (int j = 0; j < per; j++) {
 			int i = s * per + j;
 			if (brs[i] != (ssize_t)PAGE) {
-				fprintf(stderr, "  multi_burst[s=%d j=%d]: "
-				                "bytes=%zd\n",
+				fprintf(stderr,
+				        "  multi_burst[s=%d j=%d]: "
+				        "bytes=%zd\n",
 				        s, j, brs[i]);
 				goto out_free_host;
 			}
 			async_expected_bytes(exp, foffs[i], PAGE);
 			if (memcmp(host + boffs[i], exp, PAGE) != 0) {
-				fprintf(stderr, "  multi_burst[s=%d j=%d]: "
-				                "mismatch\n",
+				fprintf(stderr,
+				        "  multi_burst[s=%d j=%d]: "
+				        "mismatch\n",
 				        s, j);
 				goto out_free_host;
 			}
@@ -889,19 +888,19 @@ async_test_stream_consumer(struct async_test_env *env)
 		off_t foff = (off_t)((i % FILE_PAGES) * PAGE);
 		off_t boff = 0;
 		ssize_t br = 0;
-		ds_file_error_t err = ds_file_read_async(env->fh, buf, &sz,
-		                                         &foff, &boff, &br,
-		                                         env->stream);
+		ds_file_error_t err = ds_file_read_async(
+		        env->fh, buf, &sz, &foff, &boff, &br, env->stream);
 		if (err.err != DS_FILE_SUCCESS) {
-			fprintf(stderr, "  stream_consumer[%d]: submit: %s\n", i,
-			        ds_file_op_status_error(err.err));
+			fprintf(stderr, "  stream_consumer[%d]: submit: %s\n",
+			        i, ds_file_op_status_error(err.err));
 			goto out;
 		}
 
 		if (cuMemcpyDtoHAsync(host_pinned, (CUdeviceptr)buf, PAGE,
 		                      env->stream) != CUDA_SUCCESS) {
 			fprintf(stderr,
-			        "  stream_consumer[%d]: cuMemcpyDtoHAsync failed\n",
+			        "  stream_consumer[%d]: cuMemcpyDtoHAsync "
+			        "failed\n",
 			        i);
 			goto out;
 		}
@@ -920,7 +919,8 @@ async_test_stream_consumer(struct async_test_env *env)
 		async_expected_bytes(expected, foff, PAGE);
 		if (memcmp(host_pinned, expected, PAGE) != 0) {
 			fprintf(stderr,
-			        "  stream_consumer[%d]: consumer observed wrong "
+			        "  stream_consumer[%d]: consumer observed "
+			        "wrong "
 			        "bytes (read/done_seq gate broken?)\n",
 			        i);
 			goto out;
@@ -963,7 +963,7 @@ static const struct async_test_entry async_read_tests[] = {
 };
 /* clang-format on */
 
-#define NASYNC_READ_TESTS                                                     \
+#define NASYNC_READ_TESTS                                                      \
 	(sizeof(async_read_tests) / sizeof(async_read_tests[0]))
 
 static int

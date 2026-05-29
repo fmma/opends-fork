@@ -16,13 +16,13 @@
 
 #include <stdint.h>
 
-#define TEST_EXTENTS_MAGIC   0x53455453u  /* "STES" little-endian */
+#define TEST_EXTENTS_MAGIC 0x53455453u /* "STES" little-endian */
 #define TEST_EXTENTS_VERSION 1u
 
 struct test_extents_header {
 	uint32_t magic;
 	uint32_t version;
-	char     uri[64];
+	char uri[64];
 	uint32_t n_extents;
 	uint32_t reserved;
 };

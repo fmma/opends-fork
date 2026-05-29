@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
-sources = sorted(root.glob("src/*.c")) + sorted(root.glob("include/*.h"))
+patterns = ("src/*.c", "src/*.h", "src/*.cu", "include/*.h", "tests/*.c", "tests/*.h")
+sources = sorted(p for pat in patterns for p in root.glob(pat))
 
 rc = 0
 for src in sources:

@@ -159,8 +159,7 @@ test_read_multi_at_offset(struct test_env *env)
 	if (!buf)
 		return 1;
 
-	int rc = verify_read(env, buf, size, size, PAGE, 0,
-	                     "multi_at_offset");
+	int rc = verify_read(env, buf, size, size, PAGE, 0, "multi_at_offset");
 
 	env->buf_release(buf);
 	return rc;
@@ -174,8 +173,7 @@ test_read_full_file(struct test_env *env)
 	if (!buf)
 		return 1;
 
-	int rc = verify_read(env, buf, FILE_SIZE, FILE_SIZE, 0, 0,
-	                     "full_file");
+	int rc = verify_read(env, buf, FILE_SIZE, FILE_SIZE, 0, 0, "full_file");
 
 	env->buf_release(buf);
 	return rc;
@@ -249,8 +247,8 @@ test_read_beyond_eof(struct test_env *env)
 		return 1;
 
 	env->buf_zero(buf, PAGE);
-	ssize_t n = ds_file_read(env->fh, buf, PAGE,
-	                         (off_t)(FILE_SIZE + PAGE), 0);
+	ssize_t n =
+	        ds_file_read(env->fh, buf, PAGE, (off_t)(FILE_SIZE + PAGE), 0);
 	if (n < 0) {
 		fprintf(stderr, "  beyond_eof: %s\n",
 		        ds_file_op_status_error((ds_file_op_error_t)(-n)));
@@ -483,14 +481,8 @@ test_read_offset_size_sweep(struct test_env *env)
 		off_t offset;
 		size_t size;
 	} cases[] = {
-		{    0,  4096},
-		{    0, 65536},
-		{ 4096,  4096},
-		{ 8192,  4096},
-		{    0, 32768},
-		{ 4096, 65536},
-		{    0, 16384},
-		{ 8192, 32768},
+	        {0, 4096},  {0, 65536},    {4096, 4096}, {8192, 4096},
+	        {0, 32768}, {4096, 65536}, {0, 16384},   {8192, 32768},
 	};
 
 	size_t max_size = 0;

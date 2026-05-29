@@ -41,8 +41,10 @@ cuda_check_buffer(const void *buf)
 		abort();
 	}
 	if (attrs.type != cudaMemoryTypeDevice) {
-		fprintf(stderr, "ds_file_alloc returned non-device memory "
-		                "(type=%d)\n", (int)attrs.type);
+		fprintf(stderr,
+		        "ds_file_alloc returned non-device memory "
+		        "(type=%d)\n",
+		        (int)attrs.type);
 		abort();
 	}
 }
@@ -52,8 +54,8 @@ cuda_check_buffer(const void *buf)
  * cudamem_config.device_pagesize (64 KiB on CUDA, the BAR1 page size).
  * Pad register-mode allocations up to that granularity.
  */
-#define CUDA_REGISTER_PAGE  65536
-#define CUDA_REGISTER_ALIGN(x)                                                \
+#define CUDA_REGISTER_PAGE 65536
+#define CUDA_REGISTER_ALIGN(x)                                                 \
 	(((x) + (CUDA_REGISTER_PAGE - 1)) & ~((size_t)CUDA_REGISTER_PAGE - 1))
 
 static inline void *
