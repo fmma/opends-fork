@@ -8,6 +8,12 @@
  *
  * The reference backend executes operations synchronously and reads
  * the pointer parameters immediately.
+ *
+ * Backend limits (aisio): at most 8192 streams may be registered at once,
+ * and at most 1024 async ops may be in flight across all streams. Exceeding
+ * the stream limit returns DS_FILE_INTERNAL_ERROR from
+ * ds_file_stream_register; the in-flight limit applies back-pressure rather
+ * than failing (ds_file_read_async spins until a slot frees).
  */
 #ifndef DS_FILE_ASYNC_H_
 #define DS_FILE_ASYNC_H_

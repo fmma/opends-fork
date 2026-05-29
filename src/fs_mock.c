@@ -34,8 +34,8 @@ fs_mock_init(const char *device_uri)
 }
 
 int
-fs_mock_register(const struct homi_extent *extents, uint32_t count, uint64_t size,
-                 const char *path)
+fs_mock_register(const struct homi_extent *extents, uint32_t count,
+                 uint64_t size, const char *path)
 {
 	if (count > 0 && !extents)
 		return -EINVAL;
