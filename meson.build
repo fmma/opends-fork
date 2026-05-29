@@ -59,24 +59,61 @@ if gds_enabled
   )
 endif
 
-# aisio backend (xNVMe upcie-cuda + mock HOMI client over fs_mock).
-# Links libxnvme and the CUDA runtime: cudaMemcpy is used to move the
-# trailing partial-LBA bytes from the DMA-coherent scratch (which lives
-# on the GPU under upcie-cuda) into the caller's buffer. CUDA context
-# management itself remains the caller's responsibility (xnvme's
-# upcie-cuda plug-in loads CUDA at runtime). Tests pull in cuda_dep
-# separately.
+# aisio backend (xNVMe upcie-cuda + mock HOMI extent cache).
+# Links libxnvme and the CUDA driver API. The driver API is needed for
+# stream-async ds_file_read_async, which gates the user's stream with
+# cuStreamWriteValue32 / cuStreamWaitValue32 against host pinned mapped
+# trigger and completion words polled by an internal I/O thread.
 xnvme_dep = dependency('xnvme', required : false)
-aisio_enabled = xnvme_dep.found() and cuda_dep.found()
+cuda_drv_dep = cc.find_library('cuda',
+  dirs : [
+    '/usr/local/cuda/lib64/stubs',
+    '/usr/lib/x86_64-linux-gnu/stubs',
+    '/usr/local/cuda/lib64',
+  ],
+  required : false,
+)
+
+# cuda.h ships with the CUDA toolkit (under .../targets/<arch>/include
+# on Ubuntu) but a minimal driver-dev package may put it on the system
+# include path instead. Probe toolkit locations first; fall back to a
+# system-wide cc.has_header check.
+cuda_drv_inc_dirs = []
+foreach p : [
+  '/usr/local/cuda/targets/x86_64-linux/include',
+  '/usr/local/cuda/include',
+]
+  if cuda_drv_inc_dirs.length() == 0 and \
+      run_command('test', '-f', p / 'cuda.h', check : false).returncode() == 0
+    cuda_drv_inc_dirs += p
+  endif
+endforeach
+have_cuda_h = cuda_drv_inc_dirs.length() > 0 or cc.has_header('cuda.h')
+
+aisio_enabled = xnvme_dep.found() and cuda_dep.found() and \
+                cuda_drv_dep.found() and have_cuda_h
 
 if aisio_enabled
+  # The async path links a tiny D2D copy kernel compiled from
+  # src/ds_bounce_kernel.cu. Adding the cuda language only when aisio is
+  # actually built keeps ref-only builds free of an nvcc dependency.
+  add_languages('cuda', required : true, native : false)
+
+  aisio_inc_dirs = [opends_inc, opends_internal_inc]
+  if cuda_drv_inc_dirs.length() > 0
+    aisio_inc_dirs += include_directories(cuda_drv_inc_dirs,
+                                          is_system : true)
+  endif
+
   libopends_aisio = shared_library('opends_aisio',
     'src/ds_file_common.c',
     'src/ds_file_aisio.c',
+    'src/ds_bounce_kernel.cu',
+    'src/ds_bounce_ctx.c',
     'src/fs_mock.c',
     'src/homi_client_mock.c',
-    include_directories : [opends_inc, opends_internal_inc],
-    dependencies : [xnvme_dep, cuda_dep],
+    include_directories : aisio_inc_dirs,
+    dependencies : [xnvme_dep, cuda_dep, cuda_drv_dep],
     install : true,
   )
 
@@ -132,21 +169,34 @@ endif
 aisio_test_enabled = aisio_enabled and cuda_dep.found()
 
 if aisio_test_enabled
+  aisio_test_inc_dirs = [opends_internal_inc, tests_inc]
+  if cuda_drv_inc_dirs.length() > 0
+    aisio_test_inc_dirs += include_directories(cuda_drv_inc_dirs,
+                                               is_system : true)
+  endif
+
   executable('test_sync_read_aisio',
     'tests/test_sync_read_aisio.c',
     'tests/test_extents_io.c',
-    include_directories : [opends_internal_inc, tests_inc],
+    include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep],
   )
   executable('test_register_large_aisio',
     'tests/test_register_large_aisio.c',
     'tests/test_extents_io.c',
-    include_directories : [opends_internal_inc, tests_inc],
+    include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep],
+  )
+  executable('test_async_read_aisio',
+    'tests/test_async_read_aisio.c',
+    'tests/test_extents_io.c',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
 else
   executable('test_sync_read_aisio', 'tests/skip.c')
   executable('test_register_large_aisio', 'tests/skip.c')
+  executable('test_async_read_aisio', 'tests/skip.c')
 endif
 
 summary({
