@@ -6,12 +6,14 @@
 build_dir = "/tmp/xnvme-build"
 
 # Temporary fork: adds the `.mem_map`/`.mem_unmap` hooks and CUDA BAR1
-# `device_pagesize` handling that the aisio register path needs. Revert
-# to upstream `xnvme/xnvme` once xnvme/xnvme#663 and safl/upcie#25 land
-# upstream (upcie is vendored under xNVMe's toolbox/third-party).
+# `device_pagesize` handling that the aisio register path needs, plus the
+# PRP page-count fix that lets PRP1 carry a sub-page buffer offset. Revert
+# to upstream `xnvme/xnvme` once xnvme/xnvme#663, safl/upcie#25, and
+# safl/upcie#27 land upstream (upcie is vendored under xNVMe's
+# toolbox/third-party).
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
-ref = "b5643103c09fd31fcb2261c5be2c2b6b7e9d68f5"
+ref = "f38c6b51efef531ee53f5ef05bcdc699f186ce1a"
 path = "/root/xnvme"
 
 [xal]
@@ -31,5 +33,5 @@ build_dir = "/tmp/fil-build"
 # backend lands upstream.
 [fil.repository]
 remote = "https://github.com/fmma/fil"
-ref = "71489a2acd753ed301cff02c91898caeed4735a8"
+ref = "39cfad77e0c2cc6285c53fa3a1528fac82424ef5"
 path = "/root/fil"
