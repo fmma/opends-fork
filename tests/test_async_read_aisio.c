@@ -93,13 +93,16 @@ main(int argc, char **argv)
 	for (int i = 0; i < extra_count; i++) {
 		if (cuStreamCreate(&extras[i], CU_STREAM_NON_BLOCKING) !=
 		    CUDA_SUCCESS) {
-			fprintf(stderr, "cuStreamCreate(extra[%d]) failed\n", i);
+			fprintf(stderr, "cuStreamCreate(extra[%d]) failed\n",
+			        i);
 			extra_count = i;
 			break;
 		}
 		if (ds_file_stream_register(extras[i], 0).err !=
 		    DS_FILE_SUCCESS) {
-			fprintf(stderr, "ds_file_stream_register(extra[%d]) failed\n", i);
+			fprintf(stderr,
+			        "ds_file_stream_register(extra[%d]) failed\n",
+			        i);
 			cuStreamDestroy(extras[i]);
 			extra_count = i;
 			break;
@@ -109,15 +112,15 @@ main(int argc, char **argv)
 	fprintf(stderr, "ds_file_read_async tests (aisio backend)\n");
 
 	struct async_test_env env_alloc = {
-		.fh = fh,
-		.stream = main_stream,
-		.extra_stream_count = extra_count,
-		.buf_to_host = cuda_buf_to_host,
-		.buf_zero = cuda_buf_zero,
-		.check_buffer = cuda_check_buffer,
-		.buf_acquire = cuda_alloc_acquire,
-		.buf_release = cuda_alloc_release,
-		.mode_label = "alloc",
+	        .fh = fh,
+	        .stream = main_stream,
+	        .extra_stream_count = extra_count,
+	        .buf_to_host = cuda_buf_to_host,
+	        .buf_zero = cuda_buf_zero,
+	        .check_buffer = cuda_check_buffer,
+	        .buf_acquire = cuda_alloc_acquire,
+	        .buf_release = cuda_alloc_release,
+	        .mode_label = "alloc",
 	};
 	for (int i = 0; i < extra_count; i++)
 		env_alloc.extra_streams[i] = extras[i];
@@ -132,15 +135,15 @@ main(int argc, char **argv)
 	}
 
 	struct async_test_env env_register = {
-		.fh = fh,
-		.stream = main_stream,
-		.extra_stream_count = extra_count,
-		.buf_to_host = cuda_buf_to_host,
-		.buf_zero = cuda_buf_zero,
-		.check_buffer = cuda_check_buffer,
-		.buf_acquire = cuda_register_acquire,
-		.buf_release = cuda_register_release,
-		.mode_label = "register",
+	        .fh = fh,
+	        .stream = main_stream,
+	        .extra_stream_count = extra_count,
+	        .buf_to_host = cuda_buf_to_host,
+	        .buf_zero = cuda_buf_zero,
+	        .check_buffer = cuda_check_buffer,
+	        .buf_acquire = cuda_register_acquire,
+	        .buf_release = cuda_register_release,
+	        .mode_label = "register",
 	};
 	for (int i = 0; i < extra_count; i++)
 		env_register.extra_streams[i] = extras[i];

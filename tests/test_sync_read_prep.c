@@ -58,8 +58,7 @@ main(int argc, char **argv)
 	}
 
 	close(fd);
-	fprintf(stderr, "pattern written to %s (%zu bytes)\n", path,
-	        FILE_SIZE);
+	fprintf(stderr, "pattern written to %s (%zu bytes)\n", path, FILE_SIZE);
 
 	if (extents_path) {
 		int rc = test_extents_emit(path, extents_path);

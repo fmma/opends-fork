@@ -25,7 +25,7 @@
 
 struct cu_stream_map_entry {
 	CUstream key;
-	int      idx;
+	int idx;
 };
 
 static inline uint32_t
@@ -63,8 +63,8 @@ cu_stream_map_get(const struct cu_stream_map_entry *e, uint32_t mask,
  * factor below 50%. See cu_stream_map_get for the lock-free reader
  * invariant. */
 static inline int
-cu_stream_map_put(struct cu_stream_map_entry *e, uint32_t mask,
-                  CUstream stream, int idx)
+cu_stream_map_put(struct cu_stream_map_entry *e, uint32_t mask, CUstream stream,
+                  int idx)
 {
 	uint32_t h = cu_stream_map_hash(stream, mask);
 	uint32_t cap = mask + 1;

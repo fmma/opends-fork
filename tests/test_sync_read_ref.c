@@ -91,22 +91,22 @@ main(int argc, char **argv)
 	fprintf(stderr, "ds_file_read sync tests (ref backend)\n");
 
 	struct test_env env_alloc = {
-		.fh = fh,
-		.buf_to_host = ref_buf_to_host,
-		.buf_zero = ref_buf_zero,
-		.buf_acquire = ref_alloc_acquire,
-		.buf_release = ref_alloc_release,
-		.mode_label = "alloc",
+	        .fh = fh,
+	        .buf_to_host = ref_buf_to_host,
+	        .buf_zero = ref_buf_zero,
+	        .buf_acquire = ref_alloc_acquire,
+	        .buf_release = ref_alloc_release,
+	        .mode_label = "alloc",
 	};
 	int failed = run_sync_read_tests(&env_alloc);
 
 	struct test_env env_register = {
-		.fh = fh,
-		.buf_to_host = ref_buf_to_host,
-		.buf_zero = ref_buf_zero,
-		.buf_acquire = ref_register_acquire,
-		.buf_release = ref_register_release,
-		.mode_label = "register",
+	        .fh = fh,
+	        .buf_to_host = ref_buf_to_host,
+	        .buf_zero = ref_buf_zero,
+	        .buf_acquire = ref_register_acquire,
+	        .buf_release = ref_register_release,
+	        .mode_label = "register",
 	};
 	failed += run_sync_read_tests(&env_register);
 

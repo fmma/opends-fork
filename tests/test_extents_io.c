@@ -152,8 +152,7 @@ resolve_pci_bdf(int fd, char *bdf, size_t len)
 }
 
 static int
-fiemap_file(int fd, uint64_t file_size, uint32_t lba_size,
-            uint64_t part_start,
+fiemap_file(int fd, uint64_t file_size, uint32_t lba_size, uint64_t part_start,
             struct homi_extent **out_extents, uint32_t *out_count)
 {
 	size_t buf_size = sizeof(struct fiemap) +
@@ -184,7 +183,8 @@ fiemap_file(int fd, uint64_t file_size, uint32_t lba_size,
 	if (!(fm->fm_extents[count - 1].fe_flags & FIEMAP_EXTENT_LAST)) {
 		fprintf(stderr,
 		        "extent list truncated at %u entries (MAX_EXTENTS=%d); "
-		        "raise MAX_EXTENTS and rebuild\n", count, MAX_EXTENTS);
+		        "raise MAX_EXTENTS and rebuild\n",
+		        count, MAX_EXTENTS);
 		free(fm);
 		return -E2BIG;
 	}
@@ -265,8 +265,8 @@ test_extents_emit(const char *fs_path, const char *out_path)
 }
 
 int
-test_extents_load(const char *path, char uri[64],
-                  struct homi_extent **extents, uint32_t *n_extents)
+test_extents_load(const char *path, char uri[64], struct homi_extent **extents,
+                  uint32_t *n_extents)
 {
 	FILE *f = fopen(path, "rb");
 	if (!f)
