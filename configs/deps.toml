@@ -15,7 +15,7 @@ build_dir = "/tmp/xnvme-build"
 # toolbox/third-party).
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
-ref = "b3df0b0a"
+ref = "feat/upcie-qpair-attach"
 path = "/root/xnvme"
 
 [xal]
@@ -55,7 +55,7 @@ build_dir = "/tmp/homi-build"
 # qpair-handout work lands.
 [homi.repository]
 remote = "https://github.com/fmma/homi"
-ref = "0fcfab7c60199b44be17ab684b011e3f2eee902b"
+ref = "feat/qpair-owner"
 path = "/root/homi"
 
 [qublk]
@@ -68,5 +68,5 @@ build_dir = "/tmp/qublk-build"
 # path lands.
 [qublk.repository]
 remote = "https://github.com/fmma/qublk"
-ref = "4fef906f43f8731c81437eab21f4106201304418"
+ref = "feat/homi-qpair"
 path = "/root/qublk"
