@@ -65,6 +65,7 @@ endif
 # cuStreamWriteValue32 / cuStreamWaitValue32 against host pinned mapped
 # trigger and completion words polled by an internal I/O thread.
 xnvme_dep = dependency('xnvme', required : false)
+homic_dep = dependency('homic', required : false)
 cuda_drv_dep = cc.find_library('cuda',
   dirs : [
     '/usr/local/cuda/lib64/stubs',
@@ -91,7 +92,7 @@ endforeach
 have_cuda_h = cuda_drv_inc_dirs.length() > 0 or cc.has_header('cuda.h')
 
 aisio_enabled = xnvme_dep.found() and cuda_dep.found() and \
-                cuda_drv_dep.found() and have_cuda_h
+                cuda_drv_dep.found() and have_cuda_h and homic_dep.found()
 
 if aisio_enabled
   # The async path links a tiny D2D copy kernel compiled from
@@ -110,10 +111,13 @@ if aisio_enabled
     'src/ds_file_aisio.c',
     'src/ds_bounce_kernel.cu',
     'src/ds_bounce_ctx.c',
+    # fs_mock / homi_client_mock are no longer used by the backend (extents
+    # come from FIEMAP, qpairs from HOMI) but stay compiled so the existing
+    # mock-driven aisio tests still link.
     'src/fs_mock.c',
     'src/homi_client_mock.c',
     include_directories : aisio_inc_dirs,
-    dependencies : [xnvme_dep, cuda_dep, cuda_drv_dep],
+    dependencies : [xnvme_dep, cuda_dep, cuda_drv_dep, homic_dep],
     install : true,
   )
 
