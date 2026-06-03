@@ -19,12 +19,15 @@
 #include "ds_bounce_kernel.h"
 #include "ds_bounce_ctx.h"
 #include "ds_file_internal.h"
-#include "homi_client_mock.h"
+#include "homi_types.h"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
 
 #include <errno.h>
+#include <fcntl.h>
+#include <linux/fiemap.h>
+#include <linux/fs.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdbool.h>
@@ -32,12 +35,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
+#include <unistd.h>
 
+#include <homic.h>
 #include <libxnvme.h>
 
-#define HOMI_SHM_NAME "/homi"
+/* HOMI daemon endpoint and the device it owns, configured by the consumer.
+ * The aisio backend attaches I/O qpairs from this daemon and reads files on a
+ * filesystem mounted over a block device backed by the same NVMe controller. */
+#define ENV_HOMI_SOCKET "OPENDS_HOMI_SOCKET"
+#define ENV_HOMI_DEV "OPENDS_HOMI_DEV"
+#define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
+#define AISIO_ATTACH_QPAIRS 4 ///< sync (idx 0) + sync_queue + async_queue + slack
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
@@ -70,6 +83,8 @@ struct buf_entry {
 
 struct aisio_handle {
 	int fd;
+	struct homi_extent *extents; ///< file->LBA extents (FIEMAP), sorted by file_offset
+	uint32_t extent_count;
 };
 
 struct opends_stream {
@@ -114,7 +129,8 @@ struct read_cursor {
 };
 
 struct aisio_driver {
-	struct homi_conn *homi;
+	char dev_uri[64];       ///< NVMe device (BDF) the HOMI daemon owns
+	char *attach_descpath;  ///< HOMI-served qpair attach descriptor file
 	struct xnvme_dev *xdev;
 	/* xNVMe queues are not thread-safe, so sync (host thread) and async
 	 * (I/O thread) each get their own. */
@@ -194,19 +210,73 @@ middle_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 	s->outstanding--;
 }
 
+/* Resolve a registered file's extents via FIEMAP and translate physical byte
+ * offsets to LBAs. The file lives on a filesystem mounted over the block device
+ * backed by the same NVMe controller HOMI owns, so FIEMAP's fe_physical is the
+ * byte offset on that device. Extents come back sorted by file offset. */
+static int
+aisio_fiemap(struct aisio_driver *d, int fd, struct homi_extent **out,
+             uint32_t *out_n)
+{
+	struct stat st;
+	if (fstat(fd, &st) < 0)
+		return -errno;
+
+	enum { MAX_EXTENTS = 1024 };
+	size_t sz = sizeof(struct fiemap) +
+	            (size_t)MAX_EXTENTS * sizeof(struct fiemap_extent);
+	struct fiemap *fm = calloc(1, sz);
+	if (!fm)
+		return -ENOMEM;
+
+	fm->fm_start = 0;
+	fm->fm_length = (uint64_t)st.st_size;
+	fm->fm_flags = FIEMAP_FLAG_SYNC;
+	fm->fm_extent_count = MAX_EXTENTS;
+
+	if (ioctl(fd, FS_IOC_FIEMAP, fm) < 0) {
+		int e = -errno;
+		free(fm);
+		return e;
+	}
+
+	uint32_t n = fm->fm_mapped_extents;
+	struct homi_extent *ex = calloc(n ? n : 1, sizeof(*ex));
+	if (!ex) {
+		free(fm);
+		return -ENOMEM;
+	}
+	for (uint32_t i = 0; i < n; i++) {
+		ex[i].file_offset = fm->fm_extents[i].fe_logical;
+		ex[i].slba = fm->fm_extents[i].fe_physical >> d->lba_shift;
+		ex[i].length = fm->fm_extents[i].fe_length;
+	}
+	free(fm);
+
+	*out = ex;
+	*out_n = n;
+	return 0;
+}
+
 static int
 open_device(struct aisio_driver *d, int fd)
 {
-	char *uri = NULL;
-	int rc = homi_get_device_uri(d->homi, fd, &uri);
-	if (rc < 0)
-		return rc;
+	(void)fd;
 
+	int rc = homic_attach_qpair(d->dev_uri, AISIO_ATTACH_QPAIRS,
+	                            &d->attach_descpath);
+	if (rc < 0) {
+		fprintf(stderr, "aisio open_device: homic_attach_qpair(%s) rc=%d\n",
+		        d->dev_uri, rc);
+		return rc;
+	}
+
+	setenv("XNVME_UPCIE_ATTACH", d->attach_descpath, 1);
 	struct xnvme_opts opts = xnvme_opts_default();
 	opts.be = "upcie-cuda";
 
-	d->xdev = xnvme_dev_open(uri, &opts);
-	free(uri);
+	d->xdev = xnvme_dev_open(d->dev_uri, &opts);
+	unsetenv("XNVME_UPCIE_ATTACH");
 	if (!d->xdev)
 		return -EIO;
 
@@ -381,14 +451,9 @@ read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		return -EINVAL;
 	uint64_t req_end = req_start + size;
 
-	const struct homi_extent *extents = NULL;
-	uint32_t extent_count = 0;
-	int rc = homi_get_extents(d->homi, h->fd, &extents, &extent_count);
-	if (rc < 0) {
-		fprintf(stderr, "aisio prelude: homi_get_extents fd=%d rc=%d\n",
-		        h->fd, rc);
-		return rc;
-	}
+	const struct homi_extent *extents = h->extents;
+	uint32_t extent_count = h->extent_count;
+	int rc;
 
 	uint32_t lba_nbytes = d->lba_size;
 	uint32_t lba_shift = d->lba_shift;
@@ -629,13 +694,8 @@ start_file_op(struct aisio_driver *d, struct file_op *op)
 	uint64_t req_end = req_start + size;
 	uint8_t *dst_base = (uint8_t *)op->buf_base + *op->buf_offset_p;
 
-	const struct homi_extent *extents = NULL;
-	uint32_t extent_count = 0;
-	int rc = homi_get_extents(d->homi, op->h->fd, &extents, &extent_count);
-	if (rc < 0) {
-		op->err = DS_FILE_DEVICE_DRIVER_ERROR;
-		return;
-	}
+	const struct homi_extent *extents = op->h->extents;
+	uint32_t extent_count = op->h->extent_count;
 
 	uint32_t lba_shift = d->lba_shift;
 	uint32_t lba_mask = d->lba_size - 1;
@@ -883,17 +943,40 @@ ds_file_driver_open(void)
 	if (drv)
 		return ds_file_err(DS_FILE_DRIVER_ALREADY_OPEN);
 
+	const char *dev = getenv(ENV_HOMI_DEV);
+	if (!dev || !dev[0]) {
+		fprintf(stderr,
+		        "aisio: %s must name the NVMe device the HOMI daemon owns\n",
+		        ENV_HOMI_DEV);
+		return ds_file_err(DS_FILE_FS_SETUP_ERROR);
+	}
+
 	struct aisio_driver *d = calloc(1, sizeof(*d));
 	if (!d)
 		return ds_file_err(DS_FILE_INTERNAL_ERROR);
 
-	int rc = homi_connect(HOMI_SHM_NAME, &d->homi);
+	snprintf(d->dev_uri, sizeof(d->dev_uri), "%s", dev);
+
+	const char *sock = getenv(ENV_HOMI_SOCKET);
+	int rc = homic_connect(
+	        (char *)(sock && sock[0] ? sock : DEFAULT_HOMI_SOCKET));
 	if (rc < 0) {
 		free(d);
 		return ds_file_err(DS_FILE_FS_SETUP_ERROR);
 	}
 
 	drv = d;
+
+	int orc = open_device(d, -1);
+	if (orc < 0) {
+		homic_disconnect();
+		free(d->attach_descpath);
+		free(d);
+		drv = NULL;
+		return ds_file_err(DS_FILE_DEVICE_NOT_FOUND);
+	}
+	async_setup(d);
+
 	return ds_file_ok();
 }
 
@@ -921,8 +1004,9 @@ ds_file_driver_close(void)
 		xnvme_queue_term(drv->sync_queue);
 	if (drv->xdev)
 		xnvme_dev_close(drv->xdev);
-	if (drv->homi)
-		homi_disconnect(drv->homi);
+
+	homic_disconnect();
+	free(drv->attach_descpath);
 
 	free(drv);
 	drv = NULL;
@@ -991,8 +1075,15 @@ ds_file_handle_register(ds_file_handle_t *fh, int fd)
 	struct aisio_handle *h = calloc(1, sizeof(*h));
 	if (!h)
 		return ds_file_err(DS_FILE_INTERNAL_ERROR);
-
 	h->fd = fd;
+
+	int frc = aisio_fiemap(drv, fd, &h->extents, &h->extent_count);
+	if (frc < 0) {
+		fprintf(stderr, "aisio register: fiemap(fd=%d) rc=%d\n", fd, frc);
+		free(h);
+		return ds_file_err(DS_FILE_FS_SETUP_ERROR);
+	}
+
 	*fh = h;
 	use_count++;
 	return ds_file_ok();
@@ -1003,6 +1094,7 @@ ds_file_handle_deregister(ds_file_handle_t fh)
 {
 	if (!fh)
 		return;
+	free(((struct aisio_handle *)fh)->extents);
 	free(fh);
 	use_count--;
 }
