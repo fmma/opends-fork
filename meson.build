@@ -181,19 +181,16 @@ if aisio_test_enabled
 
   executable('test_sync_read_aisio',
     'tests/test_sync_read_aisio.c',
-    'tests/test_extents_io.c',
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep],
   )
   executable('test_register_large_aisio',
     'tests/test_register_large_aisio.c',
-    'tests/test_extents_io.c',
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep],
   )
   executable('test_async_read_aisio',
     'tests/test_async_read_aisio.c',
-    'tests/test_extents_io.c',
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )

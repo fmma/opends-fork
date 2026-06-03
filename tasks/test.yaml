@@ -4,10 +4,15 @@ doc: |
 
   Runs all available backend tests. Reference backend tests always run.
   GDS tests run only when the GDS backend was built. aisio tests run
-  when both xNVMe and CUDA were found; they require the NVMe kernel
-  driver unbound from the target device, so the ref and GDS phases
-  must complete first. The final rebind step restores the original
-  driver binding so iterative test runs leave the target usable.
+  when both xNVMe and CUDA were found.
+
+  The ref/GDS phases run against the kernel-mounted filesystem. The
+  aisio phase then brings up the HOMI/qublk stack (homi_stack_up): it
+  hands the controller to userspace, exposes it as a ublk block device,
+  and remounts the same XFS over it, so the sync-read pattern written
+  during prep is still present. The aisio tests attach I/O qpairs from
+  HOMI and read that pattern file. homi_stack_down tears the stack down
+  and rebinds nvme so iterative runs leave the target usable.
 
   Prerequisites:
     - setup_opends.yaml has been run (sync_and_build.py does this).
@@ -45,8 +50,7 @@ steps:
   - name: test_sync_read_prep
     run: |
       '{{ config.test.build_dir }}/test_sync_read_prep' \
-        '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin' \
-        '{{ config.test.build_dir }}/sync_read_extents.bin'
+        '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: test_sync_read_ref
     run: |
@@ -56,14 +60,15 @@ steps:
     run: |
       '{{ config.test.build_dir }}/test_sync_read_gds' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
-  - name: unbind_nvme
+  - name: homi_stack_up
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/unbind_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/tasks/steps/homi_stack_up.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: test_sync_read_aisio
     run: |
-      '{{ config.test.build_dir }}/test_sync_read_aisio' \
-        '{{ config.test.build_dir }}/sync_read_extents.bin'
+      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+        '{{ config.test.build_dir }}/test_sync_read_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: test_register_large_aisio
     run: |
@@ -74,15 +79,17 @@ steps:
       # atomically (raising hard requires CAP_SYS_RESOURCE; the cijoe
       # runner is root).
       echo "fd limit (soft/hard): $(ulimit -Sn)/$(ulimit -Hn)"
-      prlimit --nofile=1048576:1048576 -- \
-        '{{ config.test.build_dir }}/test_register_large_aisio' \
-          '{{ config.test.build_dir }}/sync_read_extents.bin'
+      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+        prlimit --nofile=1048576:1048576 -- \
+          '{{ config.test.build_dir }}/test_register_large_aisio' \
+            '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: test_async_read_aisio
     run: |
-      '{{ config.test.build_dir }}/test_async_read_aisio' \
-        '{{ config.test.build_dir }}/sync_read_extents.bin'
+      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+        '{{ config.test.build_dir }}/test_async_read_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
-  - name: rebind_nvme
+  - name: homi_stack_down
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/rebind_nvme.sh' '{{ config.test.nvme_bdf }}'
+      '{{ config.test.repo_path }}/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
