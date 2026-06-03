@@ -12,8 +12,10 @@ BDF=$1
 MOUNT=$2
 HERE=$(dirname "$0")
 
-echo "unmounting $MOUNT"
-umount "$MOUNT"
+if mountpoint -q "$MOUNT"; then
+	echo "unmounting $MOUNT"
+	umount "$MOUNT"
+fi
 
 # Re-enumerate the function before unbinding. A bare FLR (echo 1 > reset) is
 # not enough on the Samsung 990 PRO: a userspace owner killed mid-DMA wedges

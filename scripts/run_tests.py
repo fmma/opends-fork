@@ -39,7 +39,7 @@ def _steps_for(backends, tests):
         return []
 
     needs_prep = any(t != "smoke" for _, t in selected)
-    needs_unbind = any(b == "aisio" for b, _ in selected)
+    needs_stack = any(b == "aisio" for b, _ in selected)
 
     steps = ["bind_nvme", "mount", "prepare_test_dir"]
     if needs_prep:
@@ -48,12 +48,16 @@ def _steps_for(backends, tests):
         if b == "aisio":
             continue
         steps.append(f"test_{t}_{b}")
-    if needs_unbind:
-        steps.append("unbind_nvme")
+    if needs_stack:
+        # Hand the controller to HOMI, expose it via qublk, remount the
+        # same XFS, run the aisio tests against it, then restore nvme.
+        steps.append("homi_stack_up")
         for b, t in selected:
             if b == "aisio":
                 steps.append(f"test_{t}_{b}")
-    steps.append("rebind_nvme")
+        steps.append("homi_stack_down")
+    else:
+        steps.append("rebind_nvme")
     return steps
 
 
