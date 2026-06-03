@@ -1,24 +1,41 @@
-# Build dependency identity, pinned for the target and tracked in-repo:
-# anyone running the cijoe tasks builds exactly these refs. Source and
-# build locations are machine layout, not identity, so they live in the
-# per-machine config: set [deps].src_root / build_root in test.toml
-# (see test.toml.example). Each dep is cloned to <src_root>/<dep> and
-# built in <build_root>/<dep>-build.
+# Build dependencies pinned for the target. Tracked in-repo; not a
+# per-machine override. Anyone running the cijoe tasks builds against
+# exactly these refs.
+
+[xnvme]
+build_dir = "/tmp/xnvme-build"
 
 # Temporary fork: adds the `.mem_map`/`.mem_unmap` hooks and CUDA BAR1
 # `device_pagesize` handling that the aisio register path needs, plus the
-# PRP page-count fix that lets PRP1 carry a sub-page buffer offset. Revert
-# to upstream `xnvme/xnvme` once xnvme/xnvme#663, safl/upcie#25, and
-# safl/upcie#27 land upstream (upcie is vendored under xNVMe's
+# PRP page-count fix that lets PRP1 carry a sub-page buffer offset, and the
+# upcie attach mode (XNVME_UPCIE_ATTACH) that drives I/O qpairs handed out
+# by a HOMI-owned controller. Branch feat/upcie-qpair-attach stacks the
+# attach work on the aisio-pinned base. Revert to upstream `xnvme/xnvme`
+# once the relevant changes land upstream (upcie is vendored under xNVMe's
 # toolbox/third-party).
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
-ref = "f38c6b51efef531ee53f5ef05bcdc699f186ce1a"
+ref = "b3df0b0a"
+path = "/root/xnvme"
 
-# Transitive dep of fil; fil's meson.build requires xal == 0.2.0.
+[xal]
+build_dir = "/tmp/xal-build"
+
+# Pinned at xal main (past v0.2.0) because HOMI needs the "xal state in
+# POSIX shared memory" feature (xal_from_pools and the inode/extent/dirty
+# pools that homic maps) and the include-guard fix in libxal.h that lets
+# a translation unit pull libxal.h both directly and via homi headers.
+# Note: this is newer than the xal == 0.2.0 that fil's meson.build
+# requires, so fil is excluded from the HOMI-qpair slice's dependency
+# chain (see scripts/setup_deps.py); fil is bench-only and reconciled
+# separately.
 [xal.repository]
 remote = "https://github.com/xnvme/xal"
-ref = "v0.2.0"
+ref = "7bd3203fee406e66711090ad836653f326cb787a"
+path = "/root/xal"
+
+[fil]
+build_dir = "/tmp/fil-build"
 
 # Fork pin: adds the `opends` backend that drives OpenDS aisio through
 # fs_mock. Revert to upstream xnvme/fil once the OpenDS-aware bench
@@ -26,3 +43,30 @@ ref = "v0.2.0"
 [fil.repository]
 remote = "https://github.com/fmma/fil"
 ref = "39cfad77e0c2cc6285c53fa3a1528fac82424ef5"
+path = "/root/fil"
+
+[homi]
+build_dir = "/tmp/homi-build"
+
+# HOMI daemon (homid) and client (libhomic). Owns the userspace NVMe
+# controller and serves I/O qpairs plus xal extent trees. Depends on
+# installed xal and xnvme. Pinned at the fork's main tip for the M0
+# build skeleton; bumped to the integration branch once the
+# qpair-handout work lands.
+[homi.repository]
+remote = "https://github.com/fmma/homi"
+ref = "0fcfab7c60199b44be17ab684b011e3f2eee902b"
+path = "/root/homi"
+
+[qublk]
+build_dir = "/tmp/qublk-build"
+
+# qublk ublk server. Exposes the NVMe drive as /dev/ublkb0 through the
+# ublk interface. Depends on installed xnvme plus liburing and the ublk
+# kernel headers. Pinned at the fork's main tip for the M0 build
+# skeleton; bumped to the integration branch once the HOMI-qpair attach
+# path lands.
+[qublk.repository]
+remote = "https://github.com/fmma/qublk"
+ref = "4fef906f43f8731c81437eab21f4106201304418"
+path = "/root/qublk"
