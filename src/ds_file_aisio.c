@@ -56,7 +56,10 @@
 #define NVME_MAX_NLB 65536
 #define DS_BOUNCE_INIT_CAP 4
 #define AISIO_QUEUE_DEPTH 32
-#define AISIO_ASYNC_QUEUE_DEPTH 1024
+/* In attach mode the async queue runs on a HOMI-handed qpair whose ring depth
+ * is fixed by the owner (upcie caps a qpair at 1024 entries). NVMe needs one
+ * free slot, so the queue capacity must stay below that ring depth. */
+#define AISIO_ASYNC_QUEUE_DEPTH 512
 
 #define MAX_STREAMS 8192
 #define STREAM_WORDS_BYTES (MAX_STREAMS * sizeof(uint32_t))
