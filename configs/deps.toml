@@ -25,10 +25,9 @@ build_dir = "/tmp/xal-build"
 # POSIX shared memory" feature (xal_from_pools and the inode/extent/dirty
 # pools that homic maps) and the include-guard fix in libxal.h that lets
 # a translation unit pull libxal.h both directly and via homi headers.
-# Note: this is newer than the xal == 0.2.0 that fil's meson.build
-# requires, so fil is excluded from the HOMI-qpair slice's dependency
-# chain (see scripts/setup_deps.py); fil is bench-only and reconciled
-# separately.
+# fil's opends path no longer uses xal and now requires xal >=0.2.0, so
+# it builds against this same pin; it is still bench-only and set up
+# separately (see scripts/setup_deps.py).
 [xal.repository]
 remote = "https://github.com/xnvme/xal"
 ref = "7bd3203fee406e66711090ad836653f326cb787a"
@@ -37,12 +36,12 @@ path = "/root/xal"
 [fil]
 build_dir = "/tmp/fil-build"
 
-# Fork pin: adds the `opends` backend that drives OpenDS aisio through
-# fs_mock. Revert to upstream xnvme/fil once the OpenDS-aware bench
-# backend lands upstream.
+# Fork pin: the `opends` backend reads files on the HOMI/qublk mount via
+# the OpenDS file API (like gds), enumerating with readdir. Revert to
+# upstream xnvme/fil once the OpenDS-aware bench backend lands upstream.
 [fil.repository]
 remote = "https://github.com/fmma/fil"
-ref = "39cfad77e0c2cc6285c53fa3a1528fac82424ef5"
+ref = "feat/opends-homi"
 path = "/root/fil"
 
 [homi]

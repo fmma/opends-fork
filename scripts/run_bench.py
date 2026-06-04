@@ -25,11 +25,11 @@ DATASETS = ["filesize8gib", "tiktokish", "imagenetish"]
 
 SETUP_STEPS = {
     "gds":    ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"],
-    "opends": ["cpu_governor", "meta", "bind_nvme", "mount", "unbind_nvme"],
+    "opends": ["cpu_governor", "meta", "homi_stack_up"],
 }
 TEARDOWN_STEPS = {
     "gds":    [],
-    "opends": ["rebind_nvme"],
+    "opends": ["homi_stack_down"],
 }
 
 

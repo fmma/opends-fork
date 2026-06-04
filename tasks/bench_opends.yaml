@@ -2,19 +2,20 @@ doc: |
   OpenDS Bench Suite
   ==================
 
-  Drives filperf with the `opends` backend (raw NVMe via xNVMe
-  upcie-cuda, exercised through fil's fmma fork) across the three
-  reference datasets (filesize8gib, tiktokish, imagenetish).
+  Drives filperf with the `opends` backend (OpenDS aisio reading files
+  on a mounted filesystem into GPU memory) across the three reference
+  datasets (filesize8gib, tiktokish, imagenetish).
 
-  fil walks XAL on the unbound device to enumerate files and resolve
-  extents, then registers them with OpenDS' fs_mock at setup time.
-  The mount step is preserved only because the dataset directories
-  must exist on the FS for setup_dataset.yaml to populate them; the
-  bench itself does not depend on the FS being mounted.
+  homi_stack_up hands the controller to HOMI, exposes it as a ublk
+  block device (qublk), and remounts the dataset XFS over it. fil then
+  enumerates the mount with readdir and opens each file by path; the
+  aisio backend resolves extents and attaches an I/O qpair from HOMI
+  per file, DMAing straight to GPU memory. homi_stack_down tears the
+  stack down and rebinds nvme.
 
   Prerequisites:
-    * scripts/setup_deps.py has installed xnvme, xal, OpenDS, and fil
-      on the target.
+    * scripts/setup_deps.py has installed xnvme, xal, OpenDS, fil, homi,
+      and qublk on the target.
     * scripts/build.py has built OpenDS on the target.
     * aisio's tasks/setup_dataset.yaml has run on the target, formatting
       the NVMe with XFS and populating the three reference datasets
@@ -34,17 +35,9 @@ steps:
   - name: meta
     uses: bench_meta
 
-  - name: bind_nvme
+  - name: homi_stack_up
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
-
-  - name: mount
-    run: |
-      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
-
-  - name: unbind_nvme
-    run: |
-      '{{ config.test.repo_path }}/tasks/steps/unbind_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/tasks/steps/homi_stack_up.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: opends_filesize8gib
     uses: bench_run
@@ -97,6 +90,6 @@ steps:
       batch-size: 4096
       mode: async
 
-  - name: rebind_nvme
+  - name: homi_stack_down
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/rebind_nvme.sh' '{{ config.test.nvme_bdf }}'
+      '{{ config.test.repo_path }}/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
