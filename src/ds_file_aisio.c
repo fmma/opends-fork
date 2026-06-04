@@ -969,6 +969,17 @@ ds_file_driver_open(void)
 	}
 
 	drv = d;
+
+	int orc = open_device(d, -1);
+	if (orc < 0) {
+		homic_disconnect();
+		free(d->attach_descpath);
+		free(d);
+		drv = NULL;
+		return ds_file_err(DS_FILE_DEVICE_NOT_FOUND);
+	}
+	async_setup(d);
+
 	return ds_file_ok();
 }
 
