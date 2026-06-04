@@ -7,11 +7,12 @@ only appended when `mode: async`). Parsing is deferred to
 scripts/bench_report.py so the cijoe step stays oblivious to
 filperf's exact output shape.
 
-Each bench run drops the page cache and runs filperf under
-`prlimit --nofile`. nofile is required for opends (one dma-buf fd
-per 2 MiB chunk on NVIDIA) and harmless elsewhere; drop_caches is
-the cold-cache baseline for gds and a no-op for opends (the device
-is unbound from the kernel nvme driver).
+Each bench run runs filperf under `prlimit --nofile`. nofile is
+required for opends (one dma-buf fd per 2 MiB chunk on NVIDIA) and
+harmless elsewhere. gds runs get a cold-cache `drop_caches`; opends
+reads files on the HOMI/qublk mount via DMA into GPU memory, so the
+kernel page cache is irrelevant and the device's BDF/socket are
+passed through OPENDS_HOMI_DEV/OPENDS_HOMI_SOCKET.
 """
 
 import logging as log
@@ -34,29 +35,41 @@ def main(args, cijoe):
           f"(batches={args.batches} batch_size={args.batch_size}) ---",
           flush=True)
     bdf = cijoe.getconf("test.nvme_bdf")
+    env = ""
+    mnt = args.mnt
     if args.backend == "gds":
         repo = cijoe.getconf("test.repo_path")
         err, state = cijoe.run(f"'{repo}/tasks/steps/resolve_nvme_ns.sh' '{bdf}'")
         if err:
             return err
         target = state.output().strip().splitlines()[-1]
+    elif args.backend == "opends":
+        # HOMI owns the controller; fil enumerates the qublk mount and the
+        # aisio backend attaches a qpair from HOMI per file. The positional
+        # target is unused by fil for opends but the CLI still requires one.
+        target = bdf
+        sock = "/run/homi/homi.sock"
+        env = f"OPENDS_HOMI_DEV='{bdf}' OPENDS_HOMI_SOCKET='{sock}' "
+        if not mnt:
+            mnt = cijoe.getconf("test.mount_point")
     else:
         target = bdf
 
     filperf = [
-        f"prlimit --nofile={NOFILE}:{NOFILE} --",
+        f"{env}prlimit --nofile={NOFILE}:{NOFILE} --",
         f"filperf '{target}'",
         f"--backend {args.backend}",
         f"--data-dir {args.data_dir}",
         f"--batches {args.batches} --batch-size {args.batch_size}",
         "--summary",
     ]
-    if args.mnt:
-        filperf.insert(2, f"--mnt '{args.mnt}'")
+    if mnt:
+        filperf.insert(2, f"--mnt '{mnt}'")
     if args.mode == "async":
         filperf.append("--async")
 
-    cmd = "echo 3 > /proc/sys/vm/drop_caches\n" + " \\\n  ".join(filperf)
+    drop = "" if args.backend == "opends" else "echo 3 > /proc/sys/vm/drop_caches\n"
+    cmd = drop + " \\\n  ".join(filperf)
     err, state = cijoe.run(cmd)
     if err:
         return err
