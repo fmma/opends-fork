@@ -30,16 +30,16 @@ below from bench artifacts; see "Benchmarking with filperf" for how
 to run the suites.
 
 <!-- bench:start -->
-_Commit `96b0d22` on host `swissknife` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU `NVIDIA RTX 2000 Ada Generation`)._
+_Commit `699a141-dirty` on host `swissknife` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU `NVIDIA RTX 2000 Ada Generation`)._
 
 | Dataset       | mode  | gds (MiB/s) | opends (MiB/s) |
 |---------------|-------|--------------|--------------|
-| filesize8gib  | sync  |         6635 |         7114 |
-| filesize8gib  | async |         2530 |         7101 |
-| tiktokish     | sync  |         2598 |         5349 |
-| tiktokish     | async |         2184 |         4728 |
-| imagenetish   | sync  |          609 |          636 |
-| imagenetish   | async |          848 |         3163 |
+| filesize8gib  | sync  |         6635 |         7122 |
+| filesize8gib  | async |         2530 |         7117 |
+| tiktokish     | sync  |         2598 |         5821 |
+| tiktokish     | async |         2184 |         5073 |
+| imagenetish   | sync  |          609 |          623 |
+| imagenetish   | async |          848 |         3096 |
 <!-- bench:end -->
 
 ## ds_file API
