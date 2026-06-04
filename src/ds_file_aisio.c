@@ -1008,6 +1008,7 @@ ds_file_driver_close(void)
 	if (drv->xdev)
 		xnvme_dev_close(drv->xdev);
 
+	homic_detach_qpair();
 	homic_disconnect();
 	free(drv->attach_descpath);
 
