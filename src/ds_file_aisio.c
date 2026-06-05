@@ -2,10 +2,9 @@
  * ds_file_aisio.c - aisio backend for raw-NVMe direct storage.
  *
  * Reads go straight from an NVMe device into GPU memory via xNVMe's upcie-cuda
- * backend (PCIe P2P DMA, no filesystem in the path). File offsets are
- * translated to physical LBAs through a HOMI mock client
- * (src/homi_client_mock.c) that delegates to fs_mock; consumers populate
- * fs_mock with extents at setup time via fs_mock_register.
+ * backend (PCIe P2P DMA, no filesystem in the path). HOMI owns the device: it
+ * hands out the I/O qpair the reads are driven over. A registered file's extents
+ * come from FIEMAP on the qublk-mounted filesystem (homic_get_extents).
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before ds_file_driver_open runs.
@@ -19,15 +18,14 @@
 #include "ds_bounce_kernel.h"
 #include "ds_bounce_ctx.h"
 #include "ds_file_internal.h"
-#include "homi_types.h"
+#include "ds_extent.h"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
 
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/fiemap.h>
-#include <linux/fs.h>
+#include <limits.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdbool.h>
@@ -35,8 +33,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
@@ -86,7 +82,7 @@ struct buf_entry {
 
 struct aisio_handle {
 	int fd;
-	struct homi_extent *extents; ///< file->LBA extents (FIEMAP), sorted by file_offset
+	struct ds_extent *extents; ///< file->LBA extents from HOMI, sorted by file_offset
 	uint32_t extent_count;
 };
 
@@ -213,48 +209,31 @@ middle_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 	s->outstanding--;
 }
 
-/* Resolve a registered file's extents via FIEMAP and translate physical byte
- * offsets to LBAs. The file lives on a filesystem mounted over the block device
- * backed by the same NVMe controller HOMI owns, so FIEMAP's fe_physical is the
- * byte offset on that device. Extents come back sorted by file offset. */
+/* Resolve a registered file's extents through homic_get_extents, which FIEMAPs
+ * the fd against the qublk-mounted filesystem and returns device extents. */
 static int
-aisio_fiemap(struct aisio_driver *d, int fd, struct homi_extent **out,
-             uint32_t *out_n)
+aisio_resolve_extents(struct aisio_driver *d, int fd, struct ds_extent **out,
+                      uint32_t *out_n)
 {
-	struct stat st;
-	if (fstat(fd, &st) < 0)
-		return -errno;
+	(void)d;
 
-	enum { MAX_EXTENTS = 1024 };
-	size_t sz = sizeof(struct fiemap) +
-	            (size_t)MAX_EXTENTS * sizeof(struct fiemap_extent);
-	struct fiemap *fm = calloc(1, sz);
-	if (!fm)
-		return -ENOMEM;
+	struct homic_extent *hx = NULL;
+	uint32_t n = 0;
+	int rc = homic_get_extents(fd, &hx, &n);
+	if (rc < 0)
+		return rc;
 
-	fm->fm_start = 0;
-	fm->fm_length = (uint64_t)st.st_size;
-	fm->fm_flags = FIEMAP_FLAG_SYNC;
-	fm->fm_extent_count = MAX_EXTENTS;
-
-	if (ioctl(fd, FS_IOC_FIEMAP, fm) < 0) {
-		int e = -errno;
-		free(fm);
-		return e;
-	}
-
-	uint32_t n = fm->fm_mapped_extents;
-	struct homi_extent *ex = calloc(n ? n : 1, sizeof(*ex));
+	struct ds_extent *ex = calloc(n ? n : 1, sizeof(*ex));
 	if (!ex) {
-		free(fm);
+		free(hx);
 		return -ENOMEM;
 	}
 	for (uint32_t i = 0; i < n; i++) {
-		ex[i].file_offset = fm->fm_extents[i].fe_logical;
-		ex[i].slba = fm->fm_extents[i].fe_physical >> d->lba_shift;
-		ex[i].length = fm->fm_extents[i].fe_length;
+		ex[i].file_offset = hx[i].file_offset;
+		ex[i].slba = hx[i].slba;
+		ex[i].length = hx[i].length;
 	}
-	free(fm);
+	free(hx);
 
 	*out = ex;
 	*out_n = n;
@@ -454,7 +433,7 @@ read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		return -EINVAL;
 	uint64_t req_end = req_start + size;
 
-	const struct homi_extent *extents = h->extents;
+	const struct ds_extent *extents = h->extents;
 	uint32_t extent_count = h->extent_count;
 	int rc;
 
@@ -475,7 +454,7 @@ read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 	size_t total_transferred = 0;
 
 	for (uint32_t i = 0; i < extent_count; i++) {
-		const struct homi_extent *e = &extents[i];
+		const struct ds_extent *e = &extents[i];
 
 		uint64_t ext_start = e->file_offset;
 		uint64_t ext_end = ext_start + e->length;
@@ -697,14 +676,14 @@ start_file_op(struct aisio_driver *d, struct file_op *op)
 	uint64_t req_end = req_start + size;
 	uint8_t *dst_base = (uint8_t *)op->buf_base + *op->buf_offset_p;
 
-	const struct homi_extent *extents = op->h->extents;
+	const struct ds_extent *extents = op->h->extents;
 	uint32_t extent_count = op->h->extent_count;
 
 	uint32_t lba_shift = d->lba_shift;
 	uint32_t lba_mask = d->lba_size - 1;
 
 	for (uint32_t i = 0; i < extent_count; i++) {
-		const struct homi_extent *e = &extents[i];
+		const struct ds_extent *e = &extents[i];
 		uint64_t ext_start = e->file_offset;
 		uint64_t ext_end = ext_start + e->length;
 		if (ext_start >= req_end)
@@ -1081,9 +1060,9 @@ ds_file_handle_register(ds_file_handle_t *fh, int fd)
 		return ds_file_err(DS_FILE_INTERNAL_ERROR);
 	h->fd = fd;
 
-	int frc = aisio_fiemap(drv, fd, &h->extents, &h->extent_count);
+	int frc = aisio_resolve_extents(drv, fd, &h->extents, &h->extent_count);
 	if (frc < 0) {
-		fprintf(stderr, "aisio register: fiemap(fd=%d) rc=%d\n", fd, frc);
+		fprintf(stderr, "aisio register: resolve_extents(fd=%d) rc=%d\n", fd, frc);
 		free(h);
 		return ds_file_err(DS_FILE_FS_SETUP_ERROR);
 	}

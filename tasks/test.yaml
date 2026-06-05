@@ -67,6 +67,7 @@ steps:
   - name: test_sync_read_aisio
     run: |
       OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_sync_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
@@ -80,6 +81,7 @@ steps:
       # runner is root).
       echo "fd limit (soft/hard): $(ulimit -Sn)/$(ulimit -Hn)"
       OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         prlimit --nofile=1048576:1048576 -- \
           '{{ config.test.build_dir }}/test_register_large_aisio' \
             '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
@@ -87,6 +89,7 @@ steps:
   - name: test_async_read_aisio
     run: |
       OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_async_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 

@@ -2,15 +2,15 @@
  * test_aisio_homi.h - Shared setup for aisio tests against a live HOMI.
  *
  * The aisio backend no longer owns the controller or takes injected
- * extents: it attaches I/O qpairs from a running HOMI daemon and resolves
- * file extents via FIEMAP on a real file. These tests therefore run while
- * the HOMI/qublk stack is up and the test filesystem is mounted (over
- * /dev/ublkbN). The harness (tasks/test.yaml) brings the stack up, exports
- * OPENDS_HOMI_DEV / OPENDS_HOMI_SOCKET, and passes the path of a real file
- * on the mount.
+ * extents: it attaches I/O qpairs from a running HOMI daemon and asks HOMI
+ * to resolve a file's extents (homic_get_extents). These tests therefore
+ * run while the HOMI/qublk stack is up and the test filesystem is mounted
+ * (over /dev/ublkbN). The harness (tasks/test.yaml) brings the stack up,
+ * exports OPENDS_HOMI_DEV / OPENDS_HOMI_SOCKET / OPENDS_HOMI_MNT, and passes
+ * the path of a real file on the mount.
  *
- * Each test opens that file, registers it (which FIEMAPs it and attaches
- * qpairs), and runs the backend-agnostic test logic against it.
+ * Each test opens that file, registers it (which resolves its extents via
+ * HOMI and attaches qpairs), and runs the backend-agnostic test logic.
  */
 #ifndef TEST_AISIO_HOMI_H_
 #define TEST_AISIO_HOMI_H_
