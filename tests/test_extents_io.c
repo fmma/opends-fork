@@ -153,7 +153,7 @@ resolve_pci_bdf(int fd, char *bdf, size_t len)
 
 static int
 fiemap_file(int fd, uint64_t file_size, uint32_t lba_size, uint64_t part_start,
-            struct homi_extent **out_extents, uint32_t *out_count)
+            struct ds_extent **out_extents, uint32_t *out_count)
 {
 	size_t buf_size = sizeof(struct fiemap) +
 	                  MAX_EXTENTS * sizeof(struct fiemap_extent);
@@ -189,7 +189,7 @@ fiemap_file(int fd, uint64_t file_size, uint32_t lba_size, uint64_t part_start,
 		return -E2BIG;
 	}
 
-	struct homi_extent *ext = calloc(count, sizeof(*ext));
+	struct ds_extent *ext = calloc(count, sizeof(*ext));
 	if (!ext) {
 		free(fm);
 		return -ENOMEM;
@@ -238,7 +238,7 @@ test_extents_emit(const char *fs_path, const char *out_path)
 	uint32_t lba_size = get_lba_size(fd);
 	uint64_t part_start = get_partition_start_bytes(fd);
 
-	struct homi_extent *extents = NULL;
+	struct ds_extent *extents = NULL;
 	uint32_t n_extents = 0;
 	int rc = fiemap_file(fd, (uint64_t)st.st_size, lba_size, part_start,
 	                     &extents, &n_extents);
@@ -265,7 +265,7 @@ test_extents_emit(const char *fs_path, const char *out_path)
 }
 
 int
-test_extents_load(const char *path, char uri[64], struct homi_extent **extents,
+test_extents_load(const char *path, char uri[64], struct ds_extent **extents,
                   uint32_t *n_extents)
 {
 	FILE *f = fopen(path, "rb");
@@ -285,7 +285,7 @@ test_extents_load(const char *path, char uri[64], struct homi_extent **extents,
 
 	memcpy(uri, hdr.uri, 64);
 
-	struct homi_extent *e = NULL;
+	struct ds_extent *e = NULL;
 	if (hdr.n_extents > 0) {
 		e = malloc(hdr.n_extents * sizeof(*e));
 		if (!e) {
