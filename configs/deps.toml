@@ -21,16 +21,18 @@ path = "/root/xnvme"
 [xal]
 build_dir = "/tmp/xal-build"
 
-# Pinned at xal main (past v0.2.0) because HOMI needs the "xal state in
-# POSIX shared memory" feature (xal_from_pools and the inode/extent/dirty
-# pools that homic maps) and the include-guard fix in libxal.h that lets
-# a translation unit pull libxal.h both directly and via homi headers.
-# fil's opends path no longer uses xal and now requires xal >=0.2.0, so
-# it builds against this same pin; it is still bench-only and set up
-# separately (see scripts/setup_deps.py).
+# Fork pin: based on xal main (past v0.2.0) for the "xal state in POSIX
+# shared memory" feature (xal_from_shm and the inode/extent/dirty pools
+# that homic maps) and the include-guard fix in libxal.h. The fork adds a
+# fix so xal_close() on a from_shm (shared_view) client of the XFS backend
+# does not free primary-owned device buffers (NULL xal->dev) and crash;
+# homic_get_extents is the first consumer to close such a view. Revert to
+# upstream xnvme/xal once that lands. fil's opends path no longer uses xal
+# and requires xal >=0.2.0, so it builds against this same pin (bench-only,
+# set up separately; see scripts/setup_deps.py).
 [xal.repository]
-remote = "https://github.com/xnvme/xal"
-ref = "7bd3203fee406e66711090ad836653f326cb787a"
+remote = "https://github.com/fmma/xal"
+ref = "fix/xfs-shared-view-close"
 path = "/root/xal"
 
 [fil]

@@ -49,9 +49,12 @@ def main(args, cijoe):
         # target is unused by fil for opends but the CLI still requires one.
         target = bdf
         sock = "/run/homi/homi.sock"
-        env = f"OPENDS_HOMI_DEV='{bdf}' OPENDS_HOMI_SOCKET='{sock}' "
         if not mnt:
             mnt = cijoe.getconf("test.mount_point")
+        env = (
+            f"OPENDS_HOMI_DEV='{bdf}' OPENDS_HOMI_SOCKET='{sock}' "
+            f"OPENDS_HOMI_MNT='{mnt}' "
+        )
     else:
         target = bdf
 
