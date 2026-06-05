@@ -41,7 +41,10 @@ devices = [ "$BDF" ]
 ipc_socket = "$SOCK"
 
 [xal]
-backend = 2
+# XFS (1), not FIEMAP (2): homid owns the controller raw over upcie with the
+# kernel nvme driver unbound, so xal parses on-disk XFS metadata over the
+# xnvme device rather than FIEMAP-ing a kernel mount.
+backend = 1
 watchmode = 0
 file_lookupmode = 0
 EOF
@@ -60,8 +63,8 @@ for _ in $(seq 1 20); do
 	sleep 0.2
 done
 # Wait for the listening socket, bailing if homid dies. homid binds the socket
-# before owning the controller (which can take a few seconds) and then logs to
-# syslog, so a crashed daemon would otherwise leave a stale socket file.
+# only after owning the controller and indexing xal (a few seconds), so the
+# socket's appearance means it is ready to serve qpair-attach and xal requests.
 for _ in $(seq 1 120); do
 	[ -S "$SOCK" ] && break
 	if ! pgrep -x homid > /dev/null; then

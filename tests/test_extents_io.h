@@ -3,7 +3,7 @@
  *
  * Captures one file's extents plus the device URI so the aisio tests
  * (which run after the kernel nvme driver has been unbound from the
- * device) can populate fs_mock without re-FIEMAPing the now-unmounted
+ * device) can resolve the file without re-FIEMAPing the now-unmounted
  * filesystem. Produced by test_sync_read_prep while the FS is still
  * mounted.
  *
@@ -12,7 +12,7 @@
 #ifndef TEST_EXTENTS_IO_H_
 #define TEST_EXTENTS_IO_H_
 
-#include "homi_types.h"
+#include "ds_extent.h"
 
 #include <stdint.h>
 
@@ -36,6 +36,6 @@ int test_extents_emit(const char *fs_path, const char *out_path);
 /* Read a record produced by test_extents_emit. The returned
  * `extents` array is malloc'd; the caller frees it. */
 int test_extents_load(const char *path, char uri[64],
-                      struct homi_extent **extents, uint32_t *n_extents);
+                      struct ds_extent **extents, uint32_t *n_extents);
 
 #endif /* TEST_EXTENTS_IO_H_ */

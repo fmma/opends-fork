@@ -59,7 +59,7 @@ if gds_enabled
   )
 endif
 
-# aisio backend (xNVMe upcie-cuda + mock HOMI extent cache).
+# aisio backend (xNVMe upcie-cuda + HOMI-served qpairs and extents).
 # Links libxnvme and the CUDA driver API. The driver API is needed for
 # stream-async ds_file_read_async, which gates the user's stream with
 # cuStreamWriteValue32 / cuStreamWaitValue32 against host pinned mapped
@@ -111,11 +111,6 @@ if aisio_enabled
     'src/ds_file_aisio.c',
     'src/ds_bounce_kernel.cu',
     'src/ds_bounce_ctx.c',
-    # fs_mock / homi_client_mock are no longer used by the backend (extents
-    # come from FIEMAP, qpairs from HOMI) but stay compiled so the existing
-    # mock-driven aisio tests still link.
-    'src/fs_mock.c',
-    'src/homi_client_mock.c',
     include_directories : aisio_inc_dirs,
     dependencies : [xnvme_dep, cuda_dep, cuda_drv_dep, homic_dep],
     install : true,
@@ -126,12 +121,10 @@ if aisio_enabled
     link_with : libopends_aisio,
   )
 
-  # Transitional consumer-facing headers. Installed alongside the
-  # aisio library so external benchmarks can drive the mock fs until
-  # real HOMI lands. See src/fs_mock.h for the deprecation note.
+  # Consumer-facing header: the file-to-LBA extent record external
+  # benchmarks deserialize from the test-prep tool.
   install_headers(
-    'src/fs_mock.h',
-    'src/homi_types.h',
+    'src/ds_extent.h',
   )
 
   pkg.generate(libopends_aisio,
