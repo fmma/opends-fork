@@ -3,8 +3,8 @@
  *
  * Reads go straight from an NVMe device into GPU memory via xNVMe's upcie-cuda
  * backend (PCIe P2P DMA, no filesystem in the path). HOMI owns the device: it
- * resolves a registered file's path to device extents (homic_get_extents) and
- * hands out the I/O qpair the reads are driven over.
+ * hands out the I/O qpair the reads are driven over. A registered file's extents
+ * come from FIEMAP on the qublk-mounted filesystem (homic_get_extents).
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before ds_file_driver_open runs.
@@ -45,7 +45,6 @@
  * filesystem mounted over a block device backed by the same NVMe controller. */
 #define ENV_HOMI_SOCKET "OPENDS_HOMI_SOCKET"
 #define ENV_HOMI_DEV "OPENDS_HOMI_DEV"
-#define ENV_HOMI_MNT "OPENDS_HOMI_MNT"
 #define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
 #define AISIO_ATTACH_QPAIRS 4 ///< sync (idx 0) + sync_queue + async_queue + slack
 #define MAX_BUF_ENTRIES 8192
@@ -130,7 +129,6 @@ struct read_cursor {
 
 struct aisio_driver {
 	char dev_uri[64];       ///< NVMe device (BDF) the HOMI daemon owns
-	char mnt[256];          ///< Mount root stripped to form FS-root-relative paths
 	char *attach_descpath;  ///< HOMI-served qpair attach descriptor file
 	struct xnvme_dev *xdev;
 	/* xNVMe queues are not thread-safe, so sync (host thread) and async
@@ -211,32 +209,17 @@ middle_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 	s->outstanding--;
 }
 
-/* Resolve a registered file's extents through homic_get_extents: map the fd
- * back to a path via /proc/self/fd, strip the mount root to a filesystem-
- * relative path, and pass it to the daemon, which returns the device extents. */
+/* Resolve a registered file's extents through homic_get_extents, which FIEMAPs
+ * the fd against the qublk-mounted filesystem and returns device extents. */
 static int
 aisio_resolve_extents(struct aisio_driver *d, int fd, struct ds_extent **out,
                       uint32_t *out_n)
 {
-	char fdlink[64];
-	char abspath[PATH_MAX];
-
-	snprintf(fdlink, sizeof(fdlink), "/proc/self/fd/%d", fd);
-	ssize_t len = readlink(fdlink, abspath, sizeof(abspath) - 1);
-	if (len < 0)
-		return -errno;
-	abspath[len] = '\0';
-
-	const char *rel = abspath;
-	size_t mlen = strlen(d->mnt);
-	if (mlen && strncmp(abspath, d->mnt, mlen) == 0)
-		rel = abspath + mlen;
-	while (*rel == '/')
-		rel++;
+	(void)d;
 
 	struct homic_extent *hx = NULL;
 	uint32_t n = 0;
-	int rc = homic_get_extents(d->dev_uri, rel, &hx, &n);
+	int rc = homic_get_extents(fd, &hx, &n);
 	if (rc < 0)
 		return rc;
 
@@ -955,10 +938,6 @@ ds_file_driver_open(void)
 		return ds_file_err(DS_FILE_INTERNAL_ERROR);
 
 	snprintf(d->dev_uri, sizeof(d->dev_uri), "%s", dev);
-
-	const char *mnt = getenv(ENV_HOMI_MNT);
-	if (mnt && mnt[0])
-		snprintf(d->mnt, sizeof(d->mnt), "%s", mnt);
 
 	const char *sock = getenv(ENV_HOMI_SOCKET);
 	int rc = homic_connect(
