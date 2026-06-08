@@ -29,6 +29,10 @@ if [ "$DRIVER" != "nvme" ]; then
 		echo "$BDF" > "/sys/bus/pci/drivers/$DRIVER/unbind"
 	fi
 
+	# Clear any driver_override (e.g. uio_pci_generic from the owner path),
+	# otherwise it pins the function away from nvme.
+	echo > "/sys/bus/pci/devices/$BDF/driver_override" 2>/dev/null || true
+
 	echo "resetting $BDF" >&2
 	echo 1 > "/sys/bus/pci/devices/$BDF/reset"
 

@@ -9,6 +9,14 @@ fi
 
 BDF=$1
 
+# Release the function from the owner path's uio_pci_generic binding and clear
+# the driver_override, otherwise the override pins it away from nvme.
+CUR=$(basename "$(readlink "/sys/bus/pci/devices/$BDF/driver")" 2>/dev/null)
+if [ -n "$CUR" ] && [ "$CUR" != "nvme" ]; then
+	echo "$BDF" > "/sys/bus/pci/drivers/$CUR/unbind"
+fi
+echo > "/sys/bus/pci/devices/$BDF/driver_override" 2>/dev/null || true
+
 echo "rebinding $BDF to nvme"
 echo "$BDF" > /sys/bus/pci/drivers/nvme/bind
 
