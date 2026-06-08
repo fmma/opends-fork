@@ -61,3 +61,16 @@ echo "$BDF unbound"
 echo "resetting $BDF"
 echo 1 > "/sys/bus/pci/devices/$BDF/reset"
 sleep 1
+
+# The upcie owner path (xnvme SYSFS backend) claims the function through
+# uio_pci_generic; a fully unbound device is no longer accepted. driver_override
+# pins the binding to this device only.
+modprobe uio_pci_generic
+echo uio_pci_generic > "/sys/bus/pci/devices/$BDF/driver_override"
+echo "$BDF" > /sys/bus/pci/drivers/uio_pci_generic/bind
+DRIVER=$(basename "$(readlink "/sys/bus/pci/devices/$BDF/driver")" 2>/dev/null)
+if [ "$DRIVER" != "uio_pci_generic" ]; then
+	echo "error: $BDF not bound to uio_pci_generic (got '$DRIVER')" >&2
+	exit 1
+fi
+echo "$BDF bound to uio_pci_generic"
