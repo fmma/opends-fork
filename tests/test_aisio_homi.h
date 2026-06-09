@@ -36,9 +36,13 @@ struct aisio_homi {
  *
  * Returns 0 on success with *out filled in, or -1 on failure (a message is
  * printed). On failure nothing needs tearing down.
+ *
+ * `flags` is passed to open(2); read tests use O_RDONLY, write tests use
+ * O_RDWR (optionally O_CREAT|O_TRUNC for a fresh file). A freshly created
+ * file registers with zero extents; the first ds_file_write allocates them.
  */
 static inline int
-aisio_homi_setup(const char *path, struct aisio_homi *out)
+aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
 {
 	CUdevice cudev;
 
@@ -63,7 +67,7 @@ aisio_homi_setup(const char *path, struct aisio_homi *out)
 		return -1;
 	}
 
-	out->fd = open(path, O_RDONLY);
+	out->fd = open(path, flags, 0644);
 	if (out->fd < 0) {
 		fprintf(stderr, "open(%s) failed\n", path);
 		ds_file_driver_close();
@@ -82,6 +86,12 @@ aisio_homi_setup(const char *path, struct aisio_homi *out)
 	}
 
 	return 0;
+}
+
+static inline int
+aisio_homi_setup(const char *path, struct aisio_homi *out)
+{
+	return aisio_homi_setup_flags(path, O_RDONLY, out);
 }
 
 static inline void
