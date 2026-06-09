@@ -26,4 +26,4 @@ doc: |
 steps:
   - name: setup_homi
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.homi.repository.remote }}' '{{ config.homi.repository.ref }}' '{{ config.homi.repository.path }}' '{{ config.homi.build_dir }}'
+      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.homi.repository.remote }}' '{{ config.homi.repository.ref }}' '{{ config.deps.src_root }}/homi' '{{ config.deps.build_root }}/homi-build'
