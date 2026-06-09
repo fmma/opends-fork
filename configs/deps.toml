@@ -1,9 +1,9 @@
-# Build dependencies pinned for the target. Tracked in-repo; not a
-# per-machine override. Anyone running the cijoe tasks builds against
-# exactly these refs.
-
-[xnvme]
-build_dir = "/tmp/xnvme-build"
+# Build dependency identity, pinned for the target and tracked in-repo:
+# anyone running the cijoe tasks builds exactly these refs. Source and
+# build locations are machine layout, not identity, so they live in the
+# per-machine config: set [deps].src_root / build_root in test.toml
+# (see test.toml.example). Each dep is cloned to <src_root>/<dep> and
+# built in <build_root>/<dep>-build.
 
 # Temporary fork: adds the `.mem_map`/`.mem_unmap` hooks and CUDA BAR1
 # `device_pagesize` handling that the aisio register path needs, plus the
@@ -16,10 +16,6 @@ build_dir = "/tmp/xnvme-build"
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
 ref = "feat/upcie-qpair-attach"
-path = "/root/xnvme"
-
-[xal]
-build_dir = "/tmp/xal-build"
 
 # Fork pin: based on xal main (past v0.2.0) for the "xal state in POSIX
 # shared memory" feature (xal_from_shm and the inode/extent/dirty pools
@@ -33,10 +29,6 @@ build_dir = "/tmp/xal-build"
 [xal.repository]
 remote = "https://github.com/fmma/xal"
 ref = "fix/xfs-shared-view-close"
-path = "/root/xal"
-
-[fil]
-build_dir = "/tmp/fil-build"
 
 # Fork pin: the `opends` backend reads files on the HOMI/qublk mount via
 # the OpenDS file API (like gds), enumerating with readdir. Revert to
@@ -44,10 +36,6 @@ build_dir = "/tmp/fil-build"
 [fil.repository]
 remote = "https://github.com/fmma/fil"
 ref = "feat/opends-homi"
-path = "/root/fil"
-
-[homi]
-build_dir = "/tmp/homi-build"
 
 # HOMI daemon (homid) and client (libhomic). Owns the userspace NVMe
 # controller and serves I/O qpairs plus xal extent trees. Depends on
@@ -57,10 +45,6 @@ build_dir = "/tmp/homi-build"
 [homi.repository]
 remote = "https://github.com/fmma/homi"
 ref = "feat/qpair-owner"
-path = "/root/homi"
-
-[qublk]
-build_dir = "/tmp/qublk-build"
 
 # qublk ublk server. Exposes the NVMe drive as /dev/ublkb0 through the
 # ublk interface. Depends on installed xnvme plus liburing and the ublk
@@ -70,4 +54,3 @@ build_dir = "/tmp/qublk-build"
 [qublk.repository]
 remote = "https://github.com/fmma/qublk"
 ref = "feat/homi-qpair"
-path = "/root/qublk"
