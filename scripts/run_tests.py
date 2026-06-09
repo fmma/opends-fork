@@ -17,7 +17,8 @@ BACKENDS = ["ref", "gds", "aisio"]
 TESTS_BY_BACKEND = {
     "ref":   ["smoke", "sync_read"],
     "gds":   ["sync_read"],
-    "aisio": ["sync_read", "register_large", "async_read"],
+    "aisio": ["sync_read", "register_large", "async_read",
+              "sync_write", "async_write", "block_alloc"],
 }
 ALL_TESTS = sorted({t for ts in TESTS_BY_BACKEND.values() for t in ts})
 

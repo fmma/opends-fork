@@ -1,0 +1,78 @@
+#define _GNU_SOURCE
+
+#include "test_aisio_homi.h"
+#include "test_async_read.h" /* async_test_stream_sync_timeout */
+#include "test_cuda_common.h"
+#include "test_write_homi.h"
+
+#include <cuda.h>
+
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+static ssize_t
+async_submit_write(struct write_homi_env *e, void *gpu, size_t size, off_t foff)
+{
+	size_t sz = size;
+	off_t fo = foff;
+	off_t bo = 0;
+	ssize_t bytes = -1;
+	ds_file_error_t err = ds_file_write_async(e->fh, gpu, &sz, &fo, &bo,
+	                                          &bytes, e->stream);
+	if (err.err != DS_FILE_SUCCESS) {
+		fprintf(stderr, "  write_async submit: %s\n",
+		        ds_file_op_status_error(err.err));
+		return -1;
+	}
+	if (async_test_stream_sync_timeout(e->stream, 10.0, "write_async") != 0)
+		return -1;
+	return bytes;
+}
+
+int
+main(int argc, char **argv)
+{
+	if (argc != 2) {
+		fprintf(stderr, "usage: %s <scratch-file-on-mount>\n", argv[0]);
+		return 1;
+	}
+	const char *path = argv[1];
+
+	struct aisio_homi a;
+	if (aisio_homi_setup_flags(path, O_RDWR | O_CREAT | O_TRUNC, &a) < 0)
+		return 1;
+
+	CUstream stream;
+	if (cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING) != CUDA_SUCCESS ||
+	    ds_file_stream_register(stream, 0).err != DS_FILE_SUCCESS) {
+		fprintf(stderr, "stream setup failed\n");
+		aisio_homi_teardown(&a);
+		unlink(path);
+		return 1;
+	}
+
+	fprintf(stderr, "ds_file_write_async tests (aisio backend, HOMI)\n");
+
+	struct write_homi_env env = {
+	        .fh = a.fh,
+	        .stream = stream,
+	        .submit_write = async_submit_write,
+	        .mode_label = "async",
+	};
+	int failed = run_write_homi_tests(&env);
+
+	ds_file_stream_deregister(stream);
+	cuStreamDestroy(stream);
+	aisio_homi_teardown(&a);
+	unlink(path);
+
+	if (failed) {
+		fprintf(stderr, "%d test(s) failed\n", failed);
+		fflush(NULL);
+		_exit(1);
+	}
+	fprintf(stderr, "all ok\n");
+	return 0;
+}
