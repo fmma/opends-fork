@@ -1,9 +1,9 @@
-# Build dependencies pinned for the target. Tracked in-repo; not a
-# per-machine override. Anyone running the cijoe tasks builds against
-# exactly these refs.
-
-[xnvme]
-build_dir = "/tmp/xnvme-build"
+# Build dependency identity, pinned for the target and tracked in-repo:
+# anyone running the cijoe tasks builds exactly these refs. Source and
+# build locations are machine layout, not identity, so they live in the
+# per-machine config: set [deps].src_root / build_root in test.toml
+# (see test.toml.example). Each dep is cloned to <src_root>/<dep> and
+# built in <build_root>/<dep>-build.
 
 # Temporary fork: adds the `.mem_map`/`.mem_unmap` hooks and CUDA BAR1
 # `device_pagesize` handling that the aisio register path needs, plus the
@@ -14,19 +14,11 @@ build_dir = "/tmp/xnvme-build"
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
 ref = "f38c6b51efef531ee53f5ef05bcdc699f186ce1a"
-path = "/root/xnvme"
-
-[xal]
-build_dir = "/tmp/xal-build"
 
 # Transitive dep of fil; fil's meson.build requires xal == 0.2.0.
 [xal.repository]
 remote = "https://github.com/xnvme/xal"
 ref = "v0.2.0"
-path = "/root/xal"
-
-[fil]
-build_dir = "/tmp/fil-build"
 
 # Fork pin: adds the `opends` backend that drives OpenDS aisio through
 # fs_mock. Revert to upstream xnvme/fil once the OpenDS-aware bench
@@ -34,4 +26,3 @@ build_dir = "/tmp/fil-build"
 [fil.repository]
 remote = "https://github.com/fmma/fil"
 ref = "39cfad77e0c2cc6285c53fa3a1528fac82424ef5"
-path = "/root/fil"
