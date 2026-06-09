@@ -14,6 +14,49 @@ import threading
 
 from . import _cdll as _c
 
+# ---------------------------------------------------------------------------
+# CUDA context preservation. The aisio (upcie-cuda) backend creates its own
+# CUDA context and leaves it current across native calls. A host framework
+# (e.g. PyTorch/vLLM) creates its stream and event handles in its own primary
+# context; if our calls leave a different context current, those handles fault
+# with CUDA "invalid resource handle". Save the caller's current context and
+# restore it around every native call that may enter the CUDA backend. No-op
+# when libcuda is unavailable (CPU/ref backend) or no context is current.
+# ---------------------------------------------------------------------------
+try:
+    _libcuda = ctypes.CDLL("libcuda.so")
+    # Set explicit signatures: default int marshalling happens to work for
+    # pointer-sized values on x86-64 but must not be assumed.
+    _libcuda.cuCtxGetCurrent.restype = ctypes.c_int
+    _libcuda.cuCtxGetCurrent.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+    _libcuda.cuCtxSetCurrent.restype = ctypes.c_int
+    _libcuda.cuCtxSetCurrent.argtypes = [ctypes.c_void_p]
+except OSError:
+    _libcuda = None
+
+
+class _preserve_cuda_context:
+    """Save/restore the caller's current CUDA context around native calls.
+
+    No-op when libcuda is unavailable (CPU/ref backend) or no context is
+    current. Only preserves an existing context; never calls cuInit and
+    never creates one. Per-thread-correct: cuCtxGet/SetCurrent act on the
+    calling thread.
+    """
+
+    def __enter__(self):
+        self._ctx = None
+        if _libcuda is not None:
+            c = ctypes.c_void_p()
+            if _libcuda.cuCtxGetCurrent(ctypes.byref(c)) == 0 and c.value:
+                self._ctx = c
+        return self
+
+    def __exit__(self, *exc):
+        if self._ctx is not None:
+            _libcuda.cuCtxSetCurrent(self._ctx)
+        return False
+
 
 class OpenDSError(Exception):
     def __init__(self, code, dev_err=0):
@@ -143,14 +186,15 @@ def register_buffer(buf, size=None):
         size = nbytes
     with _lock:
         first = ptr not in _pinned
-    if first:
-        _ensure_driver()
-    try:
-        _registry.ensure(ptr, int(size))
-    except Exception:
+    with _preserve_cuda_context():
         if first:
-            _release_driver()
-        raise
+            _ensure_driver()
+        try:
+            _registry.ensure(ptr, int(size))
+        except Exception:
+            if first:
+                _release_driver()
+            raise
     with _lock:
         _pinned.add(ptr)
 
@@ -161,9 +205,10 @@ def deregister_buffer(buf):
     with _lock:
         pinned = ptr in _pinned
         _pinned.discard(ptr)
-    _registry.drop(ptr)
-    if pinned:
-        _release_driver()
+    with _preserve_cuda_context():
+        _registry.drop(ptr)
+        if pinned:
+            _release_driver()
 
 
 # ---------------------------------------------------------------------------
@@ -268,9 +313,10 @@ class OpenDSFile:
         self._fh = None
         self._fd = os.open(path, oflags, mode)
         try:
-            _ensure_driver()
-            fh = ctypes.c_void_p()
-            _check(_c.handle_register(ctypes.byref(fh), self._fd))
+            with _preserve_cuda_context():
+                _ensure_driver()
+                fh = ctypes.c_void_p()
+                _check(_c.handle_register(ctypes.byref(fh), self._fd))
             self._fh = fh
         except Exception:
             os.close(self._fd)
@@ -283,8 +329,9 @@ class OpenDSFile:
             if nbytes is None:
                 raise ValueError("size is required for a bare pointer")
             size = nbytes - dev_offset
-        _registry.ensure(ptr, nbytes)
-        return _io_result(c_fn(self._fh, ptr, size, file_offset, dev_offset))
+        with _preserve_cuda_context():
+            _registry.ensure(ptr, nbytes)
+            return _io_result(c_fn(self._fh, ptr, size, file_offset, dev_offset))
 
     def read(self, buf, size=None, file_offset=0, dev_offset=0):
         return self._submit(_c.read, buf, size, file_offset, dev_offset)
@@ -294,9 +341,10 @@ class OpenDSFile:
 
     def close(self):
         if self._fh is not None:
-            _c.handle_deregister(self._fh)
-            self._fh = None
-            _release_driver()
+            with _preserve_cuda_context():
+                _c.handle_deregister(self._fh)
+                self._fh = None
+                _release_driver()
         if self._fd >= 0:
             os.close(self._fd)
             self._fd = -1
