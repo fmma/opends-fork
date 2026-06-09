@@ -9,7 +9,10 @@
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before ds_file_driver_open runs.
  *
- * Write and batch async paths report DS_FILE_IO_NOT_SUPPORTED.
+ * Writes go through the kernel-mounted filesystem: the source is staged to a
+ * host buffer and pwritten via the fd, so XFS over qublk allocates blocks and
+ * writes the data; the file's extents are then re-resolved for later P2P reads.
+ * Batch async paths report DS_FILE_IO_NOT_SUPPORTED.
  */
 
 #define _GNU_SOURCE
@@ -103,7 +106,9 @@ struct file_op {
 	size_t *size_p;
 	off_t *file_offset_p;
 	off_t *buf_offset_p;
+	/* bytes_read for reads, bytes_written for writes. */
 	ssize_t *bytes_read_p;
+	bool is_write;
 
 	struct opends_stream *opends_stream;
 	uint32_t seq;
@@ -143,6 +148,9 @@ struct aisio_driver {
 	int buf_count;
 
 	void *sync_bounce_buf;
+	/* Host staging buffer for the pwrite path; grows on demand. */
+	void *write_bounce;
+	size_t write_bounce_cap;
 	bool async_ready;
 	CUcontext cu_ctx;
 
@@ -238,6 +246,69 @@ aisio_resolve_extents(struct aisio_driver *d, int fd, struct ds_extent **out,
 	*out = ex;
 	*out_n = n;
 	return 0;
+}
+
+/* Reusable host staging buffer for the pwrite path. The sync caller and the
+ * single I/O thread never write concurrently to the same handle, so no lock. */
+static int
+ensure_write_bounce(struct aisio_driver *d, size_t size)
+{
+	if (d->write_bounce_cap >= size)
+		return 0;
+	void *p = realloc(d->write_bounce, size);
+	if (!p)
+		return -ENOMEM;
+	d->write_bounce = p;
+	d->write_bounce_cap = size;
+	return 0;
+}
+
+/* Allocating write through the kernel-mounted filesystem: stage the GPU (or
+ * host) source into a host buffer, pwrite it via the fd so XFS over qublk
+ * allocates and writes the blocks, fsync to flush dirty pages to the device so
+ * a later P2P read sees them, then re-resolve the file's extents so subsequent
+ * reads use the new layout. Returns bytes written or negative errno. */
+static ssize_t
+aisio_pwrite_op(struct aisio_driver *d, struct aisio_handle *h, const void *src,
+                size_t size, off_t file_offset)
+{
+	if (size == 0)
+		return 0;
+
+	if (ensure_write_bounce(d, size) < 0)
+		return -ENOMEM;
+
+	if (cudaMemcpy(d->write_bounce, src, size, cudaMemcpyDefault) !=
+	    cudaSuccess)
+		return -EIO;
+
+	size_t done = 0;
+	while (done < size) {
+		ssize_t w = pwrite(h->fd, (uint8_t *)d->write_bounce + done,
+		                   size - done, file_offset + (off_t)done);
+		if (w < 0) {
+			if (errno == EINTR)
+				continue;
+			return -errno;
+		}
+		if (w == 0)
+			return -EIO;
+		done += (size_t)w;
+	}
+
+	if (fsync(h->fd) < 0)
+		return -errno;
+
+	struct ds_extent *ex = NULL;
+	uint32_t n = 0;
+	int rc = aisio_resolve_extents(d, h->fd, &ex, &n);
+	if (rc < 0)
+		return rc;
+	free(h->extents);
+	h->extents = ex;
+	h->extent_count = n;
+
+	return (ssize_t)size;
 }
 
 static int
@@ -756,11 +827,38 @@ complete_in_flight(struct aisio_driver *d, struct file_op *op)
 	op->state = FILE_OP_FREE;
 }
 
+/* Async write: stage + pwrite + fsync + extent refresh inline on the I/O
+ * thread, then release the stream gate. No bounce kernel runs for a write, so
+ * the gate is ticked directly without finalizing a bounce plan. This blocks the
+ * single I/O thread for the duration of the syscalls; writes are the cold path
+ * and may be slow. */
+static void
+dispatch_write(struct aisio_driver *d, struct file_op *op)
+{
+	const void *src = (const uint8_t *)op->buf_base + *op->buf_offset_p;
+	ssize_t n =
+	        aisio_pwrite_op(d, op->h, src, *op->size_p, *op->file_offset_p);
+	if (n < 0)
+		*op->bytes_read_p =
+		        (n == -(ssize_t)EINVAL)
+		                ? -(ssize_t)DS_FILE_INVALID_VALUE
+		                : -(ssize_t)DS_FILE_DEVICE_DRIVER_ERROR;
+	else
+		*op->bytes_read_p = n;
+
+	*op->opends_stream->gate = 2 * op->seq + 1;
+	op->state = FILE_OP_FREE;
+}
+
 /* Take a gate-cleared PENDING op in flight: reset its I/O-thread-local counters
  * and submit all of its NVMe ops in one pass. */
 static void
 dispatch_pending(struct aisio_driver *d, struct file_op *op)
 {
+	if (op->is_write) {
+		dispatch_write(d, op);
+		return;
+	}
 	op->chunks_remaining = 0;
 	op->bounces_outstanding = 0;
 	op->n_bounces = 0;
@@ -981,6 +1079,8 @@ ds_file_driver_close(void)
 
 	if (drv->sync_bounce_buf)
 		xnvme_buf_free(drv->xdev, drv->sync_bounce_buf);
+
+	free(drv->write_bounce);
 
 	if (drv->sync_queue)
 		xnvme_queue_term(drv->sync_queue);
@@ -1209,12 +1309,25 @@ ssize_t
 ds_file_write(ds_file_handle_t fh, const void *buf_base, size_t size,
               off_t file_offset, off_t buf_offset)
 {
-	(void)fh;
-	(void)buf_base;
-	(void)size;
-	(void)file_offset;
-	(void)buf_offset;
-	return -(ssize_t)DS_FILE_IO_NOT_SUPPORTED;
+	if (!drv)
+		return -(ssize_t)DS_FILE_DRIVER_NOT_INITIALIZED;
+	if (!fh || !buf_base)
+		return -(ssize_t)DS_FILE_INVALID_VALUE;
+
+	const void *src = (const uint8_t *)buf_base + buf_offset;
+	ssize_t n = aisio_pwrite_op(drv, (struct aisio_handle *)fh, src, size,
+	                            file_offset);
+	if (n < 0) {
+		fprintf(stderr,
+		        "ds_file_write: aisio_pwrite_op(size=%zu, off=%ld) "
+		        "rc=%zd\n",
+		        size, (long)file_offset, n);
+		if (n == -(ssize_t)EINVAL)
+			return -(ssize_t)DS_FILE_INVALID_VALUE;
+		return -(ssize_t)DS_FILE_DEVICE_DRIVER_ERROR;
+	}
+
+	return n;
 }
 
 ds_file_error_t
@@ -1251,6 +1364,7 @@ ds_file_read_async(ds_file_handle_t fh, void *buf_base, size_t *size_p,
 	op->bytes_read_p = bytes_read_p;
 	op->opends_stream = opends_stream;
 	op->seq = seq;
+	op->is_write = false;
 
 	/* Order the host I/O thread against the user's CUDA stream through a
 	 * single per-stream gate word (strictly monotonic). The word carries
@@ -1293,14 +1407,55 @@ ds_file_write_async(ds_file_handle_t fh, void *buf_base, size_t *size_p,
                     off_t *file_offset_p, off_t *buf_offset_p,
                     ssize_t *bytes_written_p, ds_stream_t stream)
 {
-	(void)fh;
-	(void)buf_base;
-	(void)size_p;
-	(void)file_offset_p;
-	(void)buf_offset_p;
-	(void)bytes_written_p;
-	(void)stream;
-	return ds_file_err(DS_FILE_ASYNC_NOT_SUPPORTED);
+	if (!drv)
+		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+	if (!fh || !buf_base || !size_p || !file_offset_p || !buf_offset_p ||
+	    !bytes_written_p)
+		return ds_file_err(DS_FILE_INVALID_VALUE);
+	if (!stream)
+		return ds_file_err(DS_FILE_INVALID_VALUE);
+	if (!drv->async_ready)
+		return ds_file_err(DS_FILE_DEVICE_DRIVER_ERROR);
+
+	CUstream cus = (CUstream)stream;
+	struct opends_stream *opends_stream = opends_stream_get(drv, cus);
+	if (!opends_stream)
+		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+
+	uint32_t head = drv->queue_head;
+	while (head - drv->queue_tail >= FILE_OP_QUEUE_SIZE)
+		sched_yield();
+
+	uint32_t seq = ++opends_stream->next_seq;
+	struct file_op *op = &drv->file_op_queue[head & FILE_OP_QUEUE_MASK];
+	op->h = (struct aisio_handle *)fh;
+	op->buf_base = buf_base;
+	op->size_p = size_p;
+	op->file_offset_p = file_offset_p;
+	op->buf_offset_p = buf_offset_p;
+	op->bytes_read_p = bytes_written_p;
+	op->opends_stream = opends_stream;
+	op->seq = seq;
+	op->is_write = true;
+
+	/* Same per-stream gate as reads: WriteValue(2*seq) fires in stream
+	 * order once the source data is produced, and parks the stream at the
+	 * WaitValue so it cannot overwrite the source until the I/O thread
+	 * finishes the D2H copy. The I/O thread does the pwrite and stores
+	 * 2*seq+1, releasing the wait. No bounce kernel runs for a write, so
+	 * nothing is launched between the two stream ops. The next_seq
+	 * no-rollback rule matches read_async. */
+	if (cuStreamWriteValue32(cus, opends_stream->gate_dptr, 2 * seq,
+	                         CU_STREAM_WRITE_VALUE_DEFAULT) != CUDA_SUCCESS)
+		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+	if (cuStreamWaitValue32(cus, opends_stream->gate_dptr, 2 * seq + 1,
+	                        CU_STREAM_WAIT_VALUE_GEQ) != CUDA_SUCCESS)
+		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+
+	op->state = FILE_OP_PENDING;
+	drv->queue_head = head + 1;
+
+	return ds_file_ok();
 }
 
 ds_file_error_t
