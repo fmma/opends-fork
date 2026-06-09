@@ -93,6 +93,27 @@ steps:
         '{{ config.test.build_dir }}/test_async_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
+  - name: test_sync_write_aisio
+    run: |
+      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        '{{ config.test.build_dir }}/test_sync_write_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
+
+  - name: test_async_write_aisio
+    run: |
+      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        '{{ config.test.build_dir }}/test_async_write_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
+
+  - name: test_block_alloc_aisio
+    run: |
+      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        '{{ config.test.build_dir }}/test_block_alloc_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
+
   - name: homi_stack_down
     run: |
       '{{ config.test.repo_path }}/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'

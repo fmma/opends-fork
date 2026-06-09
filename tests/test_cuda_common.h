@@ -24,6 +24,13 @@ cuda_buf_to_host(void *dst, const void *src, size_t n)
 }
 
 static inline void
+cuda_buf_from_host(void *dst, const void *src, size_t n)
+{
+	cudaMemcpy(dst, src, n, cudaMemcpyHostToDevice);
+	cudaDeviceSynchronize();
+}
+
+static inline void
 cuda_buf_zero(void *buf, size_t n)
 {
 	cudaMemset(buf, 0, n);
