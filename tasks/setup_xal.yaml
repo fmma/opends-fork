@@ -25,4 +25,4 @@ doc: |
 steps:
   - name: setup_xal
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.xal.repository.remote }}' '{{ config.xal.repository.ref }}' '{{ config.xal.repository.path }}' '{{ config.xal.build_dir }}'
+      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.xal.repository.remote }}' '{{ config.xal.repository.ref }}' '{{ config.deps.src_root }}/xal' '{{ config.deps.build_root }}/xal-build'
