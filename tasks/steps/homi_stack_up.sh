@@ -20,16 +20,9 @@ CONF=/run/homi/homi-test.conf
 
 mkdir -p /run/homi
 
-# Clean any stale stack from a crashed prior run: stop the servers, drop a
-# lingering ublk mount, and reload ublk_drv to clear stale device ids.
-if findmnt -no SOURCE "$MOUNT" 2>/dev/null | grep -q ublkb; then
-	umount "$MOUNT" 2>/dev/null || umount -l "$MOUNT" 2>/dev/null || true
-fi
-pkill -KILL -x qublk 2>/dev/null || true
-pkill -KILL -x homid 2>/dev/null || true
-sleep 1
-rmmod ublk_drv 2>/dev/null || true
-modprobe ublk_drv
+# Clear any stale stack from a crashed or aborted prior run before bringing up
+# a fresh one.
+"$HERE/stop_homi_stack.sh"
 
 # Hand the controller to userspace (unmounts the kernel mount, unbinds nvme,
 # leaves the controller in a clean power-on state).
