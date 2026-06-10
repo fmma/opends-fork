@@ -18,6 +18,14 @@ if [ ! -d "$SRC_DIR/.git" ]; then
 fi
 
 cd "$SRC_DIR"
+
+if [ -n "$(git status --porcelain)" ]; then
+	echo "error: dependency checkout is not clean: $SRC_DIR" >&2
+	git status --short >&2
+	echo "       commit, stash, or 'git -C $SRC_DIR reset --hard' it, then retry" >&2
+	exit 1
+fi
+
 git remote set-url origin "$REMOTE"
 git fetch --all --tags
 # Prefer origin/REF so branch refs pick up the latest remote tip; fall
