@@ -9,13 +9,13 @@
 # `device_pagesize` handling that the aisio register path needs, plus the
 # PRP page-count fix that lets PRP1 carry a sub-page buffer offset, and the
 # upcie attach mode (XNVME_UPCIE_ATTACH) that drives I/O qpairs handed out
-# by a HOMI-owned controller. Branch feat/upcie-qpair-attach stacks the
+# by a HOMI-owned controller. Branch poc/opends-homi-qublk carries the
 # attach work on the aisio-pinned base. Revert to upstream `xnvme/xnvme`
 # once the relevant changes land upstream (upcie is vendored under xNVMe's
 # toolbox/third-party).
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
-ref = "feat/upcie-qpair-attach"
+ref = "poc/opends-homi-qublk"
 
 # Fork pin: based on xal main (past v0.2.0) for the "xal state in POSIX
 # shared memory" feature (xal_from_shm and the inode/extent/dirty pools
@@ -28,14 +28,14 @@ ref = "feat/upcie-qpair-attach"
 # set up separately; see scripts/setup_deps.py).
 [xal.repository]
 remote = "https://github.com/fmma/xal"
-ref = "fix/xfs-shared-view-close"
+ref = "poc/opends-homi-qublk"
 
 # Fork pin: the `opends` backend reads files on the HOMI/qublk mount via
 # the OpenDS file API (like gds), enumerating with readdir. Revert to
 # upstream xnvme/fil once the OpenDS-aware bench backend lands upstream.
 [fil.repository]
 remote = "https://github.com/fmma/fil"
-ref = "feat/opends-homi"
+ref = "poc/opends-homi-qublk"
 
 # HOMI daemon (homid) and client (libhomic). Owns the userspace NVMe
 # controller and serves I/O qpairs plus xal extent trees. Depends on
@@ -44,7 +44,7 @@ ref = "feat/opends-homi"
 # qpair-handout work lands.
 [homi.repository]
 remote = "https://github.com/fmma/homi"
-ref = "feat/qpair-owner"
+ref = "poc/opends-homi-qublk"
 
 # qublk ublk server. Exposes the NVMe drive as /dev/ublkb0 through the
 # ublk interface. Depends on installed xnvme plus liburing and the ublk
@@ -53,4 +53,4 @@ ref = "feat/qpair-owner"
 # path lands.
 [qublk.repository]
 remote = "https://github.com/fmma/qublk"
-ref = "feat/homi-qpair"
+ref = "poc/opends-homi-qublk"
