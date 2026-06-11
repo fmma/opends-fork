@@ -28,22 +28,32 @@ mkdir -p /run/homi
 # leaves the controller in a clean power-on state).
 "$HERE/unbind_nvme.sh" "$BDF" "$MOUNT"
 
+# xal config; mirror the libxal.h enums (homid parses these as TOML integers).
+# shellcheck disable=SC2034  # full enum sets defined for clarity; only some used
+XAL_BACKEND_XFS=1
+XAL_BACKEND_FIEMAP=2
+XAL_WATCHMODE_NONE=0
+XAL_WATCHMODE_DIRTY_DETECTION=1
+XAL_WATCHMODE_EXTENT_UPDATE=2
+XAL_FILE_LOOKUPMODE_TRAVERSE=0
+XAL_FILE_LOOKUPMODE_HASHMAP=1
 cat > "$CONF" <<EOF
 log_level = 2
 devices = [ "$BDF" ]
 ipc_socket = "$SOCK"
 
 [xal]
-# XFS (1), not FIEMAP (2): homid owns the controller raw over upcie with the
-# kernel nvme driver unbound, so xal parses on-disk XFS metadata over the
-# xnvme device rather than FIEMAP-ing a kernel mount.
-backend = 1
-watchmode = 0
-file_lookupmode = 0
+backend = $XAL_BACKEND_FIEMAP
+watchmode = $XAL_WATCHMODE_DIRTY_DETECTION
+file_lookupmode = $XAL_FILE_LOOKUPMODE_TRAVERSE
+mountpoint = "$MOUNT"
 EOF
-rm -f "$SOCK" /run/homi/*.desc
+rm -f "$SOCK" /run/homi/*.desc /dev/shm/homid_dev*
 
 echo "starting homid"
+# Diagnostic: let the daemons dump a core on crash (paired with a file
+# core_pattern). Harmless when cores are disabled by policy.
+ulimit -c unlimited 2>/dev/null || true
 # Detach the daemon fully: redirect on the outer command so neither the daemon
 # nor any wrapper keeps this step's stdout/stderr open. Otherwise the SSH
 # channel never sees EOF and the cijoe step (and plain ssh) hangs even though
@@ -88,4 +98,14 @@ echo "$UBLK" > /run/homi/ublk_dev
 
 mkdir -p "$MOUNT"
 mount "$UBLK" "$MOUNT"
+
+for _ in $(seq 1 120); do
+	[ -e /dev/shm/homid_dev0.ready ] && break
+	sleep 0.5
+done
+if [ ! -e /dev/shm/homid_dev0.ready ]; then
+	echo "error: homid did not index xal after mount" >&2
+	exit 1
+fi
+
 echo "HOMI stack up: homid + qublk ($UBLK) mounted at $MOUNT"
