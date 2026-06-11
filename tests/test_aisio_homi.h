@@ -38,8 +38,9 @@ struct aisio_homi {
  * printed). On failure nothing needs tearing down.
  *
  * `flags` is passed to open(2); read tests use O_RDONLY, write tests use
- * O_RDWR (optionally O_CREAT|O_TRUNC for a fresh file). A freshly created
- * file registers with zero extents; the first ds_file_write allocates them.
+ * O_RDWR (optionally O_CREAT|O_TRUNC for a fresh file). Extents are resolved
+ * per I/O (not at registration), so a freshly created file just works: the
+ * re-index the first ds_file_write performs makes its blocks resolvable.
  */
 static inline int
 aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
