@@ -37,6 +37,7 @@ ds_file_op_status_error(ds_file_op_error_t status)
 	case DS_FILE_INTERNAL_ERROR:            return "internal error";
 	case DS_FILE_GETNEWFD_FAILED:           return "failed to obtain new file descriptor";
 	case DS_FILE_FS_SETUP_ERROR:            return "filesystem driver initialization error";
+	case DS_FILE_FS_DIRTY:                  return "dirty file system";
 	case DS_FILE_IO_DISABLED:               return "direct storage disabled by config on current file";
 	case DS_FILE_BATCH_SUBMIT_FAILED:       return "failed to submit batch operation";
 	case DS_FILE_MEMORY_PINNING_FAILED:     return "failed to allocate pinned device memory";

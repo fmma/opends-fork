@@ -98,6 +98,13 @@ ds_file_handle_deregister(ds_file_handle_t fh)
 	use_count--;
 }
 
+/* The ref backend reads through the kernel filesystem; nothing to re-index. */
+ds_file_error_t
+ds_file_reindex(void)
+{
+	return ds_file_ok();
+}
+
 #define ALIGN_UP(x, a) (((x) + (a) - 1) & ~((a) - 1))
 
 void *

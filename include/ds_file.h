@@ -81,7 +81,8 @@ typedef enum ds_file_op_error {
 	DS_FILE_MEMORY_PINNING_FAILED    = 5036,
 	DS_FILE_BATCH_FULL               = 5037,
 	DS_FILE_ASYNC_NOT_SUPPORTED      = 5038,
-	DS_FILE_IO_MAX_ERROR             = 5039,
+	DS_FILE_FS_DIRTY                 = 5039,
+	DS_FILE_IO_MAX_ERROR             = 5040,
 } ds_file_op_error_t;
 /* clang-format on */
 
@@ -128,6 +129,16 @@ ds_file_driver_set_max_direct_io_size(size_t max_direct_io_size);
  */
 ds_file_error_t ds_file_handle_register(ds_file_handle_t *fh, int fd);
 void ds_file_handle_deregister(ds_file_handle_t fh);
+
+/*
+ * Re-index the backend's view of the mounted filesystem.
+ *
+ * Retained for source compatibility and treated as a no-op: the aisio backend's
+ * HOMI daemon re-indexes on its own when the filesystem changes, so a caller
+ * that sees DS_FILE_FS_DIRTY need only retry. Backends without a filesystem
+ * index (ref, gds) were always no-ops here.
+ */
+ds_file_error_t ds_file_reindex(void);
 
 /*
  * Buffer allocation. Buffers used with ds_file_read/write must be
