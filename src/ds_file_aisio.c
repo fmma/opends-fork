@@ -85,8 +85,6 @@ struct buf_entry {
 
 struct aisio_handle {
 	int fd;
-	struct ds_extent *extents; ///< file->LBA extents from HOMI, sorted by file_offset
-	uint32_t extent_count;
 };
 
 struct opends_stream {
@@ -223,11 +221,19 @@ static int
 aisio_resolve_extents(struct aisio_driver *d, int fd, struct ds_extent **out,
                       uint32_t *out_n)
 {
-	(void)d;
-
 	struct homic_extent *hx = NULL;
 	uint32_t n = 0;
 	int rc = homic_get_extents(fd, &hx, &n);
+	if (rc == -ESTALE) {
+		/* The filesystem changed since the last index. Re-index and
+		 * retry once so a read transparently picks up the new layout;
+		 * a persistent -ESTALE (a concurrent writer) is left to the
+		 * caller. */
+		int rrc = homic_reindex_xal(d->dev_uri);
+		if (rrc < 0)
+			return rrc;
+		rc = homic_get_extents(fd, &hx, &n);
+	}
 	if (rc < 0)
 		return rc;
 
@@ -266,8 +272,8 @@ ensure_write_bounce(struct aisio_driver *d, size_t size)
 /* Allocating write through the kernel-mounted filesystem: stage the GPU (or
  * host) source into a host buffer, pwrite it via the fd so XFS over qublk
  * allocates and writes the blocks, fsync to flush dirty pages to the device so
- * a later P2P read sees them, then re-resolve the file's extents so subsequent
- * reads use the new layout. Returns bytes written or negative errno. */
+ * a later P2P read sees them, then flag the daemon's xal dirty so the next read
+ * self-heals onto the new layout. Returns bytes written or negative errno. */
 static ssize_t
 aisio_pwrite_op(struct aisio_driver *d, struct aisio_handle *h, const void *src,
                 size_t size, off_t file_offset)
@@ -299,14 +305,13 @@ aisio_pwrite_op(struct aisio_driver *d, struct aisio_handle *h, const void *src,
 	if (fsync(h->fd) < 0)
 		return -errno;
 
-	struct ds_extent *ex = NULL;
-	uint32_t n = 0;
-	int rc = aisio_resolve_extents(d, h->fd, &ex, &n);
-	if (rc < 0)
-		return rc;
-	free(h->extents);
-	h->extents = ex;
-	h->extent_count = n;
+	/* The write created or grew the file; flag the daemon's xal dirty so the
+	 * next read self-heals (re-indexes) and resolves the new layout. Marking
+	 * is cheap and deterministic (no watcher lag); the re-index is deferred to
+	 * the next resolve, coalescing repeated writes into one. */
+	int rrc = homic_mark_dirty(d->dev_uri);
+	if (rrc < 0)
+		return rrc;
 
 	return (ssize_t)size;
 }
@@ -504,10 +509,6 @@ read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		return -EINVAL;
 	uint64_t req_end = req_start + size;
 
-	const struct ds_extent *extents = h->extents;
-	uint32_t extent_count = h->extent_count;
-	int rc;
-
 	uint32_t lba_nbytes = d->lba_size;
 	uint32_t lba_shift = d->lba_shift;
 	uint32_t lba_mask = d->lba_size - 1;
@@ -518,11 +519,20 @@ read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		return -EINVAL;
 	}
 
+	/* Resolve the file's current extents for this read (not cached), so a
+	 * layout change since the last I/O is always reflected. */
+	struct ds_extent *extents = NULL;
+	uint32_t extent_count = 0;
+	int rc = aisio_resolve_extents(d, h->fd, &extents, &extent_count);
+	if (rc < 0)
+		return rc;
+
 	struct read_cursor c = {
 	        .queue = d->sync_queue,
 	        .bounce_buf_p = &d->sync_bounce_buf,
 	};
 	size_t total_transferred = 0;
+	ssize_t ret;
 
 	for (uint32_t i = 0; i < extent_count; i++) {
 		const struct ds_extent *e = &extents[i];
@@ -543,8 +553,10 @@ read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		size_t buf_off = span_start - req_start;
 
 		/* FS extents land on FS-block boundaries (LBA multiples). */
-		if (off_in_ext & lba_mask)
-			return -EINVAL;
+		if (off_in_ext & lba_mask) {
+			ret = -EINVAL;
+			goto out;
+		}
 
 		c.abs_dst = (uint8_t *)dst + buf_off;
 		c.remaining = span_end - span_start;
@@ -554,25 +566,34 @@ read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		 * need a full bounce of arbitrary spans. A page-misaligned (but
 		 * LBA-aligned) dst is fine: PRP1 carries the sub-page offset.
 		 */
-		if ((uintptr_t)c.abs_dst & lba_mask)
-			return -EINVAL;
+		if ((uintptr_t)c.abs_dst & lba_mask) {
+			ret = -EINVAL;
+			goto out;
+		}
 
 		size_t tail_bytes = c.remaining & lba_mask;
 		uint64_t middle_lbas = (c.remaining - tail_bytes) >> lba_shift;
 		size_t middle_bytes = middle_lbas * lba_nbytes;
 		rc = sync_read_middle(d, &c, middle_lbas);
-		if (rc)
-			return rc;
+		if (rc) {
+			ret = rc;
+			goto out;
+		}
 		total_transferred += middle_bytes;
 
 		if (tail_bytes) {
-			if (read_bounce(d, &c, tail_bytes) < 0)
-				return -EIO;
+			if (read_bounce(d, &c, tail_bytes) < 0) {
+				ret = -EIO;
+				goto out;
+			}
 			total_transferred += tail_bytes;
 		}
 	}
 
-	return (ssize_t)total_transferred;
+	ret = (ssize_t)total_transferred;
+out:
+	free(extents);
+	return ret;
 }
 
 /* ------------------------------------------------------------------ */
@@ -747,8 +768,16 @@ start_file_op(struct aisio_driver *d, struct file_op *op)
 	uint64_t req_end = req_start + size;
 	uint8_t *dst_base = (uint8_t *)op->buf_base + *op->buf_offset_p;
 
-	const struct ds_extent *extents = op->h->extents;
-	uint32_t extent_count = op->h->extent_count;
+	/* Resolve the file's current extents for this op (not cached), so a
+	 * layout change since the last I/O is always reflected. */
+	struct ds_extent *extents = NULL;
+	uint32_t extent_count = 0;
+	int frc = aisio_resolve_extents(d, op->h->fd, &extents, &extent_count);
+	if (frc < 0) {
+		op->err = (frc == -ESTALE) ? DS_FILE_FS_DIRTY
+		                           : DS_FILE_FS_SETUP_ERROR;
+		return;
+	}
 
 	uint32_t lba_shift = d->lba_shift;
 	uint32_t lba_mask = d->lba_size - 1;
@@ -768,7 +797,7 @@ start_file_op(struct aisio_driver *d, struct file_op *op)
 		uint64_t off_in_ext = span_start - ext_start;
 		if (off_in_ext & lba_mask) {
 			op->err = DS_FILE_INVALID_VALUE;
-			return;
+			goto out;
 		}
 		size_t buf_off = span_start - req_start;
 		uint8_t *abs_dst = dst_base + buf_off;
@@ -786,7 +815,7 @@ start_file_op(struct aisio_driver *d, struct file_op *op)
 			        .remaining = remaining,
 			};
 			if (submit_read_middle(d, &c, op, middle_lbas) < 0)
-				return;
+				goto out;
 			cur_slba = c.cur_slba;
 			abs_dst = c.abs_dst;
 			remaining = c.remaining;
@@ -795,9 +824,11 @@ start_file_op(struct aisio_driver *d, struct file_op *op)
 		if (tail_bytes) {
 			if (submit_read_bounce(d, op, abs_dst, cur_slba,
 			                       tail_bytes) < 0)
-				return;
+				goto out;
 		}
 	}
+out:
+	free(extents);
 }
 
 static void
@@ -1160,13 +1191,8 @@ ds_file_handle_register(ds_file_handle_t *fh, int fd)
 		return ds_file_err(DS_FILE_INTERNAL_ERROR);
 	h->fd = fd;
 
-	int frc = aisio_resolve_extents(drv, fd, &h->extents, &h->extent_count);
-	if (frc < 0) {
-		fprintf(stderr, "aisio register: resolve_extents(fd=%d) rc=%d\n", fd, frc);
-		free(h);
-		return ds_file_err(DS_FILE_FS_SETUP_ERROR);
-	}
-
+	/* Extents are resolved per I/O (ds_file_read / write), not cached here,
+	 * so a layout change between operations is always picked up. */
 	*fh = h;
 	use_count++;
 	return ds_file_ok();
@@ -1177,9 +1203,21 @@ ds_file_handle_deregister(ds_file_handle_t fh)
 {
 	if (!fh)
 		return;
-	free(((struct aisio_handle *)fh)->extents);
 	free(fh);
 	use_count--;
+}
+
+ds_file_error_t
+ds_file_reindex(void)
+{
+	if (!drv)
+		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+
+	int rc = homic_reindex_xal(drv->dev_uri);
+	if (rc < 0)
+		return ds_file_err(DS_FILE_FS_SETUP_ERROR);
+
+	return ds_file_ok();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1295,6 +1333,10 @@ ds_file_read(ds_file_handle_t fh, void *buf_base, size_t size,
 	ssize_t n = read_extents(drv, (struct aisio_handle *)fh, dst, size,
 	                         file_offset);
 	if (n < 0) {
+		/* Dirty is routine and recoverable: the caller re-indexes
+		 * (ds_file_reindex) and retries. Only log genuine failures. */
+		if (n == -(ssize_t)ESTALE)
+			return -(ssize_t)DS_FILE_FS_DIRTY;
 		fprintf(stderr,
 		        "ds_file_read: read_extents(size=%zu, off=%ld) "
 		        "rc=%zd\n",
