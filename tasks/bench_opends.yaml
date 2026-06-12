@@ -7,11 +7,11 @@ doc: |
   datasets (filesize8gib, tiktokish, imagenetish).
 
   homi_stack_up hands the controller to HOMI, exposes it as a ublk
-  block device (qublk), and remounts the dataset XFS over it. fil then
-  enumerates the mount with readdir and opens each file by path; the
-  aisio backend resolves extents and attaches an I/O qpair from HOMI
-  per file, DMAing straight to GPU memory. homi_stack_down tears the
-  stack down and rebinds nvme.
+  block device (qublk), and remounts the dataset XFS over it. fil walks
+  xal on the ublk block device to enumerate the dataset (mirroring the
+  gds path) and opens each file by path; the aisio backend resolves
+  extents and attaches an I/O qpair from HOMI per file, DMAing straight
+  to GPU memory. homi_stack_down tears the stack down and rebinds nvme.
 
   Prerequisites:
     * scripts/setup_deps.py has installed xnvme, xal, OpenDS, fil, homi,
