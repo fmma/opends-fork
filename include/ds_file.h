@@ -131,10 +131,12 @@ ds_file_error_t ds_file_handle_register(ds_file_handle_t *fh, int fd);
 void ds_file_handle_deregister(ds_file_handle_t fh);
 
 /*
- * Re-index the backend's view of the mounted filesystem after its file
- * set or block layout changed (e.g. an allocating write made elsewhere).
- * Call this on a DS_FILE_FS_DIRTY result before retrying registration.
- * Backends without a filesystem index (ref, gds) treat it as a no-op.
+ * Re-index the backend's view of the mounted filesystem.
+ *
+ * Retained for source compatibility and treated as a no-op: the aisio backend's
+ * HOMI daemon re-indexes on its own when the filesystem changes, so a caller
+ * that sees DS_FILE_FS_DIRTY need only retry. Backends without a filesystem
+ * index (ref, gds) were always no-ops here.
  */
 ds_file_error_t ds_file_reindex(void);
 
