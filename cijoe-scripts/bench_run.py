@@ -44,10 +44,15 @@ def main(args, cijoe):
             return err
         target = state.output().strip().splitlines()[-1]
     elif args.backend == "opends":
-        # HOMI owns the controller; fil enumerates the qublk mount and the
-        # aisio backend attaches a qpair from HOMI per file. The positional
-        # target is unused by fil for opends but the CLI still requires one.
-        target = bdf
+        # HOMI owns the controller; qublk re-exports it as a ublk block device
+        # that fil walks with xal for enumeration, exactly like gds walks the
+        # kernel-bound NVMe. The aisio backend attaches a qpair from HOMI per
+        # file (via OPENDS_HOMI_DEV/SOCKET), so the device read path bypasses
+        # the ublk target.
+        err, state = cijoe.run("cat /run/homi/ublk_dev")
+        if err:
+            return err
+        target = state.output().strip().splitlines()[-1]
         sock = "/run/homi/homi.sock"
         if not mnt:
             mnt = cijoe.getconf("test.mount_point")
