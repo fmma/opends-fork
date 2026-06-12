@@ -215,24 +215,31 @@ middle_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 	s->outstanding--;
 }
 
+/* Bound the wait while the daemon re-indexes after a filesystem change:
+ * AISIO_ESTALE_RETRIES attempts spaced AISIO_ESTALE_BACKOFF_US apart. The
+ * re-index rebuilds the full inode/extent pools (a multi-second clear of the
+ * over-provisioned reservation), so the budget is tens of seconds, not one. */
+#define AISIO_ESTALE_RETRIES 600
+#define AISIO_ESTALE_BACKOFF_US 50000
+
 /* Resolve a registered file's extents through homic_get_extents, which FIEMAPs
  * the fd against the qublk-mounted filesystem and returns device extents. */
 static int
-aisio_resolve_extents(struct aisio_driver *d, int fd, struct ds_extent **out,
-                      uint32_t *out_n)
+aisio_resolve_extents(int fd, struct ds_extent **out, uint32_t *out_n)
 {
 	struct homic_extent *hx = NULL;
 	uint32_t n = 0;
-	int rc = homic_get_extents(fd, &hx, &n);
-	if (rc == -ESTALE) {
-		/* The filesystem changed since the last index. Re-index and
-		 * retry once so a read transparently picks up the new layout;
-		 * a persistent -ESTALE (a concurrent writer) is left to the
-		 * caller. */
-		int rrc = homic_reindex_xal(d->dev_uri);
-		if (rrc < 0)
-			return rrc;
+	int rc = -ESTALE;
+
+	/* homic_get_extents returns -ESTALE while the filesystem is dirty or the
+	 * daemon is re-indexing in place. The daemon re-indexes on its own (its
+	 * watch thread), so just retry to ride out the re-index window; a
+	 * persistent -ESTALE (a continuous writer) is propagated to the caller. */
+	for (int attempt = 0; attempt < AISIO_ESTALE_RETRIES; attempt++) {
 		rc = homic_get_extents(fd, &hx, &n);
+		if (rc != -ESTALE)
+			break;
+		usleep(AISIO_ESTALE_BACKOFF_US);
 	}
 	if (rc < 0)
 		return rc;
@@ -523,7 +530,7 @@ read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 	 * layout change since the last I/O is always reflected. */
 	struct ds_extent *extents = NULL;
 	uint32_t extent_count = 0;
-	int rc = aisio_resolve_extents(d, h->fd, &extents, &extent_count);
+	int rc = aisio_resolve_extents(h->fd, &extents, &extent_count);
 	if (rc < 0)
 		return rc;
 
@@ -772,7 +779,7 @@ start_file_op(struct aisio_driver *d, struct file_op *op)
 	 * layout change since the last I/O is always reflected. */
 	struct ds_extent *extents = NULL;
 	uint32_t extent_count = 0;
-	int frc = aisio_resolve_extents(d, op->h->fd, &extents, &extent_count);
+	int frc = aisio_resolve_extents(op->h->fd, &extents, &extent_count);
 	if (frc < 0) {
 		op->err = (frc == -ESTALE) ? DS_FILE_FS_DIRTY
 		                           : DS_FILE_FS_SETUP_ERROR;
@@ -1213,10 +1220,9 @@ ds_file_reindex(void)
 	if (!drv)
 		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
 
-	int rc = homic_reindex_xal(drv->dev_uri);
-	if (rc < 0)
-		return ds_file_err(DS_FILE_FS_SETUP_ERROR);
-
+	/* No-op: the HOMI daemon re-indexes on its own when the filesystem changes.
+	 * A caller that sees DS_FILE_FS_DIRTY need only retry the read; this entry
+	 * point is retained for source compatibility. */
 	return ds_file_ok();
 }
 
@@ -1333,8 +1339,9 @@ ds_file_read(ds_file_handle_t fh, void *buf_base, size_t size,
 	ssize_t n = read_extents(drv, (struct aisio_handle *)fh, dst, size,
 	                         file_offset);
 	if (n < 0) {
-		/* Dirty is routine and recoverable: the caller re-indexes
-		 * (ds_file_reindex) and retries. Only log genuine failures. */
+		/* Dirty is routine and recoverable: the daemon re-indexes on its
+		 * own, so the caller just retries the read. Only log genuine
+		 * failures. */
 		if (n == -(ssize_t)ESTALE)
 			return -(ssize_t)DS_FILE_FS_DIRTY;
 		fprintf(stderr,
