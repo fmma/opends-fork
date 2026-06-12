@@ -31,8 +31,9 @@ remote = "https://github.com/fmma/xal"
 ref = "poc/opends-homi-qublk"
 
 # Fork pin: the `opends` backend reads files on the HOMI/qublk mount via
-# the OpenDS file API (like gds), enumerating with readdir. Revert to
-# upstream xnvme/fil once the OpenDS-aware bench backend lands upstream.
+# the OpenDS file API, mirroring the gds backend (xal enumeration on the
+# ublk block device, reads by path). Revert to upstream xnvme/fil once
+# the OpenDS-aware bench backend lands upstream.
 [fil.repository]
 remote = "https://github.com/fmma/fil"
 ref = "poc/opends-homi-qublk"
