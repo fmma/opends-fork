@@ -140,6 +140,13 @@ executable('test_smoke_ref',
   dependencies : [opends_ref_dep],
 )
 
+# Host-only unit test for the reactor inbound ring; no NVMe/CUDA, always built.
+executable('test_ring',
+  'tests/test_ring.c',
+  include_directories : [opends_internal_inc],
+  dependencies : [dependency('threads')],
+)
+
 # Prep binary: writes the shared pattern file consumed by every
 # backend's test_sync_read_X, and the small extents record consumed by
 # the aisio leg (which runs after the FS is unmounted).
