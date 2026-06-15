@@ -10,6 +10,7 @@ import atexit
 import ctypes
 import math
 import os
+import signal
 import threading
 
 from . import _cdll as _c
@@ -96,6 +97,7 @@ def _ensure_driver():
         if _driver_refs == 0:
             _check(_c.driver_open())
         _driver_refs += 1
+    _install_signal_handlers()
 
 
 def _release_driver():
@@ -110,15 +112,59 @@ def _release_driver():
             _check(_c.driver_close())
 
 
-@atexit.register
-def _shutdown():
+def _cleanup():
     global _driver_refs
-    with _lock:
+    got = _lock.acquire(timeout=2.0)
+    try:
         if _driver_refs > 0:
             _pinned.clear()
-            _registry.clear()
-            _c.driver_close()
-            _driver_refs = 0
+            try:
+                _registry.clear()
+            finally:
+                _c.driver_close()
+                _driver_refs = 0
+    except Exception:
+        pass
+    finally:
+        if got:
+            _lock.release()
+
+
+atexit.register(_cleanup)
+
+
+_prev_signal_handlers = {}
+
+
+def _signal_cleanup(signum, frame):
+    _cleanup()
+    prev = _prev_signal_handlers.get(signum, signal.SIG_DFL)
+    if prev is signal.SIG_IGN:
+        return
+    if callable(prev):
+        return prev(signum, frame)
+    try:
+        signal.signal(signum, signal.SIG_DFL)
+    except Exception:
+        pass
+    os.kill(os.getpid(), signum)
+
+
+def _install_signal_handlers():
+    if threading.current_thread() is not threading.main_thread():
+        return
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        try:
+            cur = signal.getsignal(signum)
+            if cur is _signal_cleanup:
+                continue
+            _prev_signal_handlers[signum] = cur
+            signal.signal(signum, _signal_cleanup)
+        except (ValueError, OSError):
+            pass
+
+
+_install_signal_handlers()
 
 
 # ---------------------------------------------------------------------------

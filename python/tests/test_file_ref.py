@@ -6,9 +6,11 @@ any host without a GPU. Prints "all ok" on success.
 
 import ctypes
 import os
+import signal
 import tempfile
 
 import opends
+from opends import _file
 
 
 def _payload(n):
@@ -17,6 +19,15 @@ def _payload(n):
 
 def test_version():
     assert opends.get_version() == (0, 1, 0)
+
+
+def test_signal_cleanup_installed():
+    """Regression: atexit does not run on SIGTERM/SIGINT, so the binding
+    installs a signal handler that detaches pinned GPU buffers. Without it a
+    signal-killed host (e.g. vLLM torn down between phases) leaks the aisio
+    dma-buf GPU pin until reboot. Guard against the handler being dropped."""
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        assert signal.getsignal(sig) is _file._signal_cleanup
 
 
 def test_roundtrip():
@@ -87,6 +98,7 @@ def test_raw_pointer_with_offset():
 
 if __name__ == "__main__":
     test_version()
+    test_signal_cleanup_installed()
     test_roundtrip()
     test_scatter_offsets()
     test_raw_pointer_with_offset()
