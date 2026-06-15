@@ -17,6 +17,7 @@
 
 #define _GNU_SOURCE
 
+#include "aisio_ring.h"
 #include "cu_stream_map.h"
 #include "ds_bounce_kernel.h"
 #include "ds_bounce_ctx.h"
@@ -31,6 +32,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <sched.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -49,8 +51,10 @@
 #define ENV_HOMI_SOCKET "OPENDS_HOMI_SOCKET"
 #define ENV_HOMI_DEV "OPENDS_HOMI_DEV"
 #define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
-#define AISIO_ATTACH_QPAIRS 4 ///< sync (idx 0) + sync_queue + async_queue + slack
 #define MAX_BUF_ENTRIES 8192
+#define ENV_AISIO_REACTORS "OPENDS_AISIO_REACTORS"
+#define AISIO_DEFAULT_REACTORS 3
+#define AISIO_MAX_REACTORS 8
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
 #define DS_BOUNCE_INIT_CAP 4
@@ -130,13 +134,33 @@ struct read_cursor {
 	size_t remaining;
 };
 
+struct aisio_op {
+	struct aisio_handle *h;
+	void *dst;
+	const void *src;
+	size_t size;
+	off_t file_offset;
+	bool is_write;
+	_Atomic int done;
+	ssize_t result;
+};
+
+struct aisio_reactor {
+	struct aisio_driver *drv;
+	struct xnvme_queue *queue;
+	void *bounce_buf;
+	void *write_bounce;
+	size_t write_bounce_cap;
+	struct aisio_ring inbox;
+	pthread_t thread;
+	_Atomic bool stop;
+	bool started;
+};
+
 struct aisio_driver {
 	char dev_uri[64];       ///< NVMe device (BDF) the HOMI daemon owns
 	char *attach_descpath;  ///< HOMI-served qpair attach descriptor file
 	struct xnvme_dev *xdev;
-	/* xNVMe queues are not thread-safe, so sync (host thread) and async
-	 * (I/O thread) each get their own. */
-	struct xnvme_queue *sync_queue;
 	struct xnvme_queue *async_queue;
 	uint32_t nsid;
 	uint32_t lba_size;
@@ -145,12 +169,14 @@ struct aisio_driver {
 	struct buf_entry bufs[MAX_BUF_ENTRIES];
 	int buf_count;
 
-	void *sync_bounce_buf;
-	/* Host staging buffer for the pwrite path; grows on demand. */
 	void *write_bounce;
 	size_t write_bounce_cap;
 	bool async_ready;
 	CUcontext cu_ctx;
+
+	struct aisio_reactor reactors[AISIO_MAX_REACTORS];
+	int n_reactors;
+	_Atomic uint32_t rr_next;
 
 	struct opends_stream streams[MAX_STREAMS];
 	int n_streams;
@@ -175,6 +201,31 @@ static inline uint64_t
 max_u64(uint64_t a, uint64_t b)
 {
 	return a > b ? a : b;
+}
+
+static inline void
+cpu_relax(void)
+{
+#if defined(__x86_64__) || defined(__i386__)
+	__builtin_ia32_pause();
+#else
+	sched_yield();
+#endif
+}
+
+static int
+reactor_count_from_env(void)
+{
+	int n = AISIO_DEFAULT_REACTORS;
+	const char *s = getenv(ENV_AISIO_REACTORS);
+	if (s && s[0]) {
+		int v = atoi(s);
+		if (v >= 1)
+			n = v;
+	}
+	if (n > AISIO_MAX_REACTORS)
+		n = AISIO_MAX_REACTORS;
+	return n;
 }
 
 static int
@@ -261,18 +312,16 @@ aisio_resolve_extents(int fd, struct ds_extent **out, uint32_t *out_n)
 	return 0;
 }
 
-/* Reusable host staging buffer for the pwrite path. The sync caller and the
- * single I/O thread never write concurrently to the same handle, so no lock. */
 static int
-ensure_write_bounce(struct aisio_driver *d, size_t size)
+ensure_write_bounce(void **bounce, size_t *cap, size_t size)
 {
-	if (d->write_bounce_cap >= size)
+	if (*cap >= size)
 		return 0;
-	void *p = realloc(d->write_bounce, size);
+	void *p = realloc(*bounce, size);
 	if (!p)
 		return -ENOMEM;
-	d->write_bounce = p;
-	d->write_bounce_cap = size;
+	*bounce = p;
+	*cap = size;
 	return 0;
 }
 
@@ -282,22 +331,22 @@ ensure_write_bounce(struct aisio_driver *d, size_t size)
  * a later P2P read sees them, then flag the daemon's xal dirty so the next read
  * self-heals onto the new layout. Returns bytes written or negative errno. */
 static ssize_t
-aisio_pwrite_op(struct aisio_driver *d, struct aisio_handle *h, const void *src,
-                size_t size, off_t file_offset)
+aisio_pwrite_op(struct aisio_driver *d, struct aisio_handle *h, void **bounce,
+                size_t *bounce_cap, const void *src, size_t size,
+                off_t file_offset)
 {
 	if (size == 0)
 		return 0;
 
-	if (ensure_write_bounce(d, size) < 0)
+	if (ensure_write_bounce(bounce, bounce_cap, size) < 0)
 		return -ENOMEM;
 
-	if (cudaMemcpy(d->write_bounce, src, size, cudaMemcpyDefault) !=
-	    cudaSuccess)
+	if (cudaMemcpy(*bounce, src, size, cudaMemcpyDefault) != cudaSuccess)
 		return -EIO;
 
 	size_t done = 0;
 	while (done < size) {
-		ssize_t w = pwrite(h->fd, (uint8_t *)d->write_bounce + done,
+		ssize_t w = pwrite(h->fd, (uint8_t *)*bounce + done,
 		                   size - done, file_offset + (off_t)done);
 		if (w < 0) {
 			if (errno == EINTR)
@@ -328,7 +377,9 @@ open_device(struct aisio_driver *d, int fd)
 {
 	(void)fd;
 
-	int rc = homic_attach_qpair(d->dev_uri, AISIO_ATTACH_QPAIRS,
+	d->n_reactors = reactor_count_from_env();
+
+	int rc = homic_attach_qpair(d->dev_uri, d->n_reactors + 2,
 	                            &d->attach_descpath);
 	if (rc < 0) {
 		fprintf(stderr, "aisio open_device: homic_attach_qpair(%s) rc=%d\n",
@@ -375,16 +426,127 @@ open_device(struct aisio_driver *d, int fd)
 	}
 	d->lba_shift = (uint32_t)__builtin_ctz(d->lba_size);
 
-	rc = xnvme_queue_init(d->xdev, AISIO_QUEUE_DEPTH, 0, &d->sync_queue);
-	if (rc < 0) {
-		fprintf(stderr, "aisio open_device: xnvme_queue_init rc=%d\n",
-		        rc);
-		xnvme_dev_close(d->xdev);
-		d->xdev = NULL;
-		return rc;
+	return 0;
+}
+
+static void *
+reactor_main(void *arg);
+
+static int
+cpu_first_sibling(int cpu)
+{
+	char path[128];
+	snprintf(path, sizeof(path),
+	         "/sys/devices/system/cpu/cpu%d/topology/thread_siblings_list",
+	         cpu);
+	FILE *f = fopen(path, "r");
+	if (!f)
+		return cpu;
+	int first = cpu;
+	if (fscanf(f, "%d", &first) != 1)
+		first = cpu;
+	fclose(f);
+	return first;
+}
+
+static int
+build_cpu_order(int *order, int max)
+{
+	long n = sysconf(_SC_NPROCESSORS_ONLN);
+	if (n < 1)
+		n = 1;
+
+	int count = 0;
+	for (long c = 0; c < n && count < max; c++)
+		if (cpu_first_sibling((int)c) == (int)c)
+			order[count++] = (int)c;
+	for (long c = 0; c < n && count < max; c++)
+		if (cpu_first_sibling((int)c) != (int)c)
+			order[count++] = (int)c;
+	return count;
+}
+
+static void
+reactor_pool_teardown(struct aisio_driver *d)
+{
+	for (int i = 0; i < d->n_reactors; i++) {
+		struct aisio_reactor *r = &d->reactors[i];
+		if (r->started) {
+			atomic_store_explicit(&r->stop, true,
+			                      memory_order_release);
+			pthread_join(r->thread, NULL);
+			r->started = false;
+		}
+	}
+	for (int i = 0; i < d->n_reactors; i++) {
+		struct aisio_reactor *r = &d->reactors[i];
+		if (r->bounce_buf) {
+			xnvme_buf_free(d->xdev, r->bounce_buf);
+			r->bounce_buf = NULL;
+		}
+		free(r->write_bounce);
+		r->write_bounce = NULL;
+		r->write_bounce_cap = 0;
+		if (r->queue) {
+			xnvme_queue_term(r->queue);
+			r->queue = NULL;
+		}
+	}
+}
+
+static int
+reactor_pool_setup(struct aisio_driver *d)
+{
+	if (!d->cu_ctx)
+		cuCtxGetCurrent(&d->cu_ctx);
+
+	int order[AISIO_MAX_REACTORS];
+	int ncores = build_cpu_order(order, d->n_reactors);
+
+	for (int i = 0; i < d->n_reactors; i++) {
+		struct aisio_reactor *r = &d->reactors[i];
+		r->drv = d;
+		r->bounce_buf = NULL;
+		r->write_bounce = NULL;
+		r->write_bounce_cap = 0;
+		atomic_store_explicit(&r->stop, false, memory_order_relaxed);
+		aisio_ring_init(&r->inbox);
+
+		int rc = xnvme_queue_init(d->xdev, AISIO_QUEUE_DEPTH, 0,
+		                          &r->queue);
+		if (rc < 0) {
+			fprintf(stderr,
+			        "aisio reactor %d: xnvme_queue_init rc=%d\n", i,
+			        rc);
+			reactor_pool_teardown(d);
+			return rc;
+		}
+
+		if (pthread_create(&r->thread, NULL, reactor_main, r) != 0) {
+			xnvme_queue_term(r->queue);
+			r->queue = NULL;
+			reactor_pool_teardown(d);
+			return -EAGAIN;
+		}
+		r->started = true;
+
+		if (ncores > 0) {
+			cpu_set_t set;
+			CPU_ZERO(&set);
+			CPU_SET(order[i % ncores], &set);
+			pthread_setaffinity_np(r->thread, sizeof(set), &set);
+		}
 	}
 
 	return 0;
+}
+
+static struct aisio_reactor *
+reactor_pick(struct aisio_driver *d)
+{
+	uint32_t i = atomic_fetch_add_explicit(&d->rr_next, 1,
+	                                       memory_order_relaxed);
+	return &d->reactors[i % (uint32_t)d->n_reactors];
 }
 
 /* ------------------------------------------------------------------ */
@@ -508,7 +670,8 @@ sync_read_middle(struct aisio_driver *d, struct read_cursor *c,
 }
 
 static ssize_t
-read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
+read_extents(struct aisio_driver *d, struct xnvme_queue *queue,
+             void **bounce_buf_p, struct aisio_handle *h, void *dst,
              size_t size, off_t file_offset)
 {
 	uint64_t req_start = (uint64_t)file_offset;
@@ -535,8 +698,8 @@ read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 		return rc;
 
 	struct read_cursor c = {
-	        .queue = d->sync_queue,
-	        .bounce_buf_p = &d->sync_bounce_buf,
+	        .queue = queue,
+	        .bounce_buf_p = bounce_buf_p,
 	};
 	size_t total_transferred = 0;
 	ssize_t ret;
@@ -601,6 +764,41 @@ read_extents(struct aisio_driver *d, struct aisio_handle *h, void *dst,
 out:
 	free(extents);
 	return ret;
+}
+
+static void *
+reactor_main(void *arg)
+{
+	struct aisio_reactor *r = arg;
+	struct aisio_driver *d = r->drv;
+
+	if (d->cu_ctx)
+		cuCtxSetCurrent(d->cu_ctx);
+
+	for (;;) {
+		struct aisio_op *op = aisio_ring_dequeue(&r->inbox);
+		if (!op) {
+			if (atomic_load_explicit(&r->stop,
+			                         memory_order_acquire))
+				break;
+			cpu_relax();
+			continue;
+		}
+
+		if (op->is_write)
+			op->result = aisio_pwrite_op(
+			        d, op->h, &r->write_bounce,
+			        &r->write_bounce_cap, op->src, op->size,
+			        op->file_offset);
+		else
+			op->result = read_extents(d, r->queue, &r->bounce_buf,
+			                          op->h, op->dst, op->size,
+			                          op->file_offset);
+
+		atomic_store_explicit(&op->done, 1, memory_order_release);
+	}
+
+	return NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -874,8 +1072,9 @@ static void
 dispatch_write(struct aisio_driver *d, struct file_op *op)
 {
 	const void *src = (const uint8_t *)op->buf_base + *op->buf_offset_p;
-	ssize_t n =
-	        aisio_pwrite_op(d, op->h, src, *op->size_p, *op->file_offset_p);
+	ssize_t n = aisio_pwrite_op(d, op->h, &d->write_bounce,
+	                            &d->write_bounce_cap, src, *op->size_p,
+	                            *op->file_offset_p);
 	if (n < 0)
 		*op->bytes_read_p =
 		        (n == -(ssize_t)EINVAL)
@@ -1093,6 +1292,17 @@ ds_file_driver_open(void)
 		drv = NULL;
 		return ds_file_err(DS_FILE_DEVICE_NOT_FOUND);
 	}
+
+	if (reactor_pool_setup(d) < 0) {
+		xnvme_dev_close(d->xdev);
+		homic_detach_qpair();
+		homic_disconnect();
+		free(d->attach_descpath);
+		free(d);
+		drv = NULL;
+		return ds_file_err(DS_FILE_DEVICE_DRIVER_ERROR);
+	}
+
 	async_setup(d);
 
 	return ds_file_ok();
@@ -1105,6 +1315,7 @@ ds_file_driver_close(void)
 		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
 
 	async_teardown(drv);
+	reactor_pool_teardown(drv);
 
 	for (int i = 0; i < drv->buf_count; i++) {
 		struct buf_entry *e = &drv->bufs[i];
@@ -1115,13 +1326,8 @@ ds_file_driver_close(void)
 	}
 	drv->buf_count = 0;
 
-	if (drv->sync_bounce_buf)
-		xnvme_buf_free(drv->xdev, drv->sync_bounce_buf);
-
 	free(drv->write_bounce);
 
-	if (drv->sync_queue)
-		xnvme_queue_term(drv->sync_queue);
 	if (drv->xdev)
 		xnvme_dev_close(drv->xdev);
 
@@ -1190,6 +1396,8 @@ ds_file_handle_register(ds_file_handle_t *fh, int fd)
 		int rc = open_device(drv, fd);
 		if (rc < 0)
 			return ds_file_err(DS_FILE_DEVICE_NOT_FOUND);
+		if (reactor_pool_setup(drv) < 0)
+			return ds_file_err(DS_FILE_DEVICE_DRIVER_ERROR);
 		async_setup(drv);
 	}
 
@@ -1335,9 +1543,21 @@ ds_file_read(ds_file_handle_t fh, void *buf_base, size_t size,
 	if (!fh || !buf_base)
 		return -(ssize_t)DS_FILE_INVALID_VALUE;
 
-	void *dst = (uint8_t *)buf_base + buf_offset;
-	ssize_t n = read_extents(drv, (struct aisio_handle *)fh, dst, size,
-	                         file_offset);
+	struct aisio_op op = {
+	        .h = (struct aisio_handle *)fh,
+	        .dst = (uint8_t *)buf_base + buf_offset,
+	        .size = size,
+	        .file_offset = file_offset,
+	        .is_write = false,
+	};
+	atomic_store_explicit(&op.done, 0, memory_order_relaxed);
+
+	struct aisio_reactor *r = reactor_pick(drv);
+	aisio_ring_enqueue(&r->inbox, &op);
+	while (!atomic_load_explicit(&op.done, memory_order_acquire))
+		cpu_relax();
+
+	ssize_t n = op.result;
 	if (n < 0) {
 		/* Dirty is routine and recoverable: the daemon re-indexes on its
 		 * own, so the caller just retries the read. Only log genuine
@@ -1363,9 +1583,21 @@ ds_file_write(ds_file_handle_t fh, const void *buf_base, size_t size,
 	if (!fh || !buf_base)
 		return -(ssize_t)DS_FILE_INVALID_VALUE;
 
-	const void *src = (const uint8_t *)buf_base + buf_offset;
-	ssize_t n = aisio_pwrite_op(drv, (struct aisio_handle *)fh, src, size,
-	                            file_offset);
+	struct aisio_op op = {
+	        .h = (struct aisio_handle *)fh,
+	        .src = (const uint8_t *)buf_base + buf_offset,
+	        .size = size,
+	        .file_offset = file_offset,
+	        .is_write = true,
+	};
+	atomic_store_explicit(&op.done, 0, memory_order_relaxed);
+
+	struct aisio_reactor *r = reactor_pick(drv);
+	aisio_ring_enqueue(&r->inbox, &op);
+	while (!atomic_load_explicit(&op.done, memory_order_acquire))
+		cpu_relax();
+
+	ssize_t n = op.result;
 	if (n < 0) {
 		fprintf(stderr,
 		        "ds_file_write: aisio_pwrite_op(size=%zu, off=%ld) "
