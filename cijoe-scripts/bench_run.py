@@ -16,6 +16,7 @@ passed through OPENDS_HOMI_DEV/OPENDS_HOMI_SOCKET.
 """
 
 import logging as log
+import os
 from pathlib import Path
 
 NOFILE = 1048576
@@ -76,7 +77,13 @@ def main(args, cijoe):
     if args.mode == "async":
         filperf.append("--async")
 
-    drop = "" if args.backend == "opends" else "echo 3 > /proc/sys/vm/drop_caches\n"
+    # gds reads cold by default (drop the kernel page/metadata cache); opends
+    # reads via P2P + homid's in-memory index, so the kernel cache is irrelevant
+    # to it. Set BENCH_DROP_CACHES=0 to skip the drop and measure gds warm too
+    # (fairer when comparing against opends, whose metadata is structurally warm).
+    drop_caches = os.environ.get("BENCH_DROP_CACHES", "1") != "0"
+    drop = ("echo 3 > /proc/sys/vm/drop_caches\n"
+            if drop_caches and args.backend != "opends" else "")
     cmd = drop + " \\\n  ".join(filperf)
     err, state = cijoe.run(cmd)
     if err:
