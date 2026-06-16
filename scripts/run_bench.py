@@ -13,6 +13,7 @@ bench_<dataset>_async steps are filtered.
 """
 
 import argparse
+import os
 
 from _helpers import ok, run_cijoe
 
@@ -21,11 +22,12 @@ SUITES = {
     "opends": "tasks/bench_opends.yaml",
 }
 
-DATASETS = ["filesize8gib", "tiktokish", "imagenetish"]
+DATASETS = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
 
 SETUP_STEPS = {
-    "gds":    ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"],
-    "opends": ["cpu_governor", "meta", "homi_stack_up"],
+    "gds":    ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount",
+               "gen_lmcache"],
+    "opends": ["cpu_governor", "meta", "homi_stack_up", "gen_lmcache"],
 }
 TEARDOWN_STEPS = {
     "gds":    [],
@@ -58,7 +60,15 @@ parser.add_argument(
     "--dataset", action="append", choices=DATASETS,
     help="Run only this dataset. Repeat to combine. Default: all.",
 )
+parser.add_argument(
+    "--no-drop-caches", action="store_true",
+    help="Do not drop_caches before gds runs (measure gds warm, like opends). "
+         "Sets BENCH_DROP_CACHES=0 for the bench steps.",
+)
 args = parser.parse_args()
+
+if args.no_drop_caches:
+    os.environ["BENCH_DROP_CACHES"] = "0"
 
 for name in args.suite or list(SUITES):
     steps = _steps_for(name, args.mode, args.dataset or DATASETS)
