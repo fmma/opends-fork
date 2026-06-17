@@ -1,17 +1,4 @@
-doc: |
-  Setup OpenDS
-  =============
-
-  Builds all available backends with meson on the target. Assumes
-  scripts/rsync.py has synced the working tree to config.test.repo_path.
-
-  Run::
-
-      cijoe \
-        -c configs/transport.toml \
-        -c configs/deps.toml \
-        -c configs/test.toml \
-        tasks/setup_opends.yaml
+doc: Build all available OpenDS backends with meson on the target (working tree must be synced first).
 
 steps:
   - name: build
