@@ -33,15 +33,17 @@ def ok(msg):
         sys.stdout.write(f"\n{banner}\n")
 
 
-def run_cijoe(task, *steps, out=None):
+def run_cijoe(task, *steps, out=None, extra_configs=()):
     """Run a cijoe task with the standard configs.
 
-    Output dir defaults to cijoe-output-<task-stem>. On nonzero rc, prints
-    a FAILED banner and exits; returns silently on success.
+    Output dir defaults to cijoe-output-<task-stem>. extra_configs are extra
+    cijoe args appended after the standard -c configs (e.g. ["-c", overlay.toml]
+    to override config values); cijoe reads them last, so they win. On nonzero
+    rc, prints a FAILED banner and exits; returns silently on success.
     """
     out = out or f"cijoe-output-{Path(task).stem}"
     rc = subprocess.run(
-        ["cijoe", "-m", "-s", "-o", out, *CONFIGS, task, *steps],
+        ["cijoe", "-m", "-s", "-o", out, *CONFIGS, *extra_configs, task, *steps],
         cwd=ROOT,
     ).returncode
     if rc:
