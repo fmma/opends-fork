@@ -1,0 +1,66 @@
+doc: |
+  Thread scaling: aisio vs GDS
+  ============================
+
+  Sweeps loader-thread count for the OpenDS aisio backend and the NVIDIA GDS
+  (cuFile) baseline, reading the same files into a fixed pool of registered GPU
+  buffers. The benchmark is dataset-agnostic; the dataset and read pattern come
+  from the [thread_scaling] config section (default: lmcacheish, LMCache's KV-load
+  pattern -- a 14 MiB chunk at offset 4096).
+
+  The two backends need mutually-exclusive device states, so this runs two
+  phases in one task:
+    1. GDS phase  - kernel nvme driver + XFS mount + nvidia_fs (cuFile P2P).
+    2. aisio phase - homi_stack_up hands the controller to HOMI/qublk and
+       remounts the same XFS; reads go via upcie P2P.
+  homi_stack_up unmounts+unbinds the kernel mount first, so the GDS->aisio
+  handover is clean; homi_stack_down rebinds nvme at the end.
+
+  Prereqs: scripts/build.py built OpenDS (both gds and aisio backends), and the
+  dataset exists -- provision it with scripts/setup_dataset.py.
+
+steps:
+  - name: cpu_governor
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/cpu_governor.sh'
+
+  - name: load_nvidia_fs
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/load_nvidia_fs.sh'
+
+  - name: bind_nvme
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
+
+  - name: mount
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+
+  - name: thread_scaling_gds
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/thread_scaling_run.sh' \
+        --build-dir '{{ config.test.build_dir }}' --backend gds \
+        --data '{{ config.test.mount_point }}/{{ config.thread_scaling.dataset }}' \
+        --read-bytes '{{ config.thread_scaling.read_bytes }}' \
+        --read-offset '{{ config.thread_scaling.read_offset }}' \
+        --buffers '{{ config.thread_scaling.buffers }}' \
+        --threads '{{ config.thread_scaling.threads }}' --timeout 600
+
+  - name: homi_stack_up
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/homi_stack_up.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+
+  - name: thread_scaling_aisio
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/thread_scaling_run.sh' \
+        --build-dir '{{ config.test.build_dir }}' --backend aisio \
+        --data '{{ config.test.mount_point }}/{{ config.thread_scaling.dataset }}' \
+        --read-bytes '{{ config.thread_scaling.read_bytes }}' \
+        --read-offset '{{ config.thread_scaling.read_offset }}' \
+        --buffers '{{ config.thread_scaling.buffers }}' \
+        --threads '{{ config.thread_scaling.threads }}' --timeout 600 \
+        --nvme-bdf '{{ config.test.nvme_bdf }}' --reactors '{{ config.thread_scaling.reactors }}'
+
+  - name: homi_stack_down
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'

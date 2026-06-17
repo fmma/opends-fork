@@ -121,6 +121,22 @@ if aisio_enabled
     link_with : libopends_aisio,
   )
 
+  # Pre-reactor aisio backend (single shared sync queue), built from its
+  # committed source for the reactor-vs-legacy load-path comparison only. Not
+  # installed; bench_thread_scaling_aisio_legacy links it from the build dir.
+  libopends_aisio_legacy = shared_library('opends_aisio_legacy',
+    'src/ds_file_common.c',
+    'src/ds_file_aisio_legacy.c',
+    'src/ds_bounce_kernel.cu',
+    'src/ds_bounce_ctx.c',
+    include_directories : aisio_inc_dirs,
+    dependencies : [xnvme_dep, cuda_dep, cuda_drv_dep, homic_dep],
+  )
+  opends_aisio_legacy_dep = declare_dependency(
+    include_directories : opends_inc,
+    link_with : libopends_aisio_legacy,
+  )
+
   # Consumer-facing header: the file-to-LBA extent record external
   # benchmarks deserialize from the test-prep tool.
   install_headers(
@@ -166,8 +182,14 @@ if gds_enabled
     'tests/test_sync_read_gds.c',
     dependencies : [opends_gds_dep, cuda_dep],
   )
+  executable('bench_thread_scaling_gds',
+    'tests/bench_thread_scaling.c',
+    dependencies : [opends_gds_dep, cuda_dep, dependency('threads')],
+    c_args : ['-DLOADBENCH_ODIRECT', '-DLOADBENCH_BACKEND="gds"'],
+  )
 else
   executable('test_sync_read_gds', 'tests/skip.c')
+  executable('bench_thread_scaling_gds', 'tests/skip.c')
 endif
 
 aisio_test_enabled = aisio_enabled and cuda_dep.found()
@@ -214,6 +236,18 @@ if aisio_test_enabled
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
+  executable('bench_thread_scaling_aisio',
+    'tests/bench_thread_scaling.c',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_dep, cuda_dep, dependency('threads')],
+    c_args : ['-DLOADBENCH_BACKEND="aisio"'],
+  )
+  executable('bench_thread_scaling_aisio_legacy',
+    'tests/bench_thread_scaling.c',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_legacy_dep, cuda_dep, dependency('threads')],
+    c_args : ['-DLOADBENCH_BACKEND="aisio_legacy"'],
+  )
 else
   executable('test_sync_read_aisio', 'tests/skip.c')
   executable('test_register_large_aisio', 'tests/skip.c')
@@ -222,6 +256,8 @@ else
   executable('test_sync_write_aisio', 'tests/skip.c')
   executable('test_async_write_aisio', 'tests/skip.c')
   executable('test_block_alloc_aisio', 'tests/skip.c')
+  executable('bench_thread_scaling_aisio', 'tests/skip.c')
+  executable('bench_thread_scaling_aisio_legacy', 'tests/skip.c')
 endif
 
 summary({
