@@ -1,9 +1,10 @@
 #!/bin/bash
 set -e
 
-if [ $# -ne 4 ]; then
-	echo "usage: setup_meson_dep.sh REMOTE REF SRC_DIR BUILD_DIR" >&2
+if [ $# -lt 4 ]; then
+	echo "usage: setup_meson_dep.sh REMOTE REF SRC_DIR BUILD_DIR [meson -D args...]" >&2
 	echo "  REF is a branch, tag, or commit hash" >&2
+	echo "  trailing args are passed verbatim to 'meson setup'" >&2
 	exit 1
 fi
 
@@ -11,6 +12,7 @@ REMOTE=$1
 REF=$2
 SRC_DIR=$3
 BUILD_DIR=$4
+shift 4  # remaining args ($@) are extra 'meson setup' options
 
 if [ ! -d "$SRC_DIR/.git" ]; then
 	rm -rf "$SRC_DIR"
@@ -38,7 +40,7 @@ fi
 git submodule update --init --recursive
 
 rm -rf "$BUILD_DIR"
-meson setup "$BUILD_DIR" "$SRC_DIR"
+meson setup "$BUILD_DIR" "$SRC_DIR" "$@"
 meson compile -C "$BUILD_DIR"
 meson install -C "$BUILD_DIR"
 ldconfig
