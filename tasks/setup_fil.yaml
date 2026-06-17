@@ -1,29 +1,4 @@
-doc: |
-  Setup fil
-  =========
-
-  Clones or updates the fil repository on the target, checks out the
-  configured ref (branch, tag, or commit), then builds and installs
-  fil so the filperf binary is available for benchmarking. The remote
-  and ref are read from [fil.repository] in deps.toml.
-
-  fil depends on xnvme, xal, and CUDA cuFile; run setup_xnvme and
-  setup_xal first (setup_deps.py orders them correctly).
-
-  Benchmarks driven by filperf require a populated XFS dataset on the
-  target NVMe; run aisio's tasks/setup_dataset.yaml on the target
-  before invoking the bench tasks.
-
-  Assumes the OpenDS tree has been synced to the target (setup_deps.py
-  does this).
-
-  Run::
-
-      cijoe \
-        -c configs/transport.toml \
-        -c configs/deps.toml \
-        -c configs/test.toml \
-        tasks/setup_fil.yaml
+doc: Clone, build, and install fil (the filperf bench binary) on the target.
 
 steps:
   - name: setup_fil
