@@ -1,0 +1,26 @@
+doc: Provision one dataset for bench_thread_scaling on the target. Driven by scripts/setup_dataset.py, which selects the dataset's step by name; lmcacheish is generated, the rest must already exist (aisio's setup_dataset.yaml).
+
+steps:
+  - name: bind_nvme
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
+
+  - name: mount
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+
+  - name: lmcacheish
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/setup_dataset.sh' lmcacheish '{{ config.test.mount_point }}'
+
+  - name: tiktokish
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/setup_dataset.sh' tiktokish '{{ config.test.mount_point }}'
+
+  - name: imagenetish
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/setup_dataset.sh' imagenetish '{{ config.test.mount_point }}'
+
+  - name: filesize8gib
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/setup_dataset.sh' filesize8gib '{{ config.test.mount_point }}'
