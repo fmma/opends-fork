@@ -20,13 +20,13 @@ ref_buf_zero(void *buf, size_t n)
 static void *
 ref_alloc_acquire(size_t size)
 {
-	return ds_file_alloc(size);
+	return opends_alloc(size);
 }
 
 static void
 ref_alloc_release(void *buf)
 {
-	ds_file_free(buf);
+	opends_free(buf);
 }
 
 #define PAGE_ALIGN(x) (((x) + 4095) & ~((size_t)4095))
@@ -38,10 +38,10 @@ ref_register_acquire(size_t size)
 	void *buf = aligned_alloc(4096, aligned);
 	if (!buf)
 		return NULL;
-	ds_file_error_t err = ds_file_buf_register(buf, aligned, 0);
-	if (err.err != DS_FILE_SUCCESS) {
+	opends_error_t err = opends_buf_register(buf, aligned, 0);
+	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  buf_register: %s\n",
-		        ds_file_op_status_error(err.err));
+		        opends_op_status_error(err.err));
 		free(buf);
 		return NULL;
 	}
@@ -53,7 +53,7 @@ ref_register_release(void *buf)
 {
 	if (!buf)
 		return;
-	ds_file_buf_deregister(buf);
+	opends_buf_deregister(buf);
 	free(buf);
 }
 
@@ -71,24 +71,24 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	ds_file_error_t err = ds_file_driver_open();
-	if (err.err != DS_FILE_SUCCESS) {
+	opends_error_t err = opends_driver_open();
+	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "driver_open: %s\n",
-		        ds_file_op_status_error(err.err));
+		        opends_op_status_error(err.err));
 		close(fd);
 		return 1;
 	}
 
-	ds_file_handle_t fh;
-	err = ds_file_handle_register(&fh, fd);
-	if (err.err != DS_FILE_SUCCESS) {
+	opends_handle_t fh;
+	err = opends_handle_register(&fh, fd);
+	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "handle_register: %s\n",
-		        ds_file_op_status_error(err.err));
+		        opends_op_status_error(err.err));
 		close(fd);
 		return 1;
 	}
 
-	fprintf(stderr, "ds_file_read sync tests (ref backend)\n");
+	fprintf(stderr, "opends_read sync tests (ref backend)\n");
 
 	struct test_env env_alloc = {
 	        .fh = fh,
@@ -110,9 +110,9 @@ main(int argc, char **argv)
 	};
 	failed += run_sync_read_tests(&env_register);
 
-	ds_file_handle_deregister(fh);
+	opends_handle_deregister(fh);
 	close(fd);
-	ds_file_driver_close();
+	opends_driver_close();
 
 	if (failed)
 		fprintf(stderr, "%d test(s) failed\n", failed);

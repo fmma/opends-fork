@@ -1,5 +1,5 @@
 /*
- * Bounce kernel interface shared between ds_file_aisio.c (host) and
+ * Bounce kernel interface shared between opends_aisio.c (host) and
  * ds_bounce_kernel.cu (device). The async path issues cuStreamWaitValue32 on
  * the user's stream to hold it off until the I/O thread writes the
  * DMA-done gate, then enqueues this kernel to perform the

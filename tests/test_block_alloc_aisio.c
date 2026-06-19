@@ -6,7 +6,7 @@
  * The LMCache-representative case: create an empty file, write one chunk into
  * it (which must allocate blocks through the kernel-mounted XFS), then P2P
  * read the chunk back and verify. Previously the aisio backend rejected
- * allocating writes with DS_FILE_IO_NOT_SUPPORTED; with the pwrite path they
+ * allocating writes with OPENDS_IO_NOT_SUPPORTED; with the pwrite path they
  * succeed.
  */
 
@@ -39,10 +39,10 @@ main(int argc, char **argv)
 		return 1;
 
 	fprintf(stderr,
-	        "ds_file_write block-alloc test (aisio backend, HOMI)\n");
+	        "opends_write block-alloc test (aisio backend, HOMI)\n");
 
 	int failed = 0;
-	void *gpu = ds_file_alloc(blk);
+	void *gpu = opends_alloc(blk);
 	unsigned char *exp = malloc(blk);
 	unsigned char *host = malloc(blk);
 	if (!gpu || !exp || !host) {
@@ -56,7 +56,7 @@ main(int argc, char **argv)
 	cuda_buf_from_host(gpu, exp, blk);
 
 	/* Allocating write into the empty file. */
-	ssize_t w = ds_file_write(a.fh, gpu, blk, 0, 0);
+	ssize_t w = opends_write(a.fh, gpu, blk, 0, 0);
 	if (w != (ssize_t)blk) {
 		fprintf(stderr, "  block-alloc write: %zd\n", w);
 		failed++;
@@ -72,7 +72,7 @@ main(int argc, char **argv)
 
 	/* P2P read-back. */
 	cuda_buf_zero(gpu, blk);
-	ssize_t r = ds_file_read(a.fh, gpu, blk, 0, 0);
+	ssize_t r = opends_read(a.fh, gpu, blk, 0, 0);
 	cuda_buf_to_host(host, gpu, blk);
 	if (r != (ssize_t)blk || memcmp(host, exp, blk)) {
 		fprintf(stderr, "  block-alloc verify failed (r=%zd)\n", r);
@@ -85,7 +85,7 @@ out:
 	free(host);
 	free(exp);
 	if (gpu)
-		ds_file_free(gpu);
+		opends_free(gpu);
 	aisio_homi_teardown(&a);
 	unlink(path);
 

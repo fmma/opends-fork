@@ -8,7 +8,7 @@ doc: |
   OpenDS. The remote and ref are read from [xnvme.repository] in
   deps.toml, which pins the build dependency for the whole project.
 
-  The aisio backend's ds_file_buf_register path requires the
+  The aisio backend's opends_buf_register path requires the
   fmma/xnvme#feat/upcie-cuda-mem-map fork which adds .mem_map and
   .mem_unmap hooks to the upcie-cuda backend; deps.toml pins a commit
   on that branch.

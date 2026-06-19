@@ -8,17 +8,14 @@ opends_internal_inc = include_directories('src')
 tests_inc = include_directories('tests')
 
 public_headers = files(
-  'include/ds_file.h',
-  'include/ds_file_async.h',
-  'include/ds_file_batch.h',
   'include/opends.h',
 )
 install_headers(public_headers)
 
 # Reference backend (pread/pwrite on host buffers, no external dependencies)
 libopends_ref = shared_library('opends_ref',
-  'src/ds_file_common.c',
-  'src/ds_file_ref.c',
+  'src/opends_common.c',
+  'src/opends_ref.c',
   include_directories : opends_inc,
   install : true,
 )
@@ -46,8 +43,8 @@ gds_enabled = cuda_dep.found() and cufile_dep.found()
 
 if gds_enabled
   libopends_gds = shared_library('opends_gds',
-    'src/ds_file_common.c',
-    'src/ds_file_gds.c',
+    'src/opends_common.c',
+    'src/opends_gds.c',
     include_directories : opends_inc,
     dependencies : [cuda_dep, cufile_dep],
     install : true,
@@ -61,7 +58,7 @@ endif
 
 # aisio backend (xNVMe upcie-cuda + HOMI-served qpairs and extents).
 # Links libxnvme and the CUDA driver API. The driver API is needed for
-# stream-async ds_file_read_async, which gates the user's stream with
+# stream-async opends_read_async, which gates the user's stream with
 # cuStreamWriteValue32 / cuStreamWaitValue32 against host pinned mapped
 # trigger and completion words polled by an internal I/O thread.
 xnvme_dep = dependency('xnvme', required : false)
@@ -107,8 +104,8 @@ if aisio_enabled
   endif
 
   libopends_aisio = shared_library('opends_aisio',
-    'src/ds_file_common.c',
-    'src/ds_file_aisio.c',
+    'src/opends_common.c',
+    'src/opends_aisio.c',
     'src/ds_bounce_kernel.cu',
     'src/ds_bounce_ctx.c',
     include_directories : aisio_inc_dirs,

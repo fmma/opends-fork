@@ -21,10 +21,10 @@ main(int argc, char **argv)
 	cuDeviceGet(&cudev, 0);
 	cuCtxCreate(&cuctx, 0, cudev);
 
-	ds_file_error_t err = ds_file_driver_open();
-	if (err.err != DS_FILE_SUCCESS) {
+	opends_error_t err = opends_driver_open();
+	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "driver_open: %s\n",
-		        ds_file_op_status_error(err.err));
+		        opends_op_status_error(err.err));
 		return 1;
 	}
 
@@ -34,16 +34,16 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	ds_file_handle_t fh;
-	err = ds_file_handle_register(&fh, fd);
-	if (err.err != DS_FILE_SUCCESS) {
+	opends_handle_t fh;
+	err = opends_handle_register(&fh, fd);
+	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "handle_register: %s\n",
-		        ds_file_op_status_error(err.err));
+		        opends_op_status_error(err.err));
 		close(fd);
 		return 1;
 	}
 
-	fprintf(stderr, "ds_file_read sync tests (gds backend)\n");
+	fprintf(stderr, "opends_read sync tests (gds backend)\n");
 
 	struct test_env env_alloc = {
 	        .fh = fh,
@@ -67,9 +67,9 @@ main(int argc, char **argv)
 	};
 	failed += run_sync_read_tests(&env_register);
 
-	ds_file_handle_deregister(fh);
+	opends_handle_deregister(fh);
 	close(fd);
-	ds_file_driver_close();
+	opends_driver_close();
 	cuCtxDestroy(cuctx);
 
 	if (failed)

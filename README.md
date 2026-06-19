@@ -42,7 +42,7 @@ _Commit `a781ba2-dirty` on host `swissknife` (kernel `6.8.12-dmabuf`, NVMe `Sams
 | imagenetish   | async |          835 |         3036 |
 <!-- bench:end -->
 
-## ds_file API
+## opends API
 
 ### Basic read
 
@@ -58,26 +58,26 @@ but not yet implemented.
 
 int main(void)
 {
-    ds_file_driver_open();
+    opends_driver_open();
 
     int fd = open("/mnt/nvme/data.bin", O_RDONLY | O_DIRECT);
 
-    ds_file_handle_t fh;
-    ds_file_handle_register(&fh, fd);
+    opends_handle_t fh;
+    opends_handle_register(&fh, fd);
 
     size_t size = 1024 * 1024;
     void *buf;
     cudaMalloc(&buf, size);
-    ds_file_buf_register(buf, size, 0);
+    opends_buf_register(buf, size, 0);
 
-    ssize_t nread = ds_file_read(fh, buf, size, 0, 0);
+    ssize_t nread = opends_read(fh, buf, size, 0, 0);
     printf("read %zd bytes\n", nread);
 
-    ds_file_buf_deregister(buf);
+    opends_buf_deregister(buf);
     cudaFree(buf);
-    ds_file_handle_deregister(fh);
+    opends_handle_deregister(fh);
     close(fd);
-    ds_file_driver_close();
+    opends_driver_close();
 
     return 0;
 }
@@ -85,35 +85,35 @@ int main(void)
 
 ### Buffer offset
 
-The last parameter to `ds_file_read` is a byte offset into the
+The last parameter to `opends_read` is a byte offset into the
 destination buffer. This exists because GPU device pointers cannot be
 dereferenced or offset from host code. Instead of pointer arithmetic,
 pass the base pointer and let the backend apply the offset.
 
 ```c
 /* Read two 4 KiB blocks into different regions of a device buffer. */
-ds_file_read(fh, dev_buf, 4096, 0,    0);     /* -> dev_buf[0..4095]    */
-ds_file_read(fh, dev_buf, 4096, 4096, 4096);  /* -> dev_buf[4096..8191] */
+opends_read(fh, dev_buf, 4096, 0,    0);     /* -> dev_buf[0..4095]    */
+opends_read(fh, dev_buf, 4096, 4096, 4096);  /* -> dev_buf[4096..8191] */
 ```
 
 ### Error handling
 
-Functions returning `ds_file_error_t` carry both a ds_file error code
+Functions returning `opends_error_t` carry both an opends error code
 and an optional backend-specific code. Functions returning `ssize_t`
 (read/write) return the byte count on success or a negated error on
 failure.
 
 ```c
-ds_file_error_t err = ds_file_handle_register(&fh, fd);
+opends_error_t err = opends_handle_register(&fh, fd);
 
-if (err.err != DS_FILE_SUCCESS) {
-    fprintf(stderr, "%s\n", ds_file_op_status_error(err.err));
+if (err.err != OPENDS_SUCCESS) {
+    fprintf(stderr, "%s\n", opends_op_status_error(err.err));
 }
 
-ssize_t n = ds_file_read(fh, buf, size, offset, 0);
+ssize_t n = opends_read(fh, buf, size, offset, 0);
 if (n < 0) {
     fprintf(stderr, "read: %s\n",
-            ds_file_op_status_error((ds_file_op_error_t)-n));
+            opends_op_status_error((opends_op_error_t)-n));
 }
 ```
 

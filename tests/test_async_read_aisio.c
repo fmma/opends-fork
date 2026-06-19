@@ -29,8 +29,8 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	if (ds_file_stream_register(main_stream, 0).err != DS_FILE_SUCCESS) {
-		fprintf(stderr, "ds_file_stream_register(main) failed\n");
+	if (opends_stream_register(main_stream, 0).err != OPENDS_SUCCESS) {
+		fprintf(stderr, "opends_stream_register(main) failed\n");
 		cuStreamDestroy(main_stream);
 		aisio_homi_teardown(&a);
 		return 1;
@@ -46,10 +46,10 @@ main(int argc, char **argv)
 			extra_count = i;
 			break;
 		}
-		if (ds_file_stream_register(extras[i], 0).err !=
-		    DS_FILE_SUCCESS) {
+		if (opends_stream_register(extras[i], 0).err !=
+		    OPENDS_SUCCESS) {
 			fprintf(stderr,
-			        "ds_file_stream_register(extra[%d]) failed\n",
+			        "opends_stream_register(extra[%d]) failed\n",
 			        i);
 			cuStreamDestroy(extras[i]);
 			extra_count = i;
@@ -57,7 +57,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	fprintf(stderr, "ds_file_read_async tests (aisio backend, HOMI)\n");
+	fprintf(stderr, "opends_read_async tests (aisio backend, HOMI)\n");
 
 	struct async_test_env env_alloc = {
 	        .fh = a.fh,

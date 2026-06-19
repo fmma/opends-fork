@@ -1,9 +1,9 @@
 /*
  * cu_stream_map.h - tiny open-addressing map keyed on CUstream.
  *
- * Backs ds_file_aisio's CUstream -> stream_state lookup. The driver
+ * Backs opends_aisio's CUstream -> stream_state lookup. The driver
  * registers up to MAX_STREAMS streams and then performs an
- * O(1) lookup per ds_file_read_async call. Grow-only: there is no
+ * O(1) lookup per opends_read_async call. Grow-only: there is no
  * delete primitive, so the table needs no tombstones.
  *
  * Caller owns the entry array (typically inline in the driver struct).
@@ -59,7 +59,7 @@ cu_stream_map_get(const struct cu_stream_map_entry *e, uint32_t mask,
 }
 
 /* Insert, returning 0 on success and -1 if full. Caller must
- * serialize inserts (in ds_file_aisio.c, alloc_mtx) and keep the load
+ * serialize inserts (in opends_aisio.c, alloc_mtx) and keep the load
  * factor below 50%. See cu_stream_map_get for the lock-free reader
  * invariant. */
 static inline int

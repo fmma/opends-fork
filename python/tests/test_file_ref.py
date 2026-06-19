@@ -1,6 +1,6 @@
 """Smoke test for the OpenDS Python bindings against the ref backend.
 
-Dependency-free: uses ds_file_alloc-backed HostBuffers, so it runs on
+Dependency-free: uses opends_alloc-backed HostBuffers, so it runs on
 any host without a GPU. Prints "all ok" on success.
 """
 

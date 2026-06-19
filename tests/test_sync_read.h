@@ -1,6 +1,6 @@
 /*
  * test_sync_read.h - Backend-agnostic unit tests for synchronous
- * ds_file_read.
+ * opends_read.
  *
  * Include from a backend-specific source file that provides main()
  * and initializes a struct test_env with buffer access callbacks.
@@ -22,15 +22,15 @@
 #include <unistd.h>
 
 struct test_env {
-	ds_file_handle_t fh;
+	opends_handle_t fh;
 	void *(*buf_to_host)(void *dst, const void *src, size_t n);
 	void (*buf_zero)(void *buf, size_t n);
 	/* Optional: backend-specific assertion on acquired buffers
 	 * (e.g. "this is a CUDA device pointer"). NULL means no check. */
 	void (*check_buffer)(const void *buf);
 	/* Buffer acquisition. In alloc-mode these wrap
-	 * ds_file_alloc/ds_file_free; in register-mode they wrap a
-	 * backend-specific allocator plus ds_file_buf_register/deregister. */
+	 * opends_alloc/opends_free; in register-mode they wrap a
+	 * backend-specific allocator plus opends_buf_register/deregister. */
 	void *(*buf_acquire)(size_t size);
 	void (*buf_release)(void *buf);
 	const char *mode_label;
@@ -56,7 +56,7 @@ expected_bytes(char *dst, off_t offset, size_t size)
 }
 
 /*
- * Read via ds_file_read, copy result to host, compare with the
+ * Read via opends_read, copy result to host, compare with the
  * in-memory expected pattern. Returns 0 on match.
  */
 static int
@@ -65,10 +65,10 @@ verify_read(struct test_env *env, void *buf, size_t alloc_size, size_t size,
 {
 	env->buf_zero(buf, alloc_size);
 
-	ssize_t n = ds_file_read(env->fh, buf, size, file_offset, buf_offset);
+	ssize_t n = opends_read(env->fh, buf, size, file_offset, buf_offset);
 	if (n < 0) {
-		fprintf(stderr, "  %s: ds_file_read: %s\n", label,
-		        ds_file_op_status_error((ds_file_op_error_t)(-n)));
+		fprintf(stderr, "  %s: opends_read: %s\n", label,
+		        opends_op_status_error((opends_op_error_t)(-n)));
 		return 1;
 	}
 
@@ -222,10 +222,10 @@ test_read_at_eof(struct test_env *env)
 		return 1;
 
 	env->buf_zero(buf, PAGE);
-	ssize_t n = ds_file_read(env->fh, buf, PAGE, (off_t)FILE_SIZE, 0);
+	ssize_t n = opends_read(env->fh, buf, PAGE, (off_t)FILE_SIZE, 0);
 	if (n < 0) {
 		fprintf(stderr, "  at_eof: %s\n",
-		        ds_file_op_status_error((ds_file_op_error_t)(-n)));
+		        opends_op_status_error((opends_op_error_t)(-n)));
 		env->buf_release(buf);
 		return 1;
 	}
@@ -248,10 +248,10 @@ test_read_beyond_eof(struct test_env *env)
 
 	env->buf_zero(buf, PAGE);
 	ssize_t n =
-	        ds_file_read(env->fh, buf, PAGE, (off_t)(FILE_SIZE + PAGE), 0);
+	        opends_read(env->fh, buf, PAGE, (off_t)(FILE_SIZE + PAGE), 0);
 	if (n < 0) {
 		fprintf(stderr, "  beyond_eof: %s\n",
-		        ds_file_op_status_error((ds_file_op_error_t)(-n)));
+		        opends_op_status_error((opends_op_error_t)(-n)));
 		env->buf_release(buf);
 		return 1;
 	}
@@ -272,7 +272,7 @@ test_read_zero_size(struct test_env *env)
 	if (!buf)
 		return 1;
 
-	ssize_t n = ds_file_read(env->fh, buf, 0, 0, 0);
+	ssize_t n = opends_read(env->fh, buf, 0, 0, 0);
 
 	env->buf_release(buf);
 	if (n != 0) {
@@ -313,7 +313,7 @@ test_read_buf_offset_boundaries(struct test_env *env)
 
 	env->buf_zero(buf, alloc);
 
-	ssize_t n = ds_file_read(env->fh, buf, PAGE, 0, boff);
+	ssize_t n = opends_read(env->fh, buf, PAGE, 0, boff);
 	if (n != (ssize_t)PAGE) {
 		fprintf(stderr, "  buf_offset_bounds: got %zd bytes\n", n);
 		env->buf_release(buf);
@@ -392,7 +392,7 @@ test_read_overlapping_regions(struct test_env *env)
 
 	/* Read pages 0-1. */
 	env->buf_zero(buf, size);
-	ssize_t n1 = ds_file_read(env->fh, buf, size, 0, 0);
+	ssize_t n1 = opends_read(env->fh, buf, size, 0, 0);
 	if (n1 != (ssize_t)size) {
 		fprintf(stderr, "  overlap: read A got %zd\n", n1);
 		free(host_a);
@@ -404,7 +404,7 @@ test_read_overlapping_regions(struct test_env *env)
 
 	/* Read pages 1-2. */
 	env->buf_zero(buf, size);
-	ssize_t n2 = ds_file_read(env->fh, buf, size, PAGE, 0);
+	ssize_t n2 = opends_read(env->fh, buf, size, PAGE, 0);
 	if (n2 != (ssize_t)size) {
 		fprintf(stderr, "  overlap: read B got %zd\n", n2);
 		free(host_a);
@@ -445,11 +445,11 @@ test_read_repeated(struct test_env *env)
 	}
 
 	env->buf_zero(buf, PAGE);
-	ssize_t n1 = ds_file_read(env->fh, buf, PAGE, 0, 0);
+	ssize_t n1 = opends_read(env->fh, buf, PAGE, 0, 0);
 	env->buf_to_host(host_a, buf, PAGE);
 
 	env->buf_zero(buf, PAGE);
-	ssize_t n2 = ds_file_read(env->fh, buf, PAGE, 0, 0);
+	ssize_t n2 = opends_read(env->fh, buf, PAGE, 0, 0);
 	env->buf_to_host(host_b, buf, PAGE);
 
 	int rc = 0;
