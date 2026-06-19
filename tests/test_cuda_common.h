@@ -2,7 +2,7 @@
  * Shared CUDA helpers for GPU-backed backend tests (gds, aisio).
  *
  * Provides the test_env callbacks that copy device buffers to host,
- * zero device buffers, and assert that ds_file_alloc returned CUDA
+ * zero device buffers, and assert that opends_alloc returned CUDA
  * device memory.
  */
 
@@ -49,7 +49,7 @@ cuda_check_buffer(const void *buf)
 	}
 	if (attrs.type != cudaMemoryTypeDevice) {
 		fprintf(stderr,
-		        "ds_file_alloc returned non-device memory "
+		        "opends_alloc returned non-device memory "
 		        "(type=%d)\n",
 		        (int)attrs.type);
 		abort();
@@ -68,13 +68,13 @@ cuda_check_buffer(const void *buf)
 static inline void *
 cuda_alloc_acquire(size_t size)
 {
-	return ds_file_alloc(size);
+	return opends_alloc(size);
 }
 
 static inline void
 cuda_alloc_release(void *buf)
 {
-	ds_file_free(buf);
+	opends_free(buf);
 }
 
 static inline void *
@@ -87,10 +87,10 @@ cuda_register_acquire(size_t size)
 		fprintf(stderr, "  cudaMalloc: %s\n", cudaGetErrorString(rc));
 		return NULL;
 	}
-	ds_file_error_t err = ds_file_buf_register(buf, aligned, 0);
-	if (err.err != DS_FILE_SUCCESS) {
+	opends_error_t err = opends_buf_register(buf, aligned, 0);
+	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  buf_register: %s\n",
-		        ds_file_op_status_error(err.err));
+		        opends_op_status_error(err.err));
 		cudaFree(buf);
 		return NULL;
 	}
@@ -102,7 +102,7 @@ cuda_register_release(void *buf)
 {
 	if (!buf)
 		return;
-	ds_file_buf_deregister(buf);
+	opends_buf_deregister(buf);
 	cudaFree(buf);
 }
 

@@ -1,9 +1,9 @@
 /*
  * test_async_read.h - Backend-agnostic unit tests for stream-based
- * ds_file_read_async.
+ * opends_read_async.
  *
  * Mirrors test_sync_read.h but routes every read through
- * ds_file_read_async with a real CUDA stream and waits for completion
+ * opends_read_async with a real CUDA stream and waits for completion
  * via cuStreamSynchronize. Includes additional cases that exercise
  * stream ordering and concurrent submission across multiple streams.
  *
@@ -14,7 +14,7 @@
 #ifndef TEST_ASYNC_READ_H_
 #define TEST_ASYNC_READ_H_
 
-#include "ds_file_async.h"
+#include "opends.h"
 #include "opends.h"
 #include "read_pattern.h"
 
@@ -63,7 +63,7 @@ async_test_stream_sync_timeout(CUstream stream, double timeout_s,
 }
 
 struct async_test_env {
-	ds_file_handle_t fh;
+	opends_handle_t fh;
 	CUstream stream;
 	CUstream extra_streams[ASYNC_TEST_MAX_STREAMS];
 	int extra_stream_count;
@@ -102,11 +102,11 @@ verify_async_read(struct async_test_env *env, void *buf, size_t alloc_size,
 	off_t boff = buf_offset;
 	ssize_t bytes_read = 0;
 
-	ds_file_error_t err = ds_file_read_async(
+	opends_error_t err = opends_read_async(
 	        env->fh, buf, &sz, &foff, &boff, &bytes_read, env->stream);
-	if (err.err != DS_FILE_SUCCESS) {
-		fprintf(stderr, "  %s: ds_file_read_async: %s\n", label,
-		        ds_file_op_status_error(err.err));
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  %s: opends_read_async: %s\n", label,
+		        opends_op_status_error(err.err));
 		return 1;
 	}
 
@@ -119,8 +119,8 @@ verify_async_read(struct async_test_env *env, void *buf, size_t alloc_size,
 
 	if (bytes_read < 0) {
 		fprintf(stderr, "  %s: bytes_read = %s\n", label,
-		        ds_file_op_status_error(
-		                (ds_file_op_error_t)(-bytes_read)));
+		        opends_op_status_error(
+		                (opends_op_error_t)(-bytes_read)));
 		return 1;
 	}
 
@@ -315,14 +315,14 @@ async_test_stream_ordering(struct async_test_env *env)
 	off_t boff = 0;
 	ssize_t br_a = 0, br_b = 0;
 
-	ds_file_error_t err;
-	err = ds_file_read_async(env->fh, buf_a, &sz_a, &off_a, &boff, &br_a,
+	opends_error_t err;
+	err = opends_read_async(env->fh, buf_a, &sz_a, &off_a, &boff, &br_a,
 	                         env->stream);
-	if (err.err != DS_FILE_SUCCESS)
+	if (err.err != OPENDS_SUCCESS)
 		goto fail;
-	err = ds_file_read_async(env->fh, buf_b, &sz_b, &off_b, &boff, &br_b,
+	err = opends_read_async(env->fh, buf_b, &sz_b, &off_b, &boff, &br_b,
 	                         env->stream);
-	if (err.err != DS_FILE_SUCCESS)
+	if (err.err != OPENDS_SUCCESS)
 		goto fail;
 
 	if (cuStreamSynchronize(env->stream) != CUDA_SUCCESS)
@@ -401,12 +401,12 @@ async_test_concurrent_streams(struct async_test_env *env)
 	}
 
 	for (int i = 0; i < n; i++) {
-		ds_file_error_t err = ds_file_read_async(
+		opends_error_t err = opends_read_async(
 		        env->fh, bufs[i], &sizes[i], &foffs[i], &boffs[i],
 		        &brs[i], env->extra_streams[i]);
-		if (err.err != DS_FILE_SUCCESS) {
+		if (err.err != OPENDS_SUCCESS) {
 			fprintf(stderr, "  concurrent: stream[%d] submit: %s\n",
-			        i, ds_file_op_status_error(err.err));
+			        i, opends_op_status_error(err.err));
 			goto out_free_bufs;
 		}
 	}
@@ -498,12 +498,12 @@ async_test_concurrent_short_reads(struct async_test_env *env)
 	}
 
 	for (int i = 0; i < n; i++) {
-		ds_file_error_t err = ds_file_read_async(
+		opends_error_t err = opends_read_async(
 		        env->fh, bufs[i], &sizes[i], &foffs[i], &boffs[i],
 		        &brs[i], env->extra_streams[i]);
-		if (err.err != DS_FILE_SUCCESS) {
+		if (err.err != OPENDS_SUCCESS) {
 			fprintf(stderr, "  concurrent_short[%d]: submit: %s\n",
-			        i, ds_file_op_status_error(err.err));
+			        i, opends_op_status_error(err.err));
 			goto out_free_bufs;
 		}
 	}
@@ -583,12 +583,12 @@ async_test_burst_single_stream(struct async_test_env *env)
 	}
 
 	for (int i = 0; i < N; i++) {
-		ds_file_error_t err = ds_file_read_async(
+		opends_error_t err = opends_read_async(
 		        env->fh, bufs[i], &sizes[i], &foffs[i], &boffs[i],
 		        &brs[i], env->stream);
-		if (err.err != DS_FILE_SUCCESS) {
+		if (err.err != OPENDS_SUCCESS) {
 			fprintf(stderr, "  burst: submit %d: %s\n", i,
-			        ds_file_op_status_error(err.err));
+			        opends_op_status_error(err.err));
 			goto out;
 		}
 	}
@@ -627,7 +627,7 @@ out:
 }
 
 /*
- * Deferred-evaluation semantics: ds_file_read_async must dereference
+ * Deferred-evaluation semantics: opends_read_async must dereference
  * size_p / file_offset_p / buf_offset_p when the stream actually runs
  * the op, not when the call is posted. Submit a host fn that mutates
  * those values, then submit the read on the same stream with the
@@ -683,11 +683,11 @@ async_test_deferred_eval(struct async_test_env *env)
 		goto out;
 	}
 
-	ds_file_error_t err = ds_file_read_async(env->fh, buf, &sz, &foff,
+	opends_error_t err = opends_read_async(env->fh, buf, &sz, &foff,
 	                                         &boff, &br, env->stream);
-	if (err.err != DS_FILE_SUCCESS) {
+	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  deferred_eval: submit: %s\n",
-		        ds_file_op_status_error(err.err));
+		        opends_op_status_error(err.err));
 		goto out;
 	}
 
@@ -775,13 +775,13 @@ async_test_multi_stream_burst(struct async_test_env *env)
 	for (int j = 0; j < per; j++) {
 		for (int s = 0; s < n; s++) {
 			int i = s * per + j;
-			ds_file_error_t err = ds_file_read_async(
+			opends_error_t err = opends_read_async(
 			        env->fh, bufs[s], &sizes[i], &foffs[i],
 			        &boffs[i], &brs[i], env->extra_streams[s]);
-			if (err.err != DS_FILE_SUCCESS) {
+			if (err.err != OPENDS_SUCCESS) {
 				fprintf(stderr,
 				        "  multi_burst: s=%d j=%d submit: %s\n",
-				        s, j, ds_file_op_status_error(err.err));
+				        s, j, opends_op_status_error(err.err));
 				goto out_free_bufs;
 			}
 		}
@@ -845,10 +845,10 @@ out_free_arrays:
 
 /*
  * Stream-ordered consumer: an op enqueued on the user's stream right
- * after ds_file_read_async must observe the bytes written by the
+ * after opends_read_async must observe the bytes written by the
  * read, without any host-side sync between them. We zero the GPU buf
  * first (under a full device sync), then submit:
- *   1) ds_file_read_async on stream
+ *   1) opends_read_async on stream
  *   2) cuMemcpyDtoHAsync(pinned, buf, ...) on the same stream
  * and only sync after both are queued. The memcpy is stream-ordered
  * behind the read's cuStreamWaitValue32(done_seq) gate. If that gate
@@ -888,11 +888,11 @@ async_test_stream_consumer(struct async_test_env *env)
 		off_t foff = (off_t)((i % FILE_PAGES) * PAGE);
 		off_t boff = 0;
 		ssize_t br = 0;
-		ds_file_error_t err = ds_file_read_async(
+		opends_error_t err = opends_read_async(
 		        env->fh, buf, &sz, &foff, &boff, &br, env->stream);
-		if (err.err != DS_FILE_SUCCESS) {
+		if (err.err != OPENDS_SUCCESS) {
 			fprintf(stderr, "  stream_consumer[%d]: submit: %s\n",
-			        i, ds_file_op_status_error(err.err));
+			        i, opends_op_status_error(err.err));
 			goto out;
 		}
 

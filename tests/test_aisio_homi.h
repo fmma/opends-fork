@@ -26,7 +26,7 @@
 struct aisio_homi {
 	CUcontext cuctx;
 	int fd;
-	ds_file_handle_t fh;
+	opends_handle_t fh;
 };
 
 /*
@@ -40,7 +40,7 @@ struct aisio_homi {
  * `flags` is passed to open(2); read tests use O_RDONLY, write tests use
  * O_RDWR (optionally O_CREAT|O_TRUNC for a fresh file). Extents are resolved
  * per I/O (not at registration), so a freshly created file just works: the
- * re-index the first ds_file_write performs makes its blocks resolvable.
+ * re-index the first opends_write performs makes its blocks resolvable.
  */
 static inline int
 aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
@@ -58,12 +58,12 @@ aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
 		return -1;
 	}
 
-	ds_file_error_t err = ds_file_driver_open();
-	if (err.err != DS_FILE_SUCCESS) {
+	opends_error_t err = opends_driver_open();
+	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr,
 		        "driver_open: %s (is homid running and "
 		        "OPENDS_HOMI_DEV set?)\n",
-		        ds_file_op_status_error(err.err));
+		        opends_op_status_error(err.err));
 		cuCtxDestroy(out->cuctx);
 		return -1;
 	}
@@ -71,17 +71,17 @@ aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
 	out->fd = open(path, flags, 0644);
 	if (out->fd < 0) {
 		fprintf(stderr, "open(%s) failed\n", path);
-		ds_file_driver_close();
+		opends_driver_close();
 		cuCtxDestroy(out->cuctx);
 		return -1;
 	}
 
-	err = ds_file_handle_register(&out->fh, out->fd);
-	if (err.err != DS_FILE_SUCCESS) {
+	err = opends_handle_register(&out->fh, out->fd);
+	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "handle_register: %s\n",
-		        ds_file_op_status_error(err.err));
+		        opends_op_status_error(err.err));
 		close(out->fd);
-		ds_file_driver_close();
+		opends_driver_close();
 		cuCtxDestroy(out->cuctx);
 		return -1;
 	}
@@ -99,8 +99,8 @@ static inline void
 aisio_homi_teardown(struct aisio_homi *a)
 {
 	if (a->fh)
-		ds_file_handle_deregister(a->fh);
-	ds_file_driver_close();
+		opends_handle_deregister(a->fh);
+	opends_driver_close();
 	if (a->fd >= 0)
 		close(a->fd);
 	if (a->cuctx)

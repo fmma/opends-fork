@@ -1,8 +1,8 @@
 /*
- * Regression test: ds_file_buf_register on an 8 GiB cudaMalloc'd
+ * Regression test: opends_buf_register on an 8 GiB cudaMalloc'd
  * buffer. Mirrors the bench-time flow where fil allocates a single
  * device buffer sized to the dataset's max file (8 GiB for the
- * filesize8gib dataset) and hands it to ds_file_buf_register.
+ * filesize8gib dataset) and hands it to opends_buf_register.
  *
  * Catches regressions in the cudaMalloc → xnvme_mem_map →
  * cuMemGetHandleForAddressRange path at scale (LUT capacity, BAR1
@@ -42,14 +42,14 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	ds_file_error_t err = ds_file_buf_register(buf, BUF_SIZE, 0);
+	opends_error_t err = opends_buf_register(buf, BUF_SIZE, 0);
 	int failed = 0;
-	if (err.err != DS_FILE_SUCCESS) {
+	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "buf_register(%zu): %s\n", BUF_SIZE,
-		        ds_file_op_status_error(err.err));
+		        opends_op_status_error(err.err));
 		failed = 1;
 	} else {
-		ds_file_buf_deregister(buf);
+		opends_buf_deregister(buf);
 	}
 
 	cudaFree(buf);

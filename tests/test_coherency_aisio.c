@@ -62,7 +62,7 @@ main(int argc, char **argv)
 	}
 
 	int failed = 0;
-	void *gpu = ds_file_alloc(size);
+	void *gpu = opends_alloc(size);
 	unsigned char *got = malloc(size);
 	unsigned char *want = NULL;
 	if (posix_memalign((void **)&want, 4096, size) != 0)
@@ -75,9 +75,9 @@ main(int argc, char **argv)
 
 	/* aisio P2P read of the whole range into device memory. */
 	cuda_buf_zero(gpu, size);
-	ssize_t n = ds_file_read(a.fh, gpu, size, 0, 0);
+	ssize_t n = opends_read(a.fh, gpu, size, 0, 0);
 	if (n != (ssize_t)size) {
-		fprintf(stderr, "ds_file_read: %zd (want %zu)\n", n, size);
+		fprintf(stderr, "opends_read: %zd (want %zu)\n", n, size);
 		failed = 1;
 		goto out;
 	}
@@ -145,7 +145,7 @@ out:
 	free(want);
 	free(got);
 	if (gpu)
-		ds_file_free(gpu);
+		opends_free(gpu);
 	aisio_homi_teardown(&a);
 
 	if (!failed)

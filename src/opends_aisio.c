@@ -1,5 +1,5 @@
 /*
- * ds_file_aisio.c - aisio backend for raw-NVMe direct storage.
+ * opends_aisio.c - aisio backend for raw-NVMe direct storage.
  *
  * Reads go straight from an NVMe device into GPU memory via xNVMe's upcie-cuda
  * backend (PCIe P2P DMA, no filesystem in the path). HOMI owns the device: it
@@ -7,12 +7,12 @@
  * come from FIEMAP on the qublk-mounted filesystem (homic_get_extents).
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
- * unbound from the target device before ds_file_driver_open runs.
+ * unbound from the target device before opends_driver_open runs.
  *
  * Writes go through the kernel-mounted filesystem: the source is staged to a
  * host buffer and pwritten via the fd, so XFS over qublk allocates blocks and
  * writes the data; the file's extents are then re-resolved for later P2P reads.
- * Batch async paths report DS_FILE_IO_NOT_SUPPORTED.
+ * Batch async paths report OPENDS_IO_NOT_SUPPORTED.
  */
 
 #define _GNU_SOURCE
@@ -20,7 +20,7 @@
 #include "cu_stream_map.h"
 #include "ds_bounce_kernel.h"
 #include "ds_bounce_ctx.h"
-#include "ds_file_internal.h"
+#include "opends_internal.h"
 #include "ds_extent.h"
 
 #include <cuda.h>
@@ -107,7 +107,7 @@ struct file_op_async {
 };
 
 struct file_op_batch {
-	ds_file_io_params_t *iocbp;
+	opends_io_params_t *iocbp;
 	unsigned nr;
 };
 
@@ -330,7 +330,7 @@ chunk_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 {
 	struct file_op *op = opaque;
 	if (xnvme_cmd_ctx_cpl_status(ctx)) {
-		op->err = DS_FILE_DEVICE_DRIVER_ERROR;
+		op->err = OPENDS_DEVICE_DRIVER_ERROR;
 	} else {
 		uint32_t lba_size = drv->lba_size;
 		op->bytes_acc += ((uint64_t)ctx->cmd.nvm.nlb + 1) * lba_size;
@@ -376,7 +376,7 @@ submit_read_middle(struct aisio_driver *d, struct read_cursor *c,
 		if (srv < 0) {
 			op->chunks_remaining--;
 			xnvme_queue_put_cmd_ctx(c->queue, ctx);
-			op->err = DS_FILE_DEVICE_DRIVER_ERROR;
+			op->err = OPENDS_DEVICE_DRIVER_ERROR;
 			return -1;
 		}
 
@@ -394,7 +394,7 @@ bounce_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 {
 	struct file_op *op = opaque;
 	if (xnvme_cmd_ctx_cpl_status(ctx) && !op->err)
-		op->err = DS_FILE_DEVICE_DRIVER_ERROR;
+		op->err = OPENDS_DEVICE_DRIVER_ERROR;
 	op->bounces_outstanding--;
 	xnvme_queue_put_cmd_ctx(ctx->async.queue, ctx);
 }
@@ -404,7 +404,6 @@ submit_read_bounce(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
                    uint64_t cur_slba, size_t nbytes)
 {
 	struct ds_bounce_ctx *bounce_ctx = &op->u.async.opends_stream->bounce_ctx;
-	/* At most one sub-LBA tail per op, so always plan slot 0. */
 	void *bounce_src = ds_bounce_ctx_buf(bounce_ctx, 0);
 
 	uint64_t nlbas = (nbytes + (d->lba_size - 1)) >> d->lba_shift;
@@ -429,7 +428,7 @@ submit_read_bounce(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
 		}
 		if (srv < 0) {
 			xnvme_queue_put_cmd_ctx(d->queue, ctx);
-			op->err = DS_FILE_DEVICE_DRIVER_ERROR;
+			op->err = OPENDS_DEVICE_DRIVER_ERROR;
 			return -1;
 		}
 		break;
@@ -446,15 +445,12 @@ submit_read_bounce(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
 	return 0;
 }
 
-/* Sync sub-LBA tail: read the partial LBA into the shared sync_bounce_buf and
- * record (dst, nbytes); complete_read_op cudaMemcpy's it to the GPU once the
- * read lands. Non-blocking, tracked via bounce_cb like the async bounce. */
 static int
 submit_sync_tail(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
                  uint64_t cur_slba, size_t nbytes)
 {
 	if (ensure_bounce_buf(d, &d->sync_bounce_buf) < 0) {
-		op->err = DS_FILE_INTERNAL_ERROR;
+		op->err = OPENDS_INTERNAL_ERROR;
 		return -1;
 	}
 
@@ -480,7 +476,7 @@ submit_sync_tail(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
 		}
 		if (srv < 0) {
 			xnvme_queue_put_cmd_ctx(d->queue, ctx);
-			op->err = DS_FILE_DEVICE_DRIVER_ERROR;
+			op->err = OPENDS_DEVICE_DRIVER_ERROR;
 			return -1;
 		}
 		break;
@@ -493,22 +489,15 @@ submit_sync_tail(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
 	return 0;
 }
 
-/* Walk the extent list and submit all NVMe ops (middle chunks plus at most one
- * tail bounce) for this op in one pass.
- *
- * Worst case is a single bounce: a page-misaligned dst is DMAed directly (PRP1
- * carries the sub-page offset), so no head bounce is needed, and only req_end
- * can be sub-LBA since interior extent boundaries are LBA-aligned. The
- * per-stream context's initial capacity covers this. */
 static void
 start_read_op(struct aisio_driver *d, struct file_op *op)
 {
 	if (d->lba_size == 0) {
-		op->err = DS_FILE_INTERNAL_ERROR;
+		op->err = OPENDS_INTERNAL_ERROR;
 		return;
 	}
 	if ((d->mdts_nbytes >> d->lba_shift) == 0) {
-		op->err = DS_FILE_INVALID_VALUE;
+		op->err = OPENDS_INVALID_VALUE;
 		return;
 	}
 
@@ -525,18 +514,16 @@ start_read_op(struct aisio_driver *d, struct file_op *op)
 		dst_base = (uint8_t *)op->buf_base + op->u.sync.buf_offset;
 	}
 	if (size > UINT64_MAX - req_start) {
-		op->err = DS_FILE_INVALID_VALUE;
+		op->err = OPENDS_INVALID_VALUE;
 		return;
 	}
 	uint64_t req_end = req_start + size;
 
-	/* Resolve the file's current extents for this op (not cached), so a
-	 * layout change since the last I/O is always reflected. */
 	struct ds_extent *extents = NULL;
 	uint32_t extent_count = 0;
 	int frc = aisio_resolve_extents(op->h->fd, &extents, &extent_count);
 	if (frc < 0) {
-		op->err = DS_FILE_FS_SETUP_ERROR;
+		op->err = OPENDS_FS_SETUP_ERROR;
 		return;
 	}
 
@@ -557,7 +544,7 @@ start_read_op(struct aisio_driver *d, struct file_op *op)
 
 		uint64_t off_in_ext = span_start - ext_start;
 		if (off_in_ext & lba_mask) {
-			op->err = DS_FILE_INVALID_VALUE;
+			op->err = OPENDS_INVALID_VALUE;
 			goto out;
 		}
 		size_t buf_off = span_start - req_start;
@@ -603,28 +590,20 @@ complete_read_op(struct aisio_driver *d, struct file_op *op)
 	if (op->mode == FILE_OP_ASYNC) {
 		struct opends_stream *s = op->u.async.opends_stream;
 		*op->u.async.bytes_read_p = n;
-		/* The count store must land before the gate store: the kernel
-		 * polls *gate, then reads plan->count, so it must not see the
-		 * new gate with a stale count. */
 		ds_bounce_ctx_finalize_plan(
 		        &s->bounce_ctx,
 		        (uint32_t)(op->err || !op->tail_nbytes ? 0 : 1));
 		*s->gate = 2 * op->u.async.seq + 1;
 	} else {
-		/* Copy the sub-LBA tail (if any) out of sync_bounce_buf now that
-		 * its read has landed. */
 		if (!op->err && op->tail_nbytes &&
 		    cudaMemcpy(op->tail_dst, d->sync_bounce_buf, op->tail_nbytes,
 		               cudaMemcpyDefault) != cudaSuccess)
-			n = -(ssize_t)DS_FILE_DEVICE_DRIVER_ERROR;
+			n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 		op->u.sync.result = n;
 	}
 	op->state = FILE_OP_FREE;
 }
 
-/* Write: stage + pwrite + fsync + mark-dirty inline on the I/O thread, then
- * deliver the result (async ticks the gate; sync stores result). The pwrite
- * blocks the single I/O thread; writes are the cold path and may be slow. */
 static void
 dispatch_write(struct aisio_driver *d, struct file_op *op)
 {
@@ -643,8 +622,8 @@ dispatch_write(struct aisio_driver *d, struct file_op *op)
 
 	ssize_t n = aisio_pwrite_op(d, op->h, src, size, file_offset);
 	if (n < 0)
-		n = (n == -(ssize_t)EINVAL) ? -(ssize_t)DS_FILE_INVALID_VALUE
-		                            : -(ssize_t)DS_FILE_DEVICE_DRIVER_ERROR;
+		n = (n == -(ssize_t)EINVAL) ? -(ssize_t)OPENDS_INVALID_VALUE
+		                            : -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 
 	if (op->mode == FILE_OP_ASYNC) {
 		*op->u.async.bytes_read_p = n;
@@ -655,8 +634,6 @@ dispatch_write(struct aisio_driver *d, struct file_op *op)
 	op->state = FILE_OP_FREE;
 }
 
-/* Take a PENDING op in flight: writes complete inline here; reads reset their
- * counters and submit all NVMe ops in one pass (completion is reaped later). */
 static void
 dispatch_pending(struct aisio_driver *d, struct file_op *op)
 {
@@ -673,8 +650,6 @@ dispatch_pending(struct aisio_driver *d, struct file_op *op)
 	start_read_op(d, op);
 }
 
-/* Complete an IN_FLIGHT read once both its middle-chunk and bounce completions
- * have landed. */
 static void
 reap_in_flight(struct aisio_driver *d, struct file_op *op)
 {
@@ -756,8 +731,6 @@ io_thread_main(void *arg)
 	return NULL;
 }
 
-/* Returns -1 if no CUDA context is current or any allocation fails; async_ready
- * stays false and ds_file_read_async returns an error. */
 static int
 async_setup(struct aisio_driver *d)
 {
@@ -837,23 +810,23 @@ opends_stream_get(struct aisio_driver *d, CUstream stream)
 /*  Driver lifecycle                                                   */
 /* ------------------------------------------------------------------ */
 
-ds_file_error_t
-ds_file_driver_open(void)
+opends_error_t
+opends_driver_open(void)
 {
 	if (drv)
-		return ds_file_err(DS_FILE_DRIVER_ALREADY_OPEN);
+		return opends_err(OPENDS_DRIVER_ALREADY_OPEN);
 
 	const char *dev = getenv(ENV_HOMI_DEV);
 	if (!dev || !dev[0]) {
 		fprintf(stderr,
 		        "aisio: %s must name the NVMe device the HOMI daemon owns\n",
 		        ENV_HOMI_DEV);
-		return ds_file_err(DS_FILE_FS_SETUP_ERROR);
+		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
 
 	struct aisio_driver *d = calloc(1, sizeof(*d));
 	if (!d)
-		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	snprintf(d->dev_uri, sizeof(d->dev_uri), "%s", dev);
 
@@ -862,7 +835,7 @@ ds_file_driver_open(void)
 	        (char *)(sock && sock[0] ? sock : DEFAULT_HOMI_SOCKET));
 	if (rc < 0) {
 		free(d);
-		return ds_file_err(DS_FILE_FS_SETUP_ERROR);
+		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
 
 	drv = d;
@@ -873,18 +846,18 @@ ds_file_driver_open(void)
 		free(d->attach_descpath);
 		free(d);
 		drv = NULL;
-		return ds_file_err(DS_FILE_DEVICE_NOT_FOUND);
+		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	}
 	async_setup(d);
 
-	return ds_file_ok();
+	return opends_ok();
 }
 
-ds_file_error_t
-ds_file_driver_close(void)
+opends_error_t
+opends_driver_close(void)
 {
 	if (!drv)
-		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 
 	async_teardown(drv);
 
@@ -909,39 +882,39 @@ ds_file_driver_close(void)
 
 	free(drv);
 	drv = NULL;
-	return ds_file_ok();
+	return opends_ok();
 }
 
 long
-ds_file_use_count(void)
+opends_use_count(void)
 {
 	return use_count;
 }
 
-ds_file_error_t
-ds_file_driver_get_properties(ds_file_drv_props_t *props)
+opends_error_t
+opends_driver_get_properties(opends_drv_props_t *props)
 {
 	if (!drv)
-		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	if (!props)
-		return ds_file_err(DS_FILE_INVALID_VALUE);
+		return opends_err(OPENDS_INVALID_VALUE);
 
 	memset(props, 0, sizeof(*props));
 	props->major_version = 0;
 	props->minor_version = 1;
 	props->max_direct_io_size = drv->mdts_nbytes;
-	return ds_file_ok();
+	return opends_ok();
 }
 
-ds_file_error_t
-ds_file_driver_set_max_direct_io_size(size_t max_direct_io_size)
+opends_error_t
+opends_driver_set_max_direct_io_size(size_t max_direct_io_size)
 {
 	(void)max_direct_io_size;
-	return drv ? ds_file_ok() : ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+	return drv ? opends_ok() : opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 }
 
-ds_file_error_t
-ds_file_get_version(unsigned *major, unsigned *minor, unsigned *patch)
+opends_error_t
+opends_get_version(unsigned *major, unsigned *minor, unsigned *patch)
 {
 	if (major)
 		*major = 0;
@@ -949,42 +922,40 @@ ds_file_get_version(unsigned *major, unsigned *minor, unsigned *patch)
 		*minor = 1;
 	if (patch)
 		*patch = 0;
-	return ds_file_ok();
+	return opends_ok();
 }
 
 /* ------------------------------------------------------------------ */
 /*  Handle registration                                                */
 /* ------------------------------------------------------------------ */
 
-ds_file_error_t
-ds_file_handle_register(ds_file_handle_t *fh, int fd)
+opends_error_t
+opends_handle_register(opends_handle_t *fh, int fd)
 {
 	if (!drv)
-		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	if (!fh)
-		return ds_file_err(DS_FILE_INVALID_VALUE);
+		return opends_err(OPENDS_INVALID_VALUE);
 
 	if (!drv->xdev) {
 		int rc = open_device(drv, fd);
 		if (rc < 0)
-			return ds_file_err(DS_FILE_DEVICE_NOT_FOUND);
+			return opends_err(OPENDS_DEVICE_NOT_FOUND);
 		async_setup(drv);
 	}
 
 	struct aisio_handle *h = calloc(1, sizeof(*h));
 	if (!h)
-		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+		return opends_err(OPENDS_INTERNAL_ERROR);
 	h->fd = fd;
 
-	/* Extents are resolved per I/O (ds_file_read / write), not cached here,
-	 * so a layout change between operations is always picked up. */
 	*fh = h;
 	use_count++;
-	return ds_file_ok();
+	return opends_ok();
 }
 
 void
-ds_file_handle_deregister(ds_file_handle_t fh)
+opends_handle_deregister(opends_handle_t fh)
 {
 	if (!fh)
 		return;
@@ -997,7 +968,7 @@ ds_file_handle_deregister(ds_file_handle_t fh)
 /* ------------------------------------------------------------------ */
 
 void *
-ds_file_alloc(size_t size)
+opends_alloc(size_t size)
 {
 	if (!drv || !drv->xdev || drv->buf_count >= MAX_BUF_ENTRIES)
 		return NULL;
@@ -1014,7 +985,7 @@ ds_file_alloc(size_t size)
 }
 
 void
-ds_file_free(void *buf)
+opends_free(void *buf)
 {
 	if (!drv || !buf)
 		return;
@@ -1031,61 +1002,61 @@ ds_file_free(void *buf)
 	}
 }
 
-ds_file_error_t
-ds_file_buf_register(const void *buf_base, size_t size, int flags)
+opends_error_t
+opends_buf_register(const void *buf_base, size_t size, int flags)
 {
 	(void)flags;
 
 	if (!drv)
-		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	if (!drv->xdev)
-		return ds_file_err(DS_FILE_DEVICE_NOT_FOUND);
+		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	if (!buf_base || !size)
-		return ds_file_err(DS_FILE_INVALID_VALUE);
+		return opends_err(OPENDS_INVALID_VALUE);
 
 	for (int i = 0; i < drv->buf_count; i++) {
 		if (drv->bufs[i].base == buf_base)
-			return ds_file_err(DS_FILE_MEMORY_ALREADY_REGISTERED);
+			return opends_err(OPENDS_MEMORY_ALREADY_REGISTERED);
 	}
 	if (drv->buf_count >= MAX_BUF_ENTRIES)
-		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	int rc = xnvme_mem_map(drv->xdev, (void *)buf_base, size);
 	if (rc < 0) {
 		fprintf(stderr,
-		        "ds_file_buf_register: xnvme_mem_map(%p, %zu) rc=%d\n",
+		        "opends_buf_register: xnvme_mem_map(%p, %zu) rc=%d\n",
 		        buf_base, size, rc);
-		return ds_file_err(DS_FILE_DEVICE_DRIVER_ERROR);
+		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 	}
 
 	struct buf_entry *e = &drv->bufs[drv->buf_count++];
 	e->base = buf_base;
 	e->length = size;
 	e->owned = false;
-	return ds_file_ok();
+	return opends_ok();
 }
 
-ds_file_error_t
-ds_file_buf_deregister(const void *buf_base)
+opends_error_t
+opends_buf_deregister(const void *buf_base)
 {
 	if (!drv)
-		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	if (!drv->xdev)
-		return ds_file_err(DS_FILE_DEVICE_NOT_FOUND);
+		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	if (!buf_base)
-		return ds_file_err(DS_FILE_INVALID_VALUE);
+		return opends_err(OPENDS_INVALID_VALUE);
 
 	for (int i = 0; i < drv->buf_count; i++) {
 		if (drv->bufs[i].base == buf_base) {
 			if (drv->bufs[i].owned)
-				return ds_file_err(DS_FILE_INVALID_VALUE);
+				return opends_err(OPENDS_INVALID_VALUE);
 			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
 			drv->buf_count--;
 			xnvme_mem_unmap(drv->xdev, (void *)buf_base);
-			return ds_file_ok();
+			return opends_ok();
 		}
 	}
-	return ds_file_err(DS_FILE_MEMORY_NOT_REGISTERED);
+	return opends_err(OPENDS_MEMORY_NOT_REGISTERED);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1093,15 +1064,15 @@ ds_file_buf_deregister(const void *buf_base)
 /* ------------------------------------------------------------------ */
 
 static ssize_t
-submit_sync_op(struct aisio_driver *d, bool is_write, ds_file_handle_t fh,
+submit_sync_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
                void *buf_base, size_t size, off_t file_offset, off_t buf_offset)
 {
 	if (!d)
-		return -(ssize_t)DS_FILE_DRIVER_NOT_INITIALIZED;
+		return -(ssize_t)OPENDS_DRIVER_NOT_INITIALIZED;
 	if (!fh || !buf_base)
-		return -(ssize_t)DS_FILE_INVALID_VALUE;
+		return -(ssize_t)OPENDS_INVALID_VALUE;
 	if (!d->async_ready)
-		return -(ssize_t)DS_FILE_DEVICE_DRIVER_ERROR;
+		return -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 
 	uint32_t head = d->queue_head;
 	while (head - d->queue_tail >= FILE_OP_QUEUE_SIZE)
@@ -1121,16 +1092,15 @@ submit_sync_op(struct aisio_driver *d, bool is_write, ds_file_handle_t fh,
 	while (op->state != FILE_OP_FREE)
 		sched_yield();
 
-	/* The I/O thread already mapped the result to a ds_file value. */
 	ssize_t n = op->u.sync.result;
 	if (n < 0)
-		fprintf(stderr, "ds_file_%s(size=%zu, off=%ld) failed: rc=%zd\n",
+		fprintf(stderr, "opends_%s(size=%zu, off=%ld) failed: rc=%zd\n",
 		        is_write ? "write" : "read", size, (long)file_offset, n);
 	return n;
 }
 
 ssize_t
-ds_file_read(ds_file_handle_t fh, void *buf_base, size_t size,
+opends_read(opends_handle_t fh, void *buf_base, size_t size,
              off_t file_offset, off_t buf_offset)
 {
 	return submit_sync_op(drv, false, fh, buf_base, size, file_offset,
@@ -1138,7 +1108,7 @@ ds_file_read(ds_file_handle_t fh, void *buf_base, size_t size,
 }
 
 ssize_t
-ds_file_write(ds_file_handle_t fh, const void *buf_base, size_t size,
+opends_write(opends_handle_t fh, const void *buf_base, size_t size,
               off_t file_offset, off_t buf_offset)
 {
 	return submit_sync_op(drv, true, fh, (void *)buf_base, size, file_offset,
@@ -1149,28 +1119,25 @@ ds_file_write(ds_file_handle_t fh, const void *buf_base, size_t size,
 /*  Stream-based async I/O                                             */
 /* ------------------------------------------------------------------ */
 
-/* Shared read/write async submit: validate, claim a queue slot, fill it, and
- * arm the per-stream gate. Direction is is_write; reads additionally launch the
- * bounce kernel. */
-static ds_file_error_t
-submit_async_op(struct aisio_driver *d, bool is_write, ds_file_handle_t fh,
+static opends_error_t
+submit_async_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
                 void *buf_base, size_t *size_p, off_t *file_offset_p,
-                off_t *buf_offset_p, ssize_t *bytes_p, ds_stream_t stream)
+                off_t *buf_offset_p, ssize_t *bytes_p, opends_stream_t stream)
 {
 	if (!d)
-		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	if (!fh || !buf_base || !size_p || !file_offset_p || !buf_offset_p ||
 	    !bytes_p)
-		return ds_file_err(DS_FILE_INVALID_VALUE);
+		return opends_err(OPENDS_INVALID_VALUE);
 	if (!stream)
-		return ds_file_err(DS_FILE_INVALID_VALUE);
+		return opends_err(OPENDS_INVALID_VALUE);
 	if (!d->async_ready)
-		return ds_file_err(DS_FILE_DEVICE_DRIVER_ERROR);
+		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
 	CUstream cus = (CUstream)stream;
 	struct opends_stream *opends_stream = opends_stream_get(d, cus);
 	if (!opends_stream)
-		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	uint32_t head = d->queue_head;
 	while (head - d->queue_tail >= FILE_OP_QUEUE_SIZE)
@@ -1205,10 +1172,10 @@ submit_async_op(struct aisio_driver *d, bool is_write, ds_file_handle_t fh,
 	 * since the next op raises the gate to a higher value. */
 	if (cuStreamWriteValue32(cus, opends_stream->gate_dptr, 2 * seq,
 	                         CU_STREAM_WRITE_VALUE_DEFAULT) != CUDA_SUCCESS)
-		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+		return opends_err(OPENDS_INTERNAL_ERROR);
 	if (cuStreamWaitValue32(cus, opends_stream->gate_dptr, 2 * seq + 1,
 	                        CU_STREAM_WAIT_VALUE_GEQ) != CUDA_SUCCESS)
-		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	op->state = FILE_OP_PENDING;
 	d->queue_head = head + 1;
@@ -1221,48 +1188,48 @@ submit_async_op(struct aisio_driver *d, bool is_write, ds_file_handle_t fh,
 	if (!is_write &&
 	    ds_bounce_launch((void *)(uintptr_t)opends_stream->bounce_ctx.plan_dev,
 	                     (void *)cus) != 0)
-		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+		return opends_err(OPENDS_INTERNAL_ERROR);
 
-	return ds_file_ok();
+	return opends_ok();
 }
 
-ds_file_error_t
-ds_file_read_async(ds_file_handle_t fh, void *buf_base, size_t *size_p,
+opends_error_t
+opends_read_async(opends_handle_t fh, void *buf_base, size_t *size_p,
                    off_t *file_offset_p, off_t *buf_offset_p,
-                   ssize_t *bytes_read_p, ds_stream_t stream)
+                   ssize_t *bytes_read_p, opends_stream_t stream)
 {
 	return submit_async_op(drv, false, fh, buf_base, size_p, file_offset_p,
 	                       buf_offset_p, bytes_read_p, stream);
 }
 
-ds_file_error_t
-ds_file_write_async(ds_file_handle_t fh, void *buf_base, size_t *size_p,
+opends_error_t
+opends_write_async(opends_handle_t fh, void *buf_base, size_t *size_p,
                     off_t *file_offset_p, off_t *buf_offset_p,
-                    ssize_t *bytes_written_p, ds_stream_t stream)
+                    ssize_t *bytes_written_p, opends_stream_t stream)
 {
 	return submit_async_op(drv, true, fh, buf_base, size_p, file_offset_p,
 	                       buf_offset_p, bytes_written_p, stream);
 }
 
-ds_file_error_t
-ds_file_stream_register(ds_stream_t stream, unsigned flags)
+opends_error_t
+opends_stream_register(opends_stream_t stream, unsigned flags)
 {
 	(void)flags;
 
 	if (!drv)
-		return ds_file_err(DS_FILE_DRIVER_NOT_INITIALIZED);
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	if (!stream)
-		return ds_file_err(DS_FILE_INVALID_VALUE);
+		return opends_err(OPENDS_INVALID_VALUE);
 
 	if (!drv->async_ready)
-		return ds_file_err(DS_FILE_DEVICE_DRIVER_ERROR);
+		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
 	CUstream cus = (CUstream)stream;
 
 	if (cu_stream_map_get(drv->stream_map, STREAM_MAP_MASK, cus) >= 0)
-		return ds_file_ok();
+		return opends_ok();
 	if (drv->n_streams >= MAX_STREAMS)
-		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	int n = drv->n_streams;
 	struct opends_stream *opends_stream = &drv->streams[n];
@@ -1276,50 +1243,50 @@ ds_file_stream_register(ds_stream_t stream, unsigned flags)
 
 	if (ds_bounce_ctx_init(&opends_stream->bounce_ctx, drv->xdev,
 	                       DS_BOUNCE_INIT_CAP) < 0)
-		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	if (cu_stream_map_put(drv->stream_map, STREAM_MAP_MASK, cus, n) < 0) {
 		ds_bounce_ctx_free(&opends_stream->bounce_ctx, drv->xdev);
-		return ds_file_err(DS_FILE_INTERNAL_ERROR);
+		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
 	drv->n_streams = n + 1;
-	return ds_file_ok();
+	return opends_ok();
 }
 
-ds_file_error_t
-ds_file_stream_deregister(ds_stream_t stream)
+opends_error_t
+opends_stream_deregister(opends_stream_t stream)
 {
 	(void)stream;
-	return ds_file_ok();
+	return opends_ok();
 }
 
 /* ------------------------------------------------------------------ */
 /*  Batch I/O (not implemented)                                        */
 /* ------------------------------------------------------------------ */
 
-ds_file_error_t
-ds_file_batch_io_setup(ds_file_batch_handle_t *batch_idp, unsigned nr)
+opends_error_t
+opends_batch_io_setup(opends_batch_handle_t *batch_idp, unsigned nr)
 {
 	(void)batch_idp;
 	(void)nr;
-	return ds_file_err(DS_FILE_ASYNC_NOT_SUPPORTED);
+	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
 }
 
-ds_file_error_t
-ds_file_batch_io_submit(ds_file_batch_handle_t batch_idp, unsigned nr,
-                        ds_file_io_params_t *iocbp, unsigned int flags)
+opends_error_t
+opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
+                        opends_io_params_t *iocbp, unsigned int flags)
 {
 	(void)batch_idp;
 	(void)nr;
 	(void)iocbp;
 	(void)flags;
-	return ds_file_err(DS_FILE_ASYNC_NOT_SUPPORTED);
+	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
 }
 
-ds_file_error_t
-ds_file_batch_io_get_status(ds_file_batch_handle_t batch_idp, unsigned min_nr,
-                            unsigned *nr, ds_file_io_events_t *iocbp,
+opends_error_t
+opends_batch_io_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
+                            unsigned *nr, opends_io_events_t *iocbp,
                             struct timespec *timeout)
 {
 	(void)batch_idp;
@@ -1327,18 +1294,18 @@ ds_file_batch_io_get_status(ds_file_batch_handle_t batch_idp, unsigned min_nr,
 	(void)nr;
 	(void)iocbp;
 	(void)timeout;
-	return ds_file_err(DS_FILE_ASYNC_NOT_SUPPORTED);
+	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
 }
 
-ds_file_error_t
-ds_file_batch_io_cancel(ds_file_batch_handle_t batch_idp)
+opends_error_t
+opends_batch_io_cancel(opends_batch_handle_t batch_idp)
 {
 	(void)batch_idp;
-	return ds_file_err(DS_FILE_ASYNC_NOT_SUPPORTED);
+	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
 }
 
 void
-ds_file_batch_io_destroy(ds_file_batch_handle_t batch_idp)
+opends_batch_io_destroy(opends_batch_handle_t batch_idp)
 {
 	(void)batch_idp;
 }

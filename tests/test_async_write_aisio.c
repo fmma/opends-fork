@@ -19,11 +19,11 @@ async_submit_write(struct write_homi_env *e, void *gpu, size_t size, off_t foff)
 	off_t fo = foff;
 	off_t bo = 0;
 	ssize_t bytes = -1;
-	ds_file_error_t err = ds_file_write_async(e->fh, gpu, &sz, &fo, &bo,
+	opends_error_t err = opends_write_async(e->fh, gpu, &sz, &fo, &bo,
 	                                          &bytes, e->stream);
-	if (err.err != DS_FILE_SUCCESS) {
+	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  write_async submit: %s\n",
-		        ds_file_op_status_error(err.err));
+		        opends_op_status_error(err.err));
 		return -1;
 	}
 	if (async_test_stream_sync_timeout(e->stream, 10.0, "write_async") != 0)
@@ -46,14 +46,14 @@ main(int argc, char **argv)
 
 	CUstream stream;
 	if (cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING) != CUDA_SUCCESS ||
-	    ds_file_stream_register(stream, 0).err != DS_FILE_SUCCESS) {
+	    opends_stream_register(stream, 0).err != OPENDS_SUCCESS) {
 		fprintf(stderr, "stream setup failed\n");
 		aisio_homi_teardown(&a);
 		unlink(path);
 		return 1;
 	}
 
-	fprintf(stderr, "ds_file_write_async tests (aisio backend, HOMI)\n");
+	fprintf(stderr, "opends_write_async tests (aisio backend, HOMI)\n");
 
 	struct write_homi_env env = {
 	        .fh = a.fh,
@@ -63,7 +63,7 @@ main(int argc, char **argv)
 	};
 	int failed = run_write_homi_tests(&env);
 
-	ds_file_stream_deregister(stream);
+	opends_stream_deregister(stream);
 	cuStreamDestroy(stream);
 	aisio_homi_teardown(&a);
 	unlink(path);

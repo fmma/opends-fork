@@ -17,12 +17,12 @@ from ctypes import (
 )
 from pathlib import Path
 
-DS_FILE_SUCCESS = 0
-DS_FILE_MEMORY_ALREADY_REGISTERED = 5023
+OPENDS_SUCCESS = 0
+OPENDS_MEMORY_ALREADY_REGISTERED = 5023
 
 
 class DsError(ctypes.Structure):
-    """ds_file_error_t: {ds_file_op_error_t err; ds_result_t dev_err;}."""
+    """opends_error_t: {opends_op_error_t err; opends_result_t dev_err;}."""
 
     _fields_ = [("err", c_int), ("dev_err", c_int)]
 
@@ -64,33 +64,33 @@ def _decl(name, restype, argtypes):
     return fn
 
 
-driver_open = _decl("ds_file_driver_open", DsError, [])
-driver_close = _decl("ds_file_driver_close", DsError, [])
-use_count = _decl("ds_file_use_count", c_long, [])
+driver_open = _decl("opends_driver_open", DsError, [])
+driver_close = _decl("opends_driver_close", DsError, [])
+use_count = _decl("opends_use_count", c_long, [])
 get_version = _decl(
-    "ds_file_get_version",
+    "opends_get_version",
     DsError,
     [ctypes.POINTER(c_uint), ctypes.POINTER(c_uint), ctypes.POINTER(c_uint)],
 )
 
 handle_register = _decl(
-    "ds_file_handle_register", DsError, [ctypes.POINTER(c_void_p), c_int]
+    "opends_handle_register", DsError, [ctypes.POINTER(c_void_p), c_int]
 )
-handle_deregister = _decl("ds_file_handle_deregister", None, [c_void_p])
+handle_deregister = _decl("opends_handle_deregister", None, [c_void_p])
 
-alloc = _decl("ds_file_alloc", c_void_p, [c_size_t])
-free = _decl("ds_file_free", None, [c_void_p])
+alloc = _decl("opends_alloc", c_void_p, [c_size_t])
+free = _decl("opends_free", None, [c_void_p])
 
 buf_register = _decl(
-    "ds_file_buf_register", DsError, [c_void_p, c_size_t, c_int]
+    "opends_buf_register", DsError, [c_void_p, c_size_t, c_int]
 )
-buf_deregister = _decl("ds_file_buf_deregister", DsError, [c_void_p])
+buf_deregister = _decl("opends_buf_deregister", DsError, [c_void_p])
 
 read = _decl(
-    "ds_file_read", c_ssize_t, [c_void_p, c_void_p, c_size_t, c_long, c_long]
+    "opends_read", c_ssize_t, [c_void_p, c_void_p, c_size_t, c_long, c_long]
 )
 write = _decl(
-    "ds_file_write", c_ssize_t, [c_void_p, c_void_p, c_size_t, c_long, c_long]
+    "opends_write", c_ssize_t, [c_void_p, c_void_p, c_size_t, c_long, c_long]
 )
 
-op_status_error = _decl("ds_file_op_status_error", c_char_p, [c_int])
+op_status_error = _decl("opends_op_status_error", c_char_p, [c_int])

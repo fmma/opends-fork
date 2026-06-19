@@ -24,8 +24,8 @@
 #define WRITE_PARTIAL_LEN (PAGE - WRITE_TAIL_KEEP)
 
 struct write_homi_env {
-	ds_file_handle_t fh;
-	ds_stream_t stream; /* unused by sync submit. */
+	opends_handle_t fh;
+	opends_stream_t stream; /* unused by sync submit. */
 	ssize_t (*submit_write)(struct write_homi_env *e, void *gpu,
 	                        size_t size, off_t foff);
 	const char *mode_label;
@@ -42,7 +42,7 @@ static int
 run_write_homi_tests(struct write_homi_env *e)
 {
 	int failed = 0;
-	void *gpu = ds_file_alloc(FILE_SIZE);
+	void *gpu = opends_alloc(FILE_SIZE);
 	unsigned char *host = malloc(FILE_SIZE);
 	unsigned char *exp = malloc(FILE_SIZE);
 	if (!gpu || !host || !exp) {
@@ -64,7 +64,7 @@ run_write_homi_tests(struct write_homi_env *e)
 
 	/* 2. P2P read-back of the just-written, fsync'd data. */
 	cuda_buf_zero(gpu, FILE_SIZE);
-	ssize_t r = ds_file_read(e->fh, gpu, FILE_SIZE, 0, 0);
+	ssize_t r = opends_read(e->fh, gpu, FILE_SIZE, 0, 0);
 	cuda_buf_to_host(host, gpu, FILE_SIZE);
 	if (r != (ssize_t)FILE_SIZE || memcmp(host, exp, FILE_SIZE)) {
 		fprintf(stderr, "[%s] alloc verify failed (r=%zd)\n",
@@ -90,7 +90,7 @@ run_write_homi_tests(struct write_homi_env *e)
 	for (size_t i = WRITE_PARTIAL_LEN; i < PAGE; i++)
 		exp[i] = write_pattern_byte(i);
 	cuda_buf_zero(gpu, PAGE);
-	r = ds_file_read(e->fh, gpu, PAGE, 0, 0);
+	r = opends_read(e->fh, gpu, PAGE, 0, 0);
 	cuda_buf_to_host(host, gpu, PAGE);
 	if (r != (ssize_t)PAGE || memcmp(host, exp, PAGE)) {
 		fprintf(stderr, "[%s] overwrite tail-preserve verify failed\n",
@@ -104,7 +104,7 @@ out:
 	free(exp);
 	free(host);
 	if (gpu)
-		ds_file_free(gpu);
+		opends_free(gpu);
 	return failed;
 }
 

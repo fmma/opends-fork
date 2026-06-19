@@ -1,7 +1,7 @@
 """User-facing OpenDS classes: OpenDSFile and HostBuffer.
 
 read/write are synchronous and return the byte count, mirroring the
-ds_file_read/ds_file_write C surface. Buffer arguments follow the
+opends_read/opends_write C surface. Buffer arguments follow the
 cuFile convention (base pointer plus dev_offset) so consumers written
 against GDS port with minimal change.
 """
@@ -63,12 +63,12 @@ class OpenDSError(Exception):
         self.code = int(code)
         self.dev_err = int(dev_err)
         msg = _c.op_status_error(self.code)
-        msg = msg.decode() if msg else "unknown ds_file error"
+        msg = msg.decode() if msg else "unknown opends error"
         super().__init__("%s (code %d, dev_err %d)" % (msg, self.code, self.dev_err))
 
 
 def _check(err):
-    if err.err != _c.DS_FILE_SUCCESS:
+    if err.err != _c.OPENDS_SUCCESS:
         raise OpenDSError(err.err, err.dev_err)
 
 
@@ -145,8 +145,8 @@ class _Registry:
                 )
             err = _c.buf_register(ptr, size, 0)
             if err.err not in (
-                _c.DS_FILE_SUCCESS,
-                _c.DS_FILE_MEMORY_ALREADY_REGISTERED,
+                _c.OPENDS_SUCCESS,
+                _c.OPENDS_MEMORY_ALREADY_REGISTERED,
             ):
                 raise OpenDSError(err.err, err.dev_err)
             self._regs[ptr] = size
@@ -212,7 +212,7 @@ def deregister_buffer(buf):
 
 
 # ---------------------------------------------------------------------------
-# HostBuffer: a ds_file_alloc-backed, 4096-aligned host allocation. Useful on
+# HostBuffer: an opends_alloc-backed, 4096-aligned host allocation. Useful on
 # the ref backend and as a DMA-able staging buffer without pulling in numpy.
 # ---------------------------------------------------------------------------
 
@@ -221,7 +221,7 @@ class HostBuffer:
     def __init__(self, size):
         ptr = _c.alloc(size)
         if not ptr:
-            raise MemoryError("ds_file_alloc(%d) failed" % size)
+            raise MemoryError("opends_alloc(%d) failed" % size)
         self._ptr = int(ptr)
         self._size = int(size)
 
