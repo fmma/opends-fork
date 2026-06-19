@@ -1,57 +1,19 @@
-# Build dependency identity, pinned for the target and tracked in-repo:
-# anyone running the cijoe tasks builds exactly these refs. Source and
-# build locations are machine layout, not identity, so they live in the
-# per-machine config: set [deps].src_root / build_root in test.toml
-# (see test.toml.example). Each dep is cloned to <src_root>/<dep> and
-# built in <build_root>/<dep>-build.
-
-# Temporary fork: adds the `.mem_map`/`.mem_unmap` hooks and CUDA BAR1
-# `device_pagesize` handling that the aisio register path needs, plus the
-# PRP page-count fix that lets PRP1 carry a sub-page buffer offset, and the
-# upcie attach mode (XNVME_UPCIE_ATTACH) that drives I/O qpairs handed out
-# by a HOMI-owned controller. Branch poc/opends-homi-qublk carries the
-# attach work on the aisio-pinned base. Revert to upstream `xnvme/xnvme`
-# once the relevant changes land upstream (upcie is vendored under xNVMe's
-# toolbox/third-party).
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
 ref = "poc/opends-homi-qublk"
 
-# Fork pin: based on xal main (past v0.2.0) for the "xal state in POSIX
-# shared memory" feature (xal_from_shm and the inode/extent/dirty pools
-# that homic maps) and the include-guard fix in libxal.h. The fork adds a
-# fix so xal_close() on a from_shm (shared_view) client of the XFS backend
-# does not free primary-owned device buffers (NULL xal->dev) and crash;
-# homic_get_extents is the first consumer to close such a view. Revert to
-# upstream xnvme/xal once that lands. fil's opends path no longer uses xal
-# and requires xal >=0.2.0, so it builds against this same pin (bench-only,
-# set up separately; see scripts/setup_deps.py).
 [xal.repository]
 remote = "https://github.com/fmma/xal"
 ref = "poc/opends-homi-qublk"
 
-# Fork pin: the `opends` backend reads files on the HOMI/qublk mount via
-# the OpenDS file API, mirroring the gds backend (xal enumeration on the
-# ublk block device, reads by path). Revert to upstream xnvme/fil once
-# the OpenDS-aware bench backend lands upstream.
 [fil.repository]
 remote = "https://github.com/fmma/fil"
 ref = "poc/opends-homi-qublk"
 
-# HOMI daemon (homid) and client (libhomic). Owns the userspace NVMe
-# controller and serves I/O qpairs plus xal extent trees. Depends on
-# installed xal and xnvme. Pinned at the fork's main tip for the M0
-# build skeleton; bumped to the integration branch once the
-# qpair-handout work lands.
 [homi.repository]
 remote = "https://github.com/fmma/homi"
 ref = "poc/opends-homi-qublk"
 
-# qublk ublk server. Exposes the NVMe drive as /dev/ublkb0 through the
-# ublk interface. Depends on installed xnvme plus liburing and the ublk
-# kernel headers. Pinned at the fork's main tip for the M0 build
-# skeleton; bumped to the integration branch once the HOMI-qpair attach
-# path lands.
 [qublk.repository]
 remote = "https://github.com/fmma/qublk"
 ref = "poc/opends-homi-qublk"
