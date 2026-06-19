@@ -162,13 +162,6 @@ ds_file_handle_deregister(ds_file_handle_t fh)
 	use_count--;
 }
 
-/* gds resolves layout through cuFile, with no separate filesystem index. */
-ds_file_error_t
-ds_file_reindex(void)
-{
-	return ds_file_ok();
-}
-
 /* ------------------------------------------------------------------ */
 /*  Buffer allocation                                                  */
 /* ------------------------------------------------------------------ */
