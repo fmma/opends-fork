@@ -76,8 +76,7 @@ def main(args, cijoe):
     if args.mode == "async":
         filperf.append("--async")
 
-    drop = "" if args.backend == "opends" else "echo 3 > /proc/sys/vm/drop_caches\n"
-    cmd = drop + " \\\n  ".join(filperf)
+    cmd = "echo 3 > /proc/sys/vm/drop_caches\n" + " \\\n  ".join(filperf)
     err, state = cijoe.run(cmd)
     if err:
         return err
