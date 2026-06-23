@@ -17,14 +17,11 @@
 
 #define _GNU_SOURCE
 
-#include "cu_stream_map.h"
-#include "ds_bounce_kernel.h"
+#include "ds_accel.h"
+#include "ds_stream_map.h"
 #include "ds_bounce_ctx.h"
 #include "opends_internal.h"
 #include "ds_extent.h"
-
-#include <cuda.h>
-#include <cuda_runtime.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -50,7 +47,6 @@
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
-#define DS_BOUNCE_INIT_CAP 4
 #define AISIO_QUEUE_DEPTH 512
 #define MAX_STREAMS 8192
 #define STREAM_WORDS_BYTES (MAX_STREAMS * sizeof(uint32_t))
@@ -76,11 +72,9 @@ struct aisio_handle {
 };
 
 struct opends_stream {
-	CUstream cu_stream;
 	uint32_t *gate;
-	CUdeviceptr gate_dptr;
+	ds_accel_devptr_t gate_dptr;
 	uint32_t next_seq;
-
 	struct ds_bounce_ctx bounce_ctx;
 };
 
@@ -151,14 +145,14 @@ struct aisio_driver {
 
 	void *sync_bounce_buf;
 	bool async_ready;
-	CUcontext cu_ctx;
+	ds_accel_ctx_t accel_ctx;
 
 	struct opends_stream streams[MAX_STREAMS];
 	int n_streams;
 	void *stream_words_host;
-	CUdeviceptr stream_words_dptr;
+	ds_accel_devptr_t stream_words_dptr;
 
-	struct cu_stream_map_entry stream_map[STREAM_MAP_SIZE];
+	struct ds_stream_map_entry stream_map[STREAM_MAP_SIZE];
 
 	struct file_op file_op_queue[FILE_OP_QUEUE_SIZE];
 	uint32_t queue_head;
@@ -234,7 +228,7 @@ aisio_pwrite_op(struct aisio_driver *d, struct aisio_handle *h, const void *src,
 		return -ENOMEM;
 
 	ssize_t ret = (ssize_t)size;
-	if (cudaMemcpy(bounce, src, size, cudaMemcpyDefault) != cudaSuccess) {
+	if (ds_accel->copy(bounce, src, size) != 0) {
 		ret = -EIO;
 		goto out;
 	}
@@ -284,7 +278,7 @@ open_device(struct aisio_driver *d, int fd)
 
 	setenv("XNVME_UPCIE_ATTACH", d->attach_descpath, 1);
 	struct xnvme_opts opts = xnvme_opts_default();
-	opts.be = "upcie-cuda";
+	opts.be = ds_accel->xnvme_be;
 
 	d->xdev = xnvme_dev_open(d->dev_uri, &opts);
 	unsetenv("XNVME_UPCIE_ATTACH");
@@ -404,7 +398,7 @@ submit_read_bounce(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
                    uint64_t cur_slba, size_t nbytes)
 {
 	struct ds_bounce_ctx *bounce_ctx = &op->u.async.opends_stream->bounce_ctx;
-	void *bounce_src = ds_bounce_ctx_buf(bounce_ctx, 0);
+	void *bounce_src = ds_bounce_ctx_buf(bounce_ctx);
 
 	uint64_t nlbas = (nbytes + (d->lba_size - 1)) >> d->lba_shift;
 	uint16_t nlb = (uint16_t)(nlbas - 1);
@@ -436,9 +430,8 @@ submit_read_bounce(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
 
 	op->tail_dst = abs_dst;
 	op->tail_nbytes = nbytes;
-	ds_bounce_ctx_plan_memcpy(bounce_ctx, 0, (uint64_t)(uintptr_t)op->tail_dst,
-	                          (uint64_t)(uintptr_t)bounce_src,
-	                          (uint32_t)op->tail_nbytes);
+	ds_bounce_ctx_stage(bounce_ctx, (uint64_t)(uintptr_t)op->tail_dst,
+	                    (uint64_t)(uintptr_t)bounce_src);
 
 	op->bounces_outstanding++;
 	op->bytes_acc += nbytes;
@@ -590,14 +583,14 @@ complete_read_op(struct aisio_driver *d, struct file_op *op)
 	if (op->mode == FILE_OP_ASYNC) {
 		struct opends_stream *s = op->u.async.opends_stream;
 		*op->u.async.bytes_read_p = n;
-		ds_bounce_ctx_finalize_plan(
+		ds_bounce_ctx_finalize(
 		        &s->bounce_ctx,
-		        (uint32_t)(op->err || !op->tail_nbytes ? 0 : 1));
+		        op->err || !op->tail_nbytes ? 0 : (uint32_t)op->tail_nbytes);
 		*s->gate = 2 * op->u.async.seq + 1;
 	} else {
 		if (!op->err && op->tail_nbytes &&
-		    cudaMemcpy(op->tail_dst, d->sync_bounce_buf, op->tail_nbytes,
-		               cudaMemcpyDefault) != cudaSuccess)
+		    ds_accel->copy(op->tail_dst, d->sync_bounce_buf,
+		                 op->tail_nbytes) != 0)
 			n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 		op->u.sync.result = n;
 	}
@@ -661,8 +654,7 @@ reap_in_flight(struct aisio_driver *d, struct file_op *op)
  * otherwise leave it for a later pass. Returns true while still gated. The gate
  * is a free-running +1 counter (the submitter's WriteValue then this thread's
  * release each tick it by one), so compare with serial/cyclic arithmetic to
- * match the device-side GEQ wait, keeping the sequence wrap-safe with no 2^31
- * in-flight bound. */
+ * match the device-side GEQ wait, keeping the sequence wrap-safe. */
 static bool
 poll_async_pending(struct aisio_driver *d, struct file_op *op)
 {
@@ -676,7 +668,7 @@ static void *
 io_thread_main(void *arg)
 {
 	struct aisio_driver *d = arg;
-	cuCtxSetCurrent(d->cu_ctx);
+	ds_accel->ctx_set(d->accel_ctx);
 
 	for (;;) {
 		bool busy = false;
@@ -734,27 +726,19 @@ io_thread_main(void *arg)
 static int
 async_setup(struct aisio_driver *d)
 {
-	if (cuCtxGetCurrent(&d->cu_ctx) != CUDA_SUCCESS || !d->cu_ctx)
+	if (ds_accel->ctx_get(&d->accel_ctx) < 0)
 		return -1;
 
 	void *host = NULL;
-	if (cuMemHostAlloc(&host, STREAM_WORDS_BYTES,
-	                   CU_MEMHOSTALLOC_DEVICEMAP |
-	                           CU_MEMHOSTALLOC_PORTABLE) != CUDA_SUCCESS)
+	ds_accel_devptr_t dptr = 0;
+	if (ds_accel->host_alloc_mapped(STREAM_WORDS_BYTES, &host, &dptr) < 0)
 		return -1;
-
-	CUdeviceptr dptr = 0;
-	if (cuMemHostGetDevicePointer(&dptr, host, 0) != CUDA_SUCCESS) {
-		cuMemFreeHost(host);
-		return -1;
-	}
 	memset(host, 0, STREAM_WORDS_BYTES);
 	d->stream_words_host = host;
 	d->stream_words_dptr = dptr;
 
-	if (xnvme_queue_init(d->xdev, AISIO_QUEUE_DEPTH, 0,
-	                     &d->queue) < 0) {
-		cuMemFreeHost(d->stream_words_host);
+	if (xnvme_queue_init(d->xdev, AISIO_QUEUE_DEPTH, 0, &d->queue) < 0) {
+		ds_accel->host_free(d->stream_words_host);
 		d->stream_words_host = NULL;
 		return -1;
 	}
@@ -763,7 +747,7 @@ async_setup(struct aisio_driver *d)
 	if (pthread_create(&d->io_thread, NULL, io_thread_main, d) != 0) {
 		xnvme_queue_term(d->queue);
 		d->queue = NULL;
-		cuMemFreeHost(d->stream_words_host);
+		ds_accel->host_free(d->stream_words_host);
 		d->stream_words_host = NULL;
 		return -1;
 	}
@@ -790,7 +774,7 @@ async_teardown(struct aisio_driver *d)
 	}
 
 	if (d->stream_words_host) {
-		cuMemFreeHost(d->stream_words_host);
+		ds_accel->host_free(d->stream_words_host);
 		d->stream_words_host = NULL;
 	}
 
@@ -798,9 +782,9 @@ async_teardown(struct aisio_driver *d)
 }
 
 static struct opends_stream *
-opends_stream_get(struct aisio_driver *d, CUstream stream)
+opends_stream_get(struct aisio_driver *d, ds_accel_stream_t stream)
 {
-	int idx = cu_stream_map_get(d->stream_map, STREAM_MAP_MASK, stream);
+	int idx = ds_stream_map_get(d->stream_map, STREAM_MAP_MASK, stream);
 	if (idx < 0)
 		return NULL;
 	return &d->streams[idx];
@@ -1134,7 +1118,7 @@ submit_async_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
 	if (!d->async_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
-	CUstream cus = (CUstream)stream;
+	ds_accel_stream_t cus = (ds_accel_stream_t)stream;
 	struct opends_stream *opends_stream = opends_stream_get(d, cus);
 	if (!opends_stream)
 		return opends_err(OPENDS_INTERNAL_ERROR);
@@ -1156,38 +1140,29 @@ submit_async_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
 	op->u.async.opends_stream = opends_stream;
 	op->u.async.seq = seq;
 
-	/* Order the host I/O thread against the user's CUDA stream through a
-	 * single per-stream gate word (strictly monotonic). The word carries
-	 * two phases per op. The main thread's WriteValue(2*seq) fires in
-	 * stream order once any user-queued host func has run and the stream is
-	 * ready (for a write, once the source data is produced). The I/O
-	 * thread's host store *gate = 2*seq+1 lands after the I/O finishes and
-	 * releases the WaitValue(>= 2*seq+1) below, blocking the stream until a
-	 * read's DMA lands, or a write's D2H copy completes so the source is not
-	 * overwritten early. */
-	/* These stream enqueue calls fail only on an invalid context or handle,
-	 * which poisons the stream irrecoverably. Do not roll back next_seq on
-	 * failure: a reused seq would let the I/O thread's gate check pass
-	 * before the stream is ready. A consumed-but-skipped seq is harmless
-	 * since the next op raises the gate to a higher value. */
-	if (cuStreamWriteValue32(cus, opends_stream->gate_dptr, 2 * seq,
-	                         CU_STREAM_WRITE_VALUE_DEFAULT) != CUDA_SUCCESS)
+	/* Order the I/O thread against the user's stream through a per-stream
+	 * gate word (strictly monotonic, two phases per op): the stream's
+	 * WriteValue(2*seq) signals arrival, the I/O thread's host store
+	 * 2*seq+1 releases the WaitValue(>= 2*seq+1) once the I/O is done (a
+	 * read's DMA landed, or a write's source was staged). Do not roll back
+	 * seq on failure: a reused seq would let the I/O thread's gate check
+	 * pass before the stream is ready. */
+	ds_accel_devptr_t gate = opends_stream->gate_dptr;
+	if (ds_accel->stream_write_value32(cus, gate, 2 * seq) != 0)
 		return opends_err(OPENDS_INTERNAL_ERROR);
-	if (cuStreamWaitValue32(cus, opends_stream->gate_dptr, 2 * seq + 1,
-	                        CU_STREAM_WAIT_VALUE_GEQ) != CUDA_SUCCESS)
+	if (ds_accel->stream_wait_value32_geq(cus, gate, 2 * seq + 1) != 0)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	op->state = FILE_OP_PENDING;
 	d->queue_head = head + 1;
 
-	/* Reads launch the bounce memcpy kernel (writes run none): offsets
-	 * resolve behind the gate, so the bounce count is unknown here, and the
-	 * kernel no-ops when it is zero. Launch after publishing so a failed
-	 * launch is still drained by the I/O thread (which releases the gate);
-	 * only this read is lost. */
+	/* Reads enqueue the deferred tail copy (writes run none): offsets
+	 * resolve behind the gate, so the copy size is unknown here, and
+	 * copy_stream no-ops when it is zero. Enqueue after publishing so a
+	 * failed enqueue is still drained by the I/O thread (which releases the
+	 * gate); only this read is lost. */
 	if (!is_write &&
-	    ds_bounce_launch((void *)(uintptr_t)opends_stream->bounce_ctx.plan_dev,
-	                     (void *)cus) != 0)
+	    ds_accel->copy_stream(opends_stream->bounce_ctx.desc_dev, cus) != 0)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	return opends_ok();
@@ -1224,9 +1199,9 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 	if (!drv->async_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
-	CUstream cus = (CUstream)stream;
+	ds_accel_stream_t cus = (ds_accel_stream_t)stream;
 
-	if (cu_stream_map_get(drv->stream_map, STREAM_MAP_MASK, cus) >= 0)
+	if (ds_stream_map_get(drv->stream_map, STREAM_MAP_MASK, cus) >= 0)
 		return opends_ok();
 	if (drv->n_streams >= MAX_STREAMS)
 		return opends_err(OPENDS_INTERNAL_ERROR);
@@ -1234,18 +1209,16 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 	int n = drv->n_streams;
 	struct opends_stream *opends_stream = &drv->streams[n];
 	uint32_t *words = (uint32_t *)drv->stream_words_host;
-	opends_stream->cu_stream = cus;
 	opends_stream->gate = &words[n];
 	opends_stream->gate_dptr =
-	        drv->stream_words_dptr + (CUdeviceptr)(n * sizeof(uint32_t));
+	        drv->stream_words_dptr + (size_t)n * sizeof(uint32_t);
 	*opends_stream->gate = 0;
 	opends_stream->next_seq = 0;
 
-	if (ds_bounce_ctx_init(&opends_stream->bounce_ctx, drv->xdev,
-	                       DS_BOUNCE_INIT_CAP) < 0)
+	if (ds_bounce_ctx_init(&opends_stream->bounce_ctx, drv->xdev) < 0)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
-	if (cu_stream_map_put(drv->stream_map, STREAM_MAP_MASK, cus, n) < 0) {
+	if (ds_stream_map_put(drv->stream_map, STREAM_MAP_MASK, cus, n) < 0) {
 		ds_bounce_ctx_free(&opends_stream->bounce_ctx, drv->xdev);
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	}

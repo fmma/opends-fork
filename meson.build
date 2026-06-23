@@ -106,6 +106,7 @@ if aisio_enabled
   libopends_aisio = shared_library('opends_aisio',
     'src/opends_common.c',
     'src/opends_aisio.c',
+    'src/ds_gpu_cuda.c',
     'src/ds_bounce_kernel.cu',
     'src/ds_bounce_ctx.c',
     include_directories : aisio_inc_dirs,
