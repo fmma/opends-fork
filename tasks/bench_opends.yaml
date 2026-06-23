@@ -39,6 +39,10 @@ steps:
     run: |
       '{{ config.test.repo_path }}/tasks/steps/homi_stack_up.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
+  - name: gen_lmcache
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/gen_lmcache_dataset.sh' '{{ config.test.mount_point }}/lmcacheish' 1820 14680064
+
   - name: opends_filesize8gib
     uses: bench_run
     with:
@@ -88,6 +92,23 @@ steps:
       data-dir: imagenetish
       batches: 300
       batch-size: 4096
+      mode: async
+
+  - name: opends_lmcacheish
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: lmcacheish
+      batches: 70
+      batch-size: 26
+
+  - name: opends_lmcacheish_async
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: lmcacheish
+      batches: 70
+      batch-size: 26
       mode: async
 
   - name: homi_stack_down

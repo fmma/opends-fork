@@ -21,11 +21,12 @@ SUITES = {
     "opends": "tasks/bench_opends.yaml",
 }
 
-DATASETS = ["filesize8gib", "tiktokish", "imagenetish"]
+DATASETS = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
 
 SETUP_STEPS = {
-    "gds":    ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"],
-    "opends": ["cpu_governor", "meta", "homi_stack_up"],
+    "gds":    ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount",
+               "gen_lmcache"],
+    "opends": ["cpu_governor", "meta", "homi_stack_up", "gen_lmcache"],
 }
 TEARDOWN_STEPS = {
     "gds":    [],
