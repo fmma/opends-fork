@@ -25,7 +25,7 @@ MARK_START = "<!-- bench:start -->"
 MARK_END = "<!-- bench:end -->"
 
 BACKENDS = ["gds", "opends"]
-DATASETS = ["filesize8gib", "tiktokish", "imagenetish"]
+DATASETS = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
 MODES = ["sync", "async"]
 
 
