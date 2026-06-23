@@ -30,16 +30,18 @@ below from bench artifacts; see "Benchmarking with filperf" for how
 to run the suites.
 
 <!-- bench:start -->
-_Commit `a781ba2-dirty` on host `swissknife` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU `NVIDIA RTX 2000 Ada Generation`)._
+_Commit `bd03a1f-dirty` on host `swissknife` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU `NVIDIA RTX 2000 Ada Generation`)._
 
 | Dataset       | mode  | gds (MiB/s) | opends (MiB/s) |
 |---------------|-------|--------------|--------------|
-| filesize8gib  | sync  |         6441 |         7124 |
-| filesize8gib  | async |         2424 |         7118 |
-| tiktokish     | sync  |         2725 |         4948 |
-| tiktokish     | async |         2325 |         5078 |
-| imagenetish   | sync  |          589 |          612 |
-| imagenetish   | async |          835 |         3036 |
+| filesize8gib  | sync  |         6885 |         6820 |
+| filesize8gib  | async |         2392 |         7085 |
+| tiktokish     | sync  |         3932 |         4855 |
+| tiktokish     | async |         2344 |         5356 |
+| imagenetish   | sync  |          338 |          353 |
+| imagenetish   | async |          850 |         2779 |
+| lmcacheish    | sync  |         5503 |         6023 |
+| lmcacheish    | async |         4980 |         4932 |
 <!-- bench:end -->
 
 ## opends API
