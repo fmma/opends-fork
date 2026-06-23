@@ -82,7 +82,7 @@ if [ ! -S "$SOCK" ]; then
 fi
 
 echo "starting qublk"
-setsid qublk --homi "$SOCK" --dev-uri "$BDF" --nr-queues 1 < /dev/null > /run/homi/qublk.log 2>&1 &
+setsid qublk "$BDF" --homi "$SOCK" --nr-queues 1 < /dev/null > /run/homi/qublk.log 2>&1 &
 UBLK=""
 for _ in $(seq 1 60); do
 	UBLK=$(grep -oE '/dev/ublkb[0-9]+' /run/homi/qublk.log 2>/dev/null | head -1)
