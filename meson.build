@@ -56,61 +56,72 @@ if gds_enabled
   )
 endif
 
-# aisio backend (xNVMe upcie-cuda + HOMI-served qpairs and extents).
-# Links libxnvme and the CUDA driver API. The driver API is needed for
-# stream-async opends_read_async, which gates the user's stream with
-# cuStreamWriteValue32 / cuStreamWaitValue32 against host pinned mapped
-# trigger and completion words polled by an internal I/O thread.
 xnvme_dep = dependency('xnvme', required : false)
 homic_dep = dependency('homic', required : false)
-cuda_drv_dep = cc.find_library('cuda',
-  dirs : [
-    '/usr/local/cuda/lib64/stubs',
-    '/usr/lib/x86_64-linux-gnu/stubs',
-    '/usr/local/cuda/lib64',
-  ],
-  required : false,
-)
 
-# cuda.h ships with the CUDA toolkit (under .../targets/<arch>/include
-# on Ubuntu) but a minimal driver-dev package may put it on the system
-# include path instead. Probe toolkit locations first; fall back to a
-# system-wide cc.has_header check.
-cuda_drv_inc_dirs = []
-foreach p : [
-  '/usr/local/cuda/targets/x86_64-linux/include',
-  '/usr/local/cuda/include',
-]
-  if cuda_drv_inc_dirs.length() == 0 and \
-      run_command('test', '-f', p / 'cuda.h', check : false).returncode() == 0
-    cuda_drv_inc_dirs += p
-  endif
-endforeach
-have_cuda_h = cuda_drv_inc_dirs.length() > 0 or cc.has_header('cuda.h')
+accel_backend = get_option('accel_backend')
+accel_src = 'src/ds_accel_@0@.c'.format(accel_backend)
+accel_kernel_lang = 'cuda'
+accel_kernel_args = []
+accel_sys_inc_dirs = []
 
-aisio_enabled = xnvme_dep.found() and cuda_dep.found() and \
-                cuda_drv_dep.found() and have_cuda_h and homic_dep.found()
+if accel_backend == 'cuda'
+  cuda_drv_dep = cc.find_library('cuda',
+    dirs : [
+      '/usr/local/cuda/lib64/stubs',
+      '/usr/lib/x86_64-linux-gnu/stubs',
+      '/usr/local/cuda/lib64',
+    ],
+    required : false,
+  )
+
+  # cuda.h ships with the CUDA toolkit (under .../targets/<arch>/include
+  # on Ubuntu) but a minimal driver-dev package may put it on the system
+  # include path instead. Probe toolkit locations first; fall back to a
+  # system-wide cc.has_header check.
+  foreach p : [
+    '/usr/local/cuda/targets/x86_64-linux/include',
+    '/usr/local/cuda/include',
+  ]
+    if accel_sys_inc_dirs.length() == 0 and \
+        run_command('test', '-f', p / 'cuda.h', check : false).returncode() == 0
+      accel_sys_inc_dirs += p
+    endif
+  endforeach
+  have_cuda_h = accel_sys_inc_dirs.length() > 0 or cc.has_header('cuda.h')
+
+  accel_deps = [cuda_dep, cuda_drv_dep]
+  accel_kernel_src = 'src/ds_bounce_kernel_cuda.cu'
+  accel_runtime_found = cuda_dep.found() and cuda_drv_dep.found() and have_cuda_h
+else
+  error('accel_backend=@0@ has no ds_accel implementation; only cuda is wired up (see docs/vendor-port.md).'.format(accel_backend))
+endif
+
+# Selected vendor's system include dirs as an include_directories object.
+accel_inc = []
+if accel_sys_inc_dirs.length() > 0
+  accel_inc = [include_directories(accel_sys_inc_dirs, is_system : true)]
+endif
+
+aisio_enabled = xnvme_dep.found() and accel_runtime_found and homic_dep.found()
 
 if aisio_enabled
   # The async path links a tiny D2D copy kernel compiled from
-  # src/ds_bounce_kernel.cu. Adding the cuda language only when aisio is
+  # src/ds_bounce_kernel_cuda.cu. Adding the kernel language only when aisio is
   # actually built keeps ref-only builds free of an nvcc dependency.
-  add_languages('cuda', required : true, native : false)
+  add_languages(accel_kernel_lang, required : true, native : false)
 
-  aisio_inc_dirs = [opends_inc, opends_internal_inc]
-  if cuda_drv_inc_dirs.length() > 0
-    aisio_inc_dirs += include_directories(cuda_drv_inc_dirs,
-                                          is_system : true)
-  endif
+  aisio_inc_dirs = [opends_inc, opends_internal_inc] + accel_inc
 
   libopends_aisio = shared_library('opends_aisio',
     'src/opends_common.c',
     'src/opends_aisio.c',
-    'src/ds_gpu_cuda.c',
-    'src/ds_bounce_kernel.cu',
+    accel_src,
+    accel_kernel_src,
     'src/ds_bounce_ctx.c',
     include_directories : aisio_inc_dirs,
-    dependencies : [xnvme_dep, cuda_dep, cuda_drv_dep, homic_dep],
+    dependencies : [xnvme_dep, homic_dep] + accel_deps,
+    cuda_args : accel_kernel_args,
     install : true,
   )
 
@@ -127,7 +138,7 @@ if aisio_enabled
 
   pkg.generate(libopends_aisio,
     name : 'opends_aisio',
-    description : 'OpenDS aisio backend (raw NVMe via xNVMe upcie-cuda)',
+    description : 'OpenDS aisio backend (raw NVMe via xNVMe upcie P2P)',
     requires : ['xnvme'],
   )
 endif
@@ -164,11 +175,7 @@ endif
 aisio_test_enabled = aisio_enabled and cuda_dep.found()
 
 if aisio_test_enabled
-  aisio_test_inc_dirs = [opends_internal_inc, tests_inc]
-  if cuda_drv_inc_dirs.length() > 0
-    aisio_test_inc_dirs += include_directories(cuda_drv_inc_dirs,
-                                               is_system : true)
-  endif
+  aisio_test_inc_dirs = [opends_internal_inc, tests_inc] + accel_inc
 
   executable('test_sync_read_aisio',
     'tests/test_sync_read_aisio.c',
@@ -219,4 +226,5 @@ summary({
   'Reference backend' : true,
   'GDS backend' : gds_enabled,
   'aisio backend' : aisio_enabled,
+  'aisio accelerator vendor' : accel_backend,
 }, section : 'Backends')
