@@ -1,12 +1,9 @@
 [test]
-repo_path = "/root/OpenDS"             # Where scripts/rsync.py lands the tree on the target.
-build_dir = "/root/build/opends-build" # OpenDS build tree. Persistent dir outside repo_path; /tmp is emptied on reboot.
-nvme_bdf = "CHANGE_ME"                  # PCI BDF of NVMe device (lspci -D -d ::0108). bind/mount scripts resolve the /dev/nvmeXnY name from sysfs.
-mount_point = "CHANGE_ME"               # Where the NVMe namespace is mounted (e.g. /mnt/datasets). Tests write only into <mount>/opends_tests/.
+repo_path = "/root/src/OpenDS"
+build_dir = "/root/build/opends-build"
+nvme_bdf = "CHANGE_ME" # "0000:01:00.0"
+mount_point = "CHANGE_ME" # "/mnt/datasets"
 
 [deps]
-# Per-machine layout for the build dependencies (identity is in deps.toml).
-# Each dep is cloned to <src_root>/<dep> and built in <build_root>/<dep>-build.
-# Keep both outside repo_path (rsync --delete territory) and off /tmp (wiped on reboot).
-src_root = "/root"
+src_root = "/root/src"
 build_root = "/root/build"
