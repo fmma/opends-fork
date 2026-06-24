@@ -1,0 +1,6 @@
+option('accel_backend',
+  type : 'combo',
+  choices : ['cuda', 'rocm'],
+  value : 'cuda',
+  description : 'Accelerator vendor runtime for the aisio backend. Only cuda is implemented; rocm is reserved for the future ROCm/HIP port (see docs/vendor-port.md).',
+)

@@ -72,6 +72,16 @@ CUDA ops table's `bounce` field binds to) and selects its runtime
 launch-error call on the `DS_GPU_HIP` build macro. The kernel body and
 the `<<<>>>` launch are already valid under hipcc unchanged.
 
+### Build selection
+
+`meson_options.txt` exposes `gpu_backend` (default `cuda`). `meson.build`
+turns it into the `ds_gpu_<vendor>.c` source, the linked GPU deps, the
+system include dirs, and the bounce-kernel language and compile args,
+behind one branch. Only `cuda` is wired up; any other value stops
+configuration with a pointer here. The build then has the same single
+seam as the code: one option and one branch, not edits scattered across
+the aisio rules.
+
 ## Adding a vendor (deferred)
 
 None of the following is implemented yet. The interface is shaped to
@@ -79,9 +89,12 @@ accommodate it.
 
 - **V1.** `src/ds_gpu_hip.h`/`.c` implementing `struct ds_gpu_ops` and
   binding `ds_gpu`, plus the HIP branch of `ds_bounce_kernel.cu`.
-- **V2.** A `gpu_backend` meson option (`cuda` / `rocm`): compile the
-  matching `ds_gpu_<vendor>.c`, define `DS_GPU_HIP` for the kernel, and
-  set the vendor's `xnvme_be` (`"upcie-amd"`).
+- **V2.** The `gpu_backend` meson option already selects the
+  `ds_gpu_<vendor>.c` source, the vendor deps, the kernel language, and
+  the kernel args. ROCm is a new `elif gpu_backend == 'rocm'` branch in
+  `meson.build` (its deps, `-DDS_GPU_HIP` in `gpu_kernel_args`, ROCm
+  include dirs) plus setting the vendor's `xnvme_be` (`"upcie-amd"`) in
+  `ds_gpu_rocm.c`.
 - **V3.** Python: make the context-preservation guard and the loader
   vendor-aware (keyed on the backend name). The `__cuda_array_interface__`
   buffer view already covers ROCm tensors.
