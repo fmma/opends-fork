@@ -6,3 +6,6 @@ configs/test.toml
 CLAUDE.md
 .claude/
 __pycache__/
+
+# Vendor API headers kept locally for reference only, not redistributed.
+reference/*.h
