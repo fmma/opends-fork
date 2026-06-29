@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
 # Put the CPU in a stable bench mode: schedutil governor + boost disabled.
 # Reverts to the kernel default on reboot.
 set -e

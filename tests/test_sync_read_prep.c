@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * test_sync_read_prep - Write the shared pattern file consumed by
  * the per-backend sync-read tests, and emit a small extents record

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
 """Render the README perf block from bench artifacts.
 
 Reads artifacts written by the bench suites

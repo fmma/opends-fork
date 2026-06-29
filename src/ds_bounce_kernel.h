@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * Bounce copy descriptor shared between opends_aisio.c (host) and the
  * vendor kernel TU (device). The async path issues a stream wait-value on

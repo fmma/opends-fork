@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
 # Stop any running HOMI/qublk stack and clear its ublk state. A stack leaked by
 # a crashed or aborted prior run (homid/qublk left owning the controller via
 # upcie) contends with whatever claims the device next -- e.g. bind_nvme handing

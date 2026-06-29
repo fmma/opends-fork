@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
 # Unmount and hand an NVMe device to userspace (xnvme upcie-cuda), leaving
 # the controller in a clean, verified power-on state.
 set -e

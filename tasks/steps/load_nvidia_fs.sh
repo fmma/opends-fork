@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
 # Ensure nvidia-fs.ko is loaded so cuFile uses the real P2P path
 # (NVMe -> GPU BAR1 via nvidia-fs) instead of CPU-staged compat mode.
 # With allow_compat_mode=false in /etc/cufile.json, cuFile errors out

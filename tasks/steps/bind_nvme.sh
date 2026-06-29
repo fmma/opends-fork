@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
 # Bind NVMe device to kernel driver, print the resolved namespace path.
 #
 # The kernel allocates a fresh nvmeXnY name on each bind whenever the

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * opends_gds.c - GDS backend using NVIDIA cuFile.
  *

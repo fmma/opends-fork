@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
 """Run filperf-driven bench suites on the target.
 
 aisio's tasks/setup_dataset.yaml must have been run on the target

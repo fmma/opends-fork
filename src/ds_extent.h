@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * ds_extent.h - File-to-LBA extent triple.
  *

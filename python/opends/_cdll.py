@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """Library loader and ctypes prototypes for the OpenDS C ABI.
 
 ABI churn lives here. Every signature mirrors the headers under

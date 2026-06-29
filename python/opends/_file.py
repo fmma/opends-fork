@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """User-facing OpenDS classes: OpenDSFile and HostBuffer.
 
 read/write are synchronous and return the byte count, mirroring the

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * opends_internal.h - Helpers for opends backend implementations.
  * Not part of the public API.

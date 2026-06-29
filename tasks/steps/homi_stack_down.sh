@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
 # Tear down the HOMI/qublk stack and return the NVMe device to the kernel
 # driver. Unmounts the ublk-backed filesystem, stops qublk and homid (a clean
 # SIGTERM lets qublk run STOP_DEV/DEL_DEV), then rebinds nvme.

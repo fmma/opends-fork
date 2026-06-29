@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * ds_accel.h - vendor-neutral accelerator runtime interface for the aisio backend.
  *

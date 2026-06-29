@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * ds_accel_cuda.c - CUDA implementation of the ds_accel.h interface.
  *

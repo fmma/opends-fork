@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """Capture build commit and target platform info to artifacts/meta.json.
 
 Runs early in a bench suite so its results carry the commit hash and

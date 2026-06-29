@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """OpenDS Python bindings.
 
 Thin ctypes layer over the OpenDS C ABI. The user-facing surface lives

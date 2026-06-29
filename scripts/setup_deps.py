@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
 """Install OpenDS target dependencies on the target.
 
 Builds and installs xNVMe, xal, HOMI, qublk, and OpenDS in dependency

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * opends.h - Accelerator Direct Storage File I/O Interface
  *

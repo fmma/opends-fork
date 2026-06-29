@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
 # Bring up the HOMI/qublk stack so the aisio backend can attach qpairs and read
 # files on a mounted filesystem. Hands the NVMe controller to userspace (HOMI),
 # exposes it as a ublk block device (qublk), and mounts the existing XFS over it

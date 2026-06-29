@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * test_aisio_homi.h - Shared setup for aisio tests against a live HOMI.
  *

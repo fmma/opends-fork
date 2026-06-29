@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
 """Build OpenDS on the target.
 
 Assumes the tree has been synced to the target (rsync.py).
