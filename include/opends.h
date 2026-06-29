@@ -83,8 +83,7 @@ typedef enum opends_op_error {
 	OPENDS_MEMORY_PINNING_FAILED    = 5036,
 	OPENDS_BATCH_FULL               = 5037,
 	OPENDS_ASYNC_NOT_SUPPORTED      = 5038,
-	/* 5039 intentionally unused */
-	OPENDS_IO_MAX_ERROR             = 5040,
+	OPENDS_IO_MAX_ERROR             = 5039,
 } opends_op_error_t;
 /* clang-format on */
 
