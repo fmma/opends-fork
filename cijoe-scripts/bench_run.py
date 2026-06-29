@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """Run a single filperf bench and stash its stdout as an artifact.
 
 The artifact is the verbatim filperf output (CSV plus `--summary`

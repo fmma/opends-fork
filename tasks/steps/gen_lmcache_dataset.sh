@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
 # Generate a synthetic LMCache-shaped dataset: N files, each laid out like
 # LMCache's GdsBackend writes a KV chunk -- a metadata header
 # (_METADATA_MAX_SIZE = 4096) followed by the KV blob at offset 4096. KV size

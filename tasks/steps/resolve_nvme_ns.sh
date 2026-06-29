@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
 # Resolve /dev/nvmeXnY for the namespace currently bound under BDF.
 #
 # Kernel renumbers the device name on each bind whenever earlier

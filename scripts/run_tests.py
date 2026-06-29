@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
 """Run OpenDS test suites on the target.
 
 Each test step is identified by (backend, test). When no flag is

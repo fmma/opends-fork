@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
 # Rebind an NVMe device to the kernel nvme driver.
 set -e
 

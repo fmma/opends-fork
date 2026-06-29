@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * read_pattern.h - Shared pattern rule for sync-read tests.
  *

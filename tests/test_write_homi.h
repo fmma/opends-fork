@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * test_write_homi.h - Shared write-test logic for the aisio backend on a live
  * HOMI/qublk stack.

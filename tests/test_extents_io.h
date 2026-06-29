@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * test_extents_io.h - Tiny on-disk extent record for the aisio tests.
  *

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 #include "opends_internal.h"
 
 /* clang-format off */

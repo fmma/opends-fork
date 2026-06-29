@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * Regression test: opends_buf_register on an 8 GiB cudaMalloc'd
  * buffer. Mirrors the bench-time flow where fil allocates a single

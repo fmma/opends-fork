@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * Large-read coherency test for the aisio backend on a live HOMI/qublk stack.
  *

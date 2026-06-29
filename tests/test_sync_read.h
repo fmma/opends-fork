@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * test_sync_read.h - Backend-agnostic unit tests for synchronous
  * opends_read.

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
 """Rsync the local working tree to the target.
 
 After the rsync succeeds, the host's `git describe --always --dirty`

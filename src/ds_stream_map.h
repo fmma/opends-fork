@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * ds_stream_map.h - tiny open-addressing map keyed on a GPU stream.
  *

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * Shared CUDA helpers for GPU-backed backend tests (gds, aisio).
  *

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * CUDA bounce copy kernel for the aisio async path. The host enqueues it
  * behind the stream wait-value gate (see ds_bounce_kernel.h), so by launch

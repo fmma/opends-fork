@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """Smoke test for the OpenDS Python bindings against the ref backend.
 
 Dependency-free: uses opends_alloc-backed HostBuffers, so it runs on
