@@ -16,10 +16,68 @@ kernel page cache is irrelevant and the device's BDF/socket are
 passed through OPENDS_HOMI_DEV/OPENDS_HOMI_SOCKET.
 """
 
+import json
 import logging as log
+import re
 from pathlib import Path
 
 NOFILE = 1048576
+
+SUMMARY_FIELDS = {
+    "Total time": "total_time_s",
+    "Prep time": "prep_time_s",
+    "IO time": "io_time_s",
+    "File/s": "files_per_s",
+    "MiB/s": "mib_s",
+    "IOPS": "iops",
+    "Number of IOs": "num_ios",
+}
+
+
+INT_FIELDS = {"num_ios"}
+
+
+def _parse_summary(text):
+    out = {}
+    for label, field in SUMMARY_FIELDS.items():
+        m = re.search(rf"^\s*{re.escape(label)}:\s*([0-9.]+)\s*$", text, re.MULTILINE)
+        if m:
+            out[field] = int(float(m.group(1))) if field in INT_FIELDS \
+                else float(m.group(1))
+    return out
+
+
+def _append_record(cijoe, args, log_name, text):
+    artifacts = Path(cijoe.output_path) / "artifacts"
+    meta_path = artifacts / "meta.json"
+    if not meta_path.is_file():
+        log.warning("no meta.json; skipping history record")
+        return
+    meta = json.loads(meta_path.read_text())
+    env_keys = ("hostname", "kernel", "cuda", "nvme_bdf", "nvme_model",
+                "gpu_model", "hugepages_2m")
+    record = {
+        "schema_version": 1,
+        "run_id": f"{meta['timestamp']}-{meta['hostname']}",
+        "run_timestamp": meta["timestamp"],
+        "opends": {"sha": meta.get("commit_sha", ""),
+                   "dirty": meta.get("dirty", False)},
+        "deps": meta.get("deps", {}),
+        "env": {k: meta.get(k) for k in env_keys},
+        "config": {
+            "backend": args.backend,
+            "dataset": args.data_dir,
+            "mode": args.mode,
+            "cold_cache": True,
+            "batches": args.batches,
+            "batch_size": args.batch_size,
+            "n": 1,
+        },
+        "result": _parse_summary(text),
+        "raw_log": log_name,
+    }
+    with (artifacts / "history.jsonl").open("a") as f:
+        f.write(json.dumps(record) + "\n")
 
 
 def add_args(parser):
@@ -88,4 +146,5 @@ def main(args, cijoe):
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(state.output())
     log.info(f"wrote {out}")
+    _append_record(cijoe, args, out.name, state.output())
     return 0
