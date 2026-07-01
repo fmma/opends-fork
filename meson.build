@@ -213,6 +213,12 @@ if aisio_test_enabled
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
+
+  executable('aisio_homi_demo',
+    'examples/aisio_homi_demo.c',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
+  )
 else
   executable('test_sync_read_aisio', 'tests/skip.c')
   executable('test_register_large_aisio', 'tests/skip.c')
