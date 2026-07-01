@@ -59,8 +59,8 @@ def _collect(backend):
 def _render(metas, results):
     meta = metas.get("opends") or metas.get("gds") or {}
 
-    stamp = (f"_Commit `{meta.get('commit', '?')}` on host "
-             f"`{meta.get('hostname', '?')}` (kernel `{meta.get('kernel', '?')}`, "
+    stamp = (f"_Commit `{meta.get('commit', '?')}` "
+             f"(kernel `{meta.get('kernel', '?')}`, "
              f"NVMe `{meta.get('nvme_model', '?')}`, "
              f"GPU `{meta.get('gpu_model', '?')}`)._")
 
