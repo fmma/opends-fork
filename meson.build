@@ -116,7 +116,6 @@ if aisio_enabled
     'src/opends_aisio.c',
     accel_src,
     accel_kernel_src,
-    'src/ds_bounce_ctx.c',
     include_directories : aisio_inc_dirs,
     dependencies : [xnvme_dep, homic_dep] + accel_deps,
     cuda_args : accel_kernel_args,
