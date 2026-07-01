@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// M6 end-to-end demo: read a file on a HOMI/qublk-backed mounted XFS into GPU
+// End-to-end demo: read a file on a HOMI/qublk-backed mounted XFS into GPU
 // memory via the OpenDS aisio backend, and verify against the kernel-read bytes.
 #define _GNU_SOURCE
 #include <opends.h>
