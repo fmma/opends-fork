@@ -56,7 +56,6 @@ main(int argc, char **argv)
 		exp[i] = (unsigned char)((i + 0x33) & 0xff);
 	cuda_buf_from_host(gpu, exp, blk);
 
-	/* Allocating write into the empty file. */
 	ssize_t w = opends_write(a.fh, gpu, blk, 0, 0);
 	if (w != (ssize_t)blk) {
 		fprintf(stderr, "  block-alloc write: %zd\n", w);
@@ -71,7 +70,6 @@ main(int argc, char **argv)
 		failed++;
 	}
 
-	/* P2P read-back. */
 	cuda_buf_zero(gpu, blk);
 	ssize_t r = opends_read(a.fh, gpu, blk, 0, 0);
 	cuda_buf_to_host(host, gpu, blk);

@@ -16,7 +16,7 @@
  * reads) before raising the DMA-done gate; the kernel reads it once the
  * gate clears. n_bytes == 0 no-ops, so a zero-init descriptor is safe. */
 struct ds_bounce_copy {
-	uint64_t dst;     /* device pointer. */
+	uint64_t dst;
 	uint64_t src;     /* device pointer (bounce slot). */
 	uint32_t n_bytes; /* 0 = no-op. */
 	uint32_t _pad;

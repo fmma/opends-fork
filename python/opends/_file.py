@@ -201,7 +201,6 @@ def register_buffer(buf, size=None):
 
 
 def deregister_buffer(buf):
-    """Drop a registration established by register_buffer or first use."""
     ptr, _ = _buffer_view(buf)
     with _lock:
         pinned = ptr in _pinned
@@ -278,7 +277,7 @@ def _buffer_view(buf):
     ai = getattr(buf, "__array_interface__", None)
     if ai is not None:
         return int(ai["data"][0]), _nbytes_from_iface(ai)
-    if hasattr(buf, "data_ptr"):  # torch.Tensor (CPU)
+    if hasattr(buf, "data_ptr"):
         nbytes = getattr(buf, "nbytes", None)
         if nbytes is None:
             nbytes = buf.numel() * buf.element_size()

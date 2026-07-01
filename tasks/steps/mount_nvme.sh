@@ -1,6 +1,5 @@
 #!/bin/bash
 # SPDX-License-Identifier: BSD-3-Clause
-# Resolve the NVMe namespace for BDF and mount it at MOUNT.
 set -e
 
 if [ $# -ne 2 ]; then

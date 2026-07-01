@@ -9,8 +9,7 @@ scripts/bench_report.py so the cijoe step stays oblivious to
 filperf's exact output shape.
 
 Each bench run runs filperf under `prlimit --nofile`. nofile is
-required for opends (one dma-buf fd per 2 MiB chunk on NVIDIA) and
-harmless elsewhere. gds runs get a cold-cache `drop_caches`; opends
+required for opends and harmless elsewhere. gds runs get a cold-cache `drop_caches`; opends
 reads files on the HOMI/qublk mount via DMA into GPU memory, so the
 kernel page cache is irrelevant and the device's BDF/socket are
 passed through OPENDS_HOMI_DEV/OPENDS_HOMI_SOCKET.

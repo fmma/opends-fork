@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""Shared helpers for the scripts/ entrypoints."""
 
 import subprocess
 import sys

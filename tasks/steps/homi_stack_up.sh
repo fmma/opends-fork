@@ -56,9 +56,7 @@ echo "starting homid"
 # core_pattern). Harmless when cores are disabled by policy.
 ulimit -c unlimited 2>/dev/null || true
 # Detach the daemon fully: redirect on the outer command so neither the daemon
-# nor any wrapper keeps this step's stdout/stderr open. Otherwise the SSH
-# channel never sees EOF and the cijoe step (and plain ssh) hangs even though
-# the daemon started fine.
+# nor any wrapper keeps this step's stdout/stderr open.
 setsid homid --config "$CONF" < /dev/null > /run/homi/homid.log 2>&1 &
 # homid is launched via a bash wrapper, so the named process appears a moment
 # after the '&'. Wait for it to show up before watching for it to die.

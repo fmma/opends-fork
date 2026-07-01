@@ -58,7 +58,7 @@ async_test_stream_sync_timeout(CUstream stream, double timeout_s,
 			        label, elapsed);
 			return 1;
 		}
-		struct timespec sl = {0, 1000000}; /* 1 ms */
+		struct timespec sl = {0, 1000000};
 		nanosleep(&sl, NULL);
 	}
 }

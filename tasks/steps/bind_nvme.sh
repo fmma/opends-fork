@@ -1,10 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: BSD-3-Clause
 # Bind NVMe device to kernel driver, print the resolved namespace path.
-#
-# The kernel allocates a fresh nvmeXnY name on each bind whenever the
-# prior numbers cannot be reused (e.g. when nvidia_fs leaks a module
-# refcount across runs), so callers cannot assume a stable /dev/nvme0n1.
 # Use resolve_nvme_ns.sh to discover the actual namespace and print it
 # on stdout so the caller can capture it.
 set -e

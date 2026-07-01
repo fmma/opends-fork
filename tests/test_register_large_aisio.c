@@ -6,8 +6,8 @@
  * filesize8gib dataset) and hands it to opends_buf_register.
  *
  * Catches regressions in the cudaMalloc → xnvme_mem_map →
- * cuMemGetHandleForAddressRange path at scale (LUT capacity, BAR1
- * contiguity, alloc_granularity handling) that small-buffer tests
+ * cuMemGetHandleForAddressRange path at scale (LUT capacity,
+ * alloc_granularity handling) that small-buffer tests
  * don't exercise.
  */
 

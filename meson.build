@@ -13,7 +13,6 @@ public_headers = files(
 )
 install_headers(public_headers)
 
-# Reference backend (pread/pwrite on host buffers, no external dependencies)
 libopends_ref = shared_library('opends_ref',
   'src/opends_common.c',
   'src/opends_ref.c',
@@ -32,7 +31,6 @@ pkg.generate(libopends_ref,
   description : 'OpenDS reference backend',
 )
 
-# GDS backend (NVIDIA cuFile + CUDA)
 cc = meson.get_compiler('c')
 cuda_dep = dependency('cuda', modules : ['cuda', 'cudart'], required : false)
 cufile_dep = cc.find_library('cufile',
@@ -98,7 +96,6 @@ else
   error('accel_backend=@0@ has no ds_accel implementation; only cuda is wired up (see docs/vendor-port.md).'.format(accel_backend))
 endif
 
-# Selected vendor's system include dirs as an include_directories object.
 accel_inc = []
 if accel_sys_inc_dirs.length() > 0
   accel_inc = [include_directories(accel_sys_inc_dirs, is_system : true)]

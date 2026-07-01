@@ -75,7 +75,7 @@ steps:
   - name: test_register_large_aisio
     run: |
       # cudamem_mapping holds one dma-buf fd per alloc_granularity-aligned
-      # chunk (2 MiB on NVIDIA discrete GPUs); 8 GiB needs 4096 fds per
+      # chunk (2 MiB); 8 GiB needs 4096 fds per
       # registration. 1 Mi headroom absorbs multi-buffer flows and matches
       # the kernel default fs.nr_open. prlimit sets both soft and hard
       # atomically (raising hard requires CAP_SYS_RESOURCE; the cijoe

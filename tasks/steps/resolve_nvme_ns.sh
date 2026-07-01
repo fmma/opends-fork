@@ -1,11 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: BSD-3-Clause
 # Resolve /dev/nvmeXnY for the namespace currently bound under BDF.
-#
-# Kernel renumbers the device name on each bind whenever earlier
-# numbers cannot be reused (e.g. nvidia_fs leaving an nvme module
-# refcount across runs). Walk /sys/block/nvme* and pick the entry
-# whose backing device sits under the given BDF.
+# Walk /sys/block/nvme* and pick the entry whose backing device sits
+# under the given BDF.
 set -e
 
 if [ $# -ne 1 ]; then

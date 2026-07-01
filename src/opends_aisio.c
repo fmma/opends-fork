@@ -688,7 +688,7 @@ io_thread_main(void *arg)
 					if (poll_async_pending(d, op))
 						busy = true;
 					break;
-				case FILE_OP_BATCH: /* not produced yet */
+				case FILE_OP_BATCH:
 					break;
 				}
 				break;
@@ -716,7 +716,7 @@ io_thread_main(void *arg)
 			xnvme_queue_poke(d->queue, 0);
 			sched_yield();
 		} else {
-			struct timespec ts = {0, 100000}; /* 100 us */
+			struct timespec ts = {0, 100000};
 			nanosleep(&ts, NULL);
 		}
 	}

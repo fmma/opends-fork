@@ -19,8 +19,6 @@
 
 #include <stdint.h>
 
-/* Samsung 990 PRO rejects non-page-aligned PRP1 with status 0x13, so each
- * slot is one PRP page and dst spans are page-aligned. */
 #define NVME_PRP_PAGE 4096
 
 struct xnvme_dev;
