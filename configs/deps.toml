@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
 ref = "poc/opends-homi-qublk"
