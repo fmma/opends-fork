@@ -36,10 +36,9 @@ def _short_nvme(machine_readable):
     """Render a tighter NVMe identifier from `lspci -mm -s <bdf>` output.
 
     The verbose `lspci -s` form prefixes the device with the full legal
-    vendor name ("Samsung Electronics Co Ltd") and a generic `NVMe SSD
-    Controller` qualifier, making the README platform stamp unwieldy.
-    Take the short vendor (first token) plus the device string with
-    that qualifier stripped, e.g. `Samsung S4LV008[Pascal]`.
+    vendor name and a generic `NVMe SSD Controller` qualifier, making the
+    stamp unwieldy. Take the short vendor (first token) plus the device
+    string with that qualifier stripped.
     """
     parts = shlex.split(machine_readable)
     if len(parts) < 4:
@@ -50,7 +49,6 @@ def _short_nvme(machine_readable):
 
 
 def _split_commit(stamp):
-    """Split a `<sha>` or `<sha>-dirty` stamp into (sha, dirty)."""
     if not stamp:
         return "", False
     dirty = stamp.endswith("-dirty")

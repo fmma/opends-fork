@@ -18,13 +18,9 @@ if mountpoint -q "$MOUNT"; then
 	umount "$MOUNT"
 fi
 
-# Re-enumerate the function before unbinding. A bare FLR (echo 1 > reset) is
-# not enough on the Samsung 990 PRO: a userspace owner killed mid-DMA wedges
-# the controller in a way FLR cannot clear, and even from a healthy state the
-# FLR races xnvme's open and yields zero geometry (lba_nbytes=0) now and then.
-# A PCI remove + rescan forces the kernel nvme probe, which resets the
-# controller, waits for CSTS.RDY, and runs identify; if the namespace
-# reappears the controller is verified live.
+# Re-enumerate the function before unbinding: a PCI remove + rescan forces the
+# kernel nvme probe (reset, wait for CSTS.RDY, identify), leaving the
+# controller in a verified-live state before handing it to userspace.
 echo "re-enumerating $BDF"
 echo 1 > "/sys/bus/pci/devices/$BDF/remove"
 echo 1 > /sys/bus/pci/rescan

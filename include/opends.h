@@ -209,7 +209,6 @@ typedef struct opends_io_events {
 
 typedef void *opends_batch_handle_t;
 
-/* Create a batch context that can hold up to nr outstanding operations. */
 opends_error_t opends_batch_io_setup(opends_batch_handle_t *batch_idp,
                                        unsigned nr);
 opends_error_t opends_batch_io_submit(opends_batch_handle_t batch_idp,

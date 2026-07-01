@@ -74,7 +74,6 @@ main(int argc, char **argv)
 		goto out;
 	}
 
-	/* aisio P2P read of the whole range into device memory. */
 	cuda_buf_zero(gpu, size);
 	ssize_t n = opends_read(a.fh, gpu, size, 0, 0);
 	if (n != (ssize_t)size) {
@@ -103,9 +102,7 @@ main(int argc, char **argv)
 		failed = 1;
 		goto out;
 	}
-	/* Chunk the reference read: a single multi-MiB O_DIRECT read through the
-	 * ublk mount can return short/zeroed (a qublk read-path quirk), so keep
-	 * each pread to 1 MiB, which the block path handles reliably. */
+	/* Chunk the reference read into 1 MiB preads. */
 	size_t done = 0;
 	while (done < size) {
 		size_t want_n = size - done;

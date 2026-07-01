@@ -33,7 +33,7 @@ static inline uint32_t
 ds_stream_map_hash(ds_accel_stream_t s, uint32_t mask)
 {
 	uintptr_t v = (uintptr_t)s;
-	v *= 0x9E3779B97F4A7C15ULL; /* Fibonacci hash */
+	v *= 0x9E3779B97F4A7C15ULL;
 	return (uint32_t)(v >> 32) & mask;
 }
 

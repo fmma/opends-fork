@@ -9,7 +9,6 @@
 # Best-effort and idempotent: never fails, and a no-op when nothing is running.
 set -u
 
-# Unmount any filesystem backed by a ublk block device.
 findmnt -rno TARGET,SOURCE 2>/dev/null | awk '$2 ~ /\/dev\/ublkb/ { print $1 }' |
 	while read -r mnt; do
 		umount "$mnt" 2>/dev/null || umount -l "$mnt" 2>/dev/null || true

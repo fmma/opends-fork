@@ -56,10 +56,6 @@ expected_bytes(char *dst, off_t offset, size_t size)
 	return (ssize_t)size;
 }
 
-/*
- * Read via opends_read, copy result to host, compare with the
- * in-memory expected pattern. Returns 0 on match.
- */
 static int
 verify_read(struct test_env *env, void *buf, size_t alloc_size, size_t size,
             off_t file_offset, off_t buf_offset, const char *label)
@@ -108,7 +104,6 @@ verify_read(struct test_env *env, void *buf, size_t alloc_size, size_t size,
 
 /* --- Test cases ------------------------------------------------- */
 
-/* Read a single 4096-byte block at offset 0. */
 static int
 test_read_single_block(struct test_env *env)
 {
@@ -122,7 +117,6 @@ test_read_single_block(struct test_env *env)
 	return rc;
 }
 
-/* Read 4 contiguous blocks (16384 bytes) from offset 0. */
 static int
 test_read_multi_block(struct test_env *env)
 {
@@ -137,7 +131,6 @@ test_read_multi_block(struct test_env *env)
 	return rc;
 }
 
-/* Read one block from a non-zero aligned offset (page 2). */
 static int
 test_read_at_offset(struct test_env *env)
 {
@@ -151,7 +144,6 @@ test_read_at_offset(struct test_env *env)
 	return rc;
 }
 
-/* Read 2 blocks starting from page 1. */
 static int
 test_read_multi_at_offset(struct test_env *env)
 {
@@ -166,7 +158,6 @@ test_read_multi_at_offset(struct test_env *env)
 	return rc;
 }
 
-/* Read the entire file in one call. */
 static int
 test_read_full_file(struct test_env *env)
 {
@@ -180,7 +171,6 @@ test_read_full_file(struct test_env *env)
 	return rc;
 }
 
-/* Read the last block of the file. */
 static int
 test_read_last_block(struct test_env *env)
 {
@@ -265,7 +255,6 @@ test_read_beyond_eof(struct test_env *env)
 	return 0;
 }
 
-/* Read zero bytes; expect 0 returned. */
 static int
 test_read_zero_size(struct test_env *env)
 {
@@ -283,7 +272,6 @@ test_read_zero_size(struct test_env *env)
 	return 0;
 }
 
-/* Read with non-zero buf_offset; verify data lands correctly. */
 static int
 test_read_buf_offset(struct test_env *env)
 {
@@ -347,7 +335,6 @@ test_read_buf_offset_boundaries(struct test_env *env)
 	return rc;
 }
 
-/* Read each quarter of the file independently, verify all. */
 static int
 test_read_sequential_regions(struct test_env *env)
 {
@@ -391,7 +378,6 @@ test_read_overlapping_regions(struct test_env *env)
 		return 1;
 	}
 
-	/* Read pages 0-1. */
 	env->buf_zero(buf, size);
 	ssize_t n1 = opends_read(env->fh, buf, size, 0, 0);
 	if (n1 != (ssize_t)size) {
@@ -403,7 +389,6 @@ test_read_overlapping_regions(struct test_env *env)
 	}
 	env->buf_to_host(host_a, buf, size);
 
-	/* Read pages 1-2. */
 	env->buf_zero(buf, size);
 	ssize_t n2 = opends_read(env->fh, buf, size, PAGE, 0);
 	if (n2 != (ssize_t)size) {

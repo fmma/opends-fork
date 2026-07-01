@@ -35,7 +35,6 @@ def _artifacts_dir(backend):
 
 
 def _parse_mib_per_s(log_path):
-    """Return MiB/s from the filperf --summary block, or None."""
     if not log_path.is_file():
         return None
     m = re.search(r"^\s*MiB/s:\s*([0-9.]+)\s*$",

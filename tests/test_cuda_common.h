@@ -59,8 +59,8 @@ cuda_check_buffer(const void *buf)
 
 /*
  * xNVMe's upcie-cuda backend requires mem_map alignment to
- * cudamem_config.device_pagesize (64 KiB on CUDA, the BAR1 page size).
- * Pad register-mode allocations up to that granularity.
+ * cudamem_config.device_pagesize. Pad register-mode allocations up to that
+ * granularity.
  */
 #define CUDA_REGISTER_PAGE 65536
 #define CUDA_REGISTER_ALIGN(x)                                                 \

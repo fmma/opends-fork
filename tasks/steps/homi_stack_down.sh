@@ -18,7 +18,7 @@ umount "$MOUNT" 2>/dev/null || umount -l "$MOUNT" 2>/dev/null || true
 
 # Match the bare binary name: the servers run as "qublk"/"homid" (PATH
 # resolved), so pkill -f on an absolute path would never match and would leak
-# them (each holds a 256 MiB hugepage heap). A clean SIGTERM lets qublk run
+# them. A clean SIGTERM lets qublk run
 # STOP_DEV/DEL_DEV before exiting.
 pkill -TERM -x qublk 2>/dev/null || true
 sleep 2

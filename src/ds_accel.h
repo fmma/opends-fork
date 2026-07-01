@@ -53,15 +53,16 @@ struct ds_accel_ops {
 	/* Host pinned memory the accelerator can read by device pointer. */
 	int (*host_alloc_mapped)(size_t bytes, void **host,
 	                         ds_accel_devptr_t *dptr);
+	/* Free a host_alloc_mapped allocation. */
 	void (*host_free)(void *host);
 
 	/* Host/device bulk copy (direction inferred from the pointers). */
 	int (*copy)(void *dst, const void *src, size_t bytes);
 
-	/* Per-stream gate: write a word in stream order, and hold the stream
-	 * until the word reaches value (>=). */
+	/* Per-stream gate: write a gate word in stream order. */
 	int (*stream_write_value32)(ds_accel_stream_t s, ds_accel_devptr_t addr,
 	                            uint32_t value);
+	/* Hold the stream until the gate word reaches value (>=). */
 	int (*stream_wait_value32_geq)(ds_accel_stream_t s, ds_accel_devptr_t addr,
 	                               uint32_t value);
 
