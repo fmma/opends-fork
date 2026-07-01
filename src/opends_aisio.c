@@ -20,7 +20,7 @@
 
 #include "ds_accel.h"
 #include "ds_stream_map.h"
-#include "ds_bounce_ctx.h"
+#include "ds_bounce_kernel.h"
 #include "opends_internal.h"
 #include "ds_extent.h"
 
@@ -48,6 +48,7 @@
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
+#define NVME_PRP_PAGE 4096
 #define AISIO_QUEUE_DEPTH 512
 #define MAX_STREAMS 8192
 #define STREAM_WORDS_BYTES (MAX_STREAMS * sizeof(uint32_t))
@@ -76,7 +77,13 @@ struct opends_stream {
 	uint32_t *gate;
 	ds_accel_devptr_t gate_dptr;
 	uint32_t next_seq;
-	struct ds_bounce_ctx bounce_ctx;
+	/* Tail-bounce state: one page-sized GPU slot (tail DMA target) reused
+	 * across ops, and a devicemapped copy descriptor the kernel consumes
+	 * (I/O thread writes, kernel reads). The per-stream gate serialises ops,
+	 * so a drained op's slot is free before the next claims it. */
+	void *bounce_buf;
+	struct ds_bounce_copy *bounce_desc_host;
+	ds_accel_devptr_t bounce_desc_dev;
 };
 
 enum file_op_mode {
@@ -179,6 +186,55 @@ ensure_bounce_buf(struct aisio_driver *d, void **bounce_buf_p)
 		return 0;
 	*bounce_buf_p = xnvme_buf_alloc(d->xdev, NVME_PRP_PAGE);
 	return *bounce_buf_p ? 0 : -ENOMEM;
+}
+
+/* Allocate the tail-bounce slot and copy descriptor for a stream. GPU alloc
+ * APIs do a device-wide sync, so this must run on a host thread: on the aisio
+ * I/O thread it would deadlock waiting on the thread's own gated stream.
+ * Returns 0 on success, -1 on failure (fields left zeroed). */
+static int
+stream_bounce_alloc(struct opends_stream *s, struct xnvme_dev *xdev)
+{
+	s->bounce_buf = NULL;
+	s->bounce_desc_host = NULL;
+	s->bounce_desc_dev = 0;
+
+	/* DEVICEMAP'd so the I/O thread fills it via host stores and the
+	 * kernel reads it on the GPU. Zero-init keeps a bounce-free op
+	 * (n_bytes == 0) kernel-safe. */
+	void *desc_host = NULL;
+	ds_accel_devptr_t desc_dev = 0;
+	if (ds_accel->host_alloc_mapped(sizeof(struct ds_bounce_copy), &desc_host,
+	                                &desc_dev) < 0)
+		return -1;
+	memset(desc_host, 0, sizeof(struct ds_bounce_copy));
+
+	/* One slot suffices: at most one tail bounce per op, and the per-stream
+	 * gate serialises ops. */
+	void *buf = xnvme_buf_alloc(xdev, NVME_PRP_PAGE);
+	if (!buf) {
+		ds_accel->host_free(desc_host);
+		return -1;
+	}
+
+	s->bounce_desc_host = (struct ds_bounce_copy *)desc_host;
+	s->bounce_desc_dev = desc_dev;
+	s->bounce_buf = buf;
+	return 0;
+}
+
+static void
+stream_bounce_free(struct opends_stream *s, struct xnvme_dev *xdev)
+{
+	if (s->bounce_buf) {
+		xnvme_buf_free(xdev, s->bounce_buf);
+		s->bounce_buf = NULL;
+	}
+	if (s->bounce_desc_host) {
+		ds_accel->host_free(s->bounce_desc_host);
+		s->bounce_desc_host = NULL;
+	}
+	s->bounce_desc_dev = 0;
 }
 
 #define AISIO_ESTALE_RETRIES 6000
@@ -398,8 +454,8 @@ static int
 submit_read_bounce(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
                    uint64_t cur_slba, size_t nbytes)
 {
-	struct ds_bounce_ctx *bounce_ctx = &op->u.async.opends_stream->bounce_ctx;
-	void *bounce_src = ds_bounce_ctx_buf(bounce_ctx);
+	struct opends_stream *s = op->u.async.opends_stream;
+	void *bounce_src = s->bounce_buf;
 
 	uint64_t nlbas = (nbytes + (d->lba_size - 1)) >> d->lba_shift;
 	uint16_t nlb = (uint16_t)(nlbas - 1);
@@ -431,8 +487,8 @@ submit_read_bounce(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
 
 	op->tail_dst = abs_dst;
 	op->tail_nbytes = nbytes;
-	ds_bounce_ctx_stage(bounce_ctx, (uint64_t)(uintptr_t)op->tail_dst,
-	                    (uint64_t)(uintptr_t)bounce_src);
+	s->bounce_desc_host->dst = (uint64_t)(uintptr_t)op->tail_dst;
+	s->bounce_desc_host->src = (uint64_t)(uintptr_t)bounce_src;
 
 	op->bounces_outstanding++;
 	op->bytes_acc += nbytes;
@@ -584,9 +640,8 @@ complete_read_op(struct aisio_driver *d, struct file_op *op)
 	if (op->mode == FILE_OP_ASYNC) {
 		struct opends_stream *s = op->u.async.opends_stream;
 		*op->u.async.bytes_read_p = n;
-		ds_bounce_ctx_finalize(
-		        &s->bounce_ctx,
-		        op->err || !op->tail_nbytes ? 0 : (uint32_t)op->tail_nbytes);
+		s->bounce_desc_host->n_bytes =
+		        op->err || !op->tail_nbytes ? 0 : (uint32_t)op->tail_nbytes;
 		*s->gate = 2 * op->u.async.seq + 1;
 	} else {
 		if (!op->err && op->tail_nbytes &&
@@ -767,7 +822,7 @@ async_teardown(struct aisio_driver *d)
 	pthread_join(d->io_thread, NULL);
 
 	for (int i = 0; i < d->n_streams; i++)
-		ds_bounce_ctx_free(&d->streams[i].bounce_ctx, d->xdev);
+		stream_bounce_free(&d->streams[i], d->xdev);
 
 	if (d->queue) {
 		xnvme_queue_term(d->queue);
@@ -1163,7 +1218,7 @@ submit_async_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
 	 * failed enqueue is still drained by the I/O thread (which releases the
 	 * gate); only this read is lost. */
 	if (!is_write &&
-	    ds_accel->copy_stream(opends_stream->bounce_ctx.desc_dev, cus) != 0)
+	    ds_accel->copy_stream(opends_stream->bounce_desc_dev, cus) != 0)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	return opends_ok();
@@ -1216,11 +1271,11 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 	*opends_stream->gate = 0;
 	opends_stream->next_seq = 0;
 
-	if (ds_bounce_ctx_init(&opends_stream->bounce_ctx, drv->xdev) < 0)
+	if (stream_bounce_alloc(opends_stream, drv->xdev) < 0)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	if (ds_stream_map_put(drv->stream_map, STREAM_MAP_MASK, cus, n) < 0) {
-		ds_bounce_ctx_free(&opends_stream->bounce_ctx, drv->xdev);
+		stream_bounce_free(opends_stream, drv->xdev);
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
