@@ -19,7 +19,7 @@ if [ ! -b "$NS" ]; then
 fi
 
 if [ "$(blkid -o value -s TYPE "$NS" 2>/dev/null)" != "xfs" ]; then
-	echo "error: no xfs filesystem on $NS; run setup_dataset.yaml first" >&2
+	echo "error: no xfs filesystem on $NS; format and populate it first (aisio's setup_dataset.yaml)" >&2
 	exit 1
 fi
 

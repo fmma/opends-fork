@@ -4,7 +4,8 @@
 
 aisio's tasks/setup_dataset.yaml must have been run on the target
 first so the three reference datasets (filesize8gib, tiktokish,
-imagenetish) exist under config.test.mount_point.
+imagenetish) exist under config.test.mount_point. The suite also
+covers lmcacheish, generated on the target by its gen_lmcache step.
 
 Each suite runs every dataset in both sync and async mode by default.
 Use --mode to restrict to sync or async, and --dataset to restrict

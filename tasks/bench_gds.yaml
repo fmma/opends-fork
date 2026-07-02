@@ -4,17 +4,18 @@ doc: |
   ===============
 
   Drives filperf with the `gds` backend (cuFile reference baseline)
-  across the three reference datasets (filesize8gib, tiktokish,
-  imagenetish). Runs while the kernel `nvme` driver owns the device.
+  across the four reference datasets (filesize8gib, tiktokish,
+  imagenetish, lmcacheish). Runs while the kernel `nvme` driver owns
+  the device.
 
   Prerequisites:
     * scripts/setup_deps.py has installed xnvme, xal, OpenDS, and fil
       on the target.
     * scripts/build.py has built OpenDS on the target.
     * aisio's tasks/setup_dataset.yaml has run on the target, formatting
-      the NVMe with XFS and populating the three reference datasets
+      the NVMe with XFS and populating the first three reference datasets
       (filesize8gib, tiktokish, imagenetish) under
-      config.test.mount_point.
+      config.test.mount_point (the gen_lmcache step generates lmcacheish).
 
   bench_meta records the build commit + target platform to
   artifacts/meta.json; each bench_run stashes filperf's verbatim
