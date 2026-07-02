@@ -3,9 +3,9 @@
  * opends_aisio.c - aisio backend for raw-NVMe direct storage.
  *
  * Reads go straight from an NVMe device into GPU memory via xNVMe's upcie-cuda
- * backend (PCIe P2P DMA, no filesystem in the path). HOMI owns the device: it
- * hands out the I/O qpair the reads are driven over. A registered file's extents
- * come from FIEMAP on the qublk-mounted filesystem (homic_get_extents).
+ * backend (PCIe P2P DMA). HOMI owns the device: it hands out the I/O qpair the
+ * reads are driven over. A registered file's extents come from
+ * homic_get_extents.
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before opends_driver_open runs.
@@ -13,7 +13,7 @@
  * Writes go through the kernel-mounted filesystem: the source is staged to a
  * host buffer and pwritten via the fd, so XFS over qublk allocates blocks and
  * writes the data; the file's extents are then re-resolved for later P2P reads.
- * Batch async paths report OPENDS_IO_NOT_SUPPORTED.
+ * Batch paths report OPENDS_ASYNC_NOT_SUPPORTED for now.
  */
 
 #define _GNU_SOURCE
@@ -77,10 +77,6 @@ struct opends_stream {
 	uint32_t *gate;
 	ds_accel_devptr_t gate_dptr;
 	uint32_t next_seq;
-	/* Tail-bounce state: one page-sized GPU slot (tail DMA target) reused
-	 * across ops, and a devicemapped copy descriptor the kernel consumes
-	 * (I/O thread writes, kernel reads). The per-stream gate serialises ops,
-	 * so a drained op's slot is free before the next claims it. */
 	void *bounce_buf;
 	struct ds_bounce_copy *bounce_desc_host;
 	ds_accel_devptr_t bounce_desc_dev;
@@ -140,8 +136,8 @@ struct read_cursor {
 };
 
 struct aisio_driver {
-	char dev_uri[64];       ///< NVMe device (BDF) the HOMI daemon owns
-	char *attach_descpath;  ///< HOMI-served qpair attach descriptor file
+	char dev_uri[64];      ///< NVMe device (BDF) the HOMI daemon owns
+	char *attach_descpath; ///< HOMI-served qpair attach descriptor file
 	struct xnvme_dev *xdev;
 	struct xnvme_queue *queue;
 	uint32_t nsid;
@@ -190,7 +186,7 @@ ensure_bounce_buf(struct aisio_driver *d, void **bounce_buf_p)
 
 /* Allocate the tail-bounce slot and copy descriptor for a stream. GPU alloc
  * APIs do a device-wide sync, so this must run on a host thread: on the aisio
- * I/O thread it would deadlock waiting on the thread's own gated stream.
+ * I/O thread it could deadlock waiting on the thread's own gated stream.
  * Returns 0 on success, -1 on failure (fields left zeroed). */
 static int
 stream_bounce_alloc(struct opends_stream *s, struct xnvme_dev *xdev)
@@ -204,13 +200,13 @@ stream_bounce_alloc(struct opends_stream *s, struct xnvme_dev *xdev)
 	 * (n_bytes == 0) kernel-safe. */
 	void *desc_host = NULL;
 	ds_accel_devptr_t desc_dev = 0;
-	if (ds_accel->host_alloc_mapped(sizeof(struct ds_bounce_copy), &desc_host,
-	                                &desc_dev) < 0)
+	if (ds_accel->host_alloc_mapped(sizeof(struct ds_bounce_copy),
+	                                &desc_host, &desc_dev) < 0)
 		return -1;
 	memset(desc_host, 0, sizeof(struct ds_bounce_copy));
 
-	/* One slot suffices: at most one tail bounce per op, and the per-stream
-	 * gate serialises ops. */
+	/* One slot suffices: at most one bounce per op, and the per-stream gate
+	 * serialises ops. */
 	void *buf = xnvme_buf_alloc(xdev, NVME_PRP_PAGE);
 	if (!buf) {
 		ds_accel->host_free(desc_host);
@@ -328,7 +324,8 @@ open_device(struct aisio_driver *d, int fd)
 	int rc = homic_attach_qpair(d->dev_uri, AISIO_ATTACH_QPAIRS,
 	                            &d->attach_descpath);
 	if (rc < 0) {
-		fprintf(stderr, "aisio open_device: homic_attach_qpair(%s) rc=%d\n",
+		fprintf(stderr,
+		        "aisio open_device: homic_attach_qpair(%s) rc=%d\n",
 		        d->dev_uri, rc);
 		return rc;
 	}
@@ -373,7 +370,7 @@ open_device(struct aisio_driver *d, int fd)
 }
 
 /* ------------------------------------------------------------------ */
-/*  I/O engine                                                         */
+/*  I/O engine                                                        */
 /* ------------------------------------------------------------------ */
 
 static void
@@ -619,11 +616,13 @@ start_read_op(struct aisio_driver *d, struct file_op *op)
 		}
 
 		if (tail_bytes) {
-			int trc = op->mode == FILE_OP_ASYNC
-			                  ? submit_read_bounce(d, op, abs_dst,
-			                                       cur_slba, tail_bytes)
-			                  : submit_sync_tail(d, op, abs_dst,
-			                                     cur_slba, tail_bytes);
+			int trc;
+			if (op->mode == FILE_OP_ASYNC)
+				trc = submit_read_bounce(d, op, abs_dst,
+				                         cur_slba, tail_bytes);
+			else
+				trc = submit_sync_tail(d, op, abs_dst, cur_slba,
+				                       tail_bytes);
 			if (trc < 0)
 				goto out;
 		}
@@ -636,18 +635,21 @@ static void
 complete_read_op(struct aisio_driver *d, struct file_op *op)
 {
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
+	uint32_t tail_bytes = op->err ? 0 : (uint32_t)op->tail_nbytes;
 
 	if (op->mode == FILE_OP_ASYNC) {
 		struct opends_stream *s = op->u.async.opends_stream;
 		*op->u.async.bytes_read_p = n;
-		s->bounce_desc_host->n_bytes =
-		        op->err || !op->tail_nbytes ? 0 : (uint32_t)op->tail_nbytes;
+		s->bounce_desc_host->n_bytes = tail_bytes;
 		*s->gate = 2 * op->u.async.seq + 1;
 	} else {
-		if (!op->err && op->tail_nbytes &&
-		    ds_accel->copy(op->tail_dst, d->sync_bounce_buf,
-		                 op->tail_nbytes) != 0)
-			n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+		if (tail_bytes) {
+			int rc =
+			        ds_accel->copy(op->tail_dst, d->sync_bounce_buf,
+			                       op->tail_nbytes);
+			if (rc != 0)
+				n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+		}
 		op->u.sync.result = n;
 	}
 	op->state = FILE_OP_FREE;
@@ -671,8 +673,9 @@ dispatch_write(struct aisio_driver *d, struct file_op *op)
 
 	ssize_t n = aisio_pwrite_op(d, op->h, src, size, file_offset);
 	if (n < 0)
-		n = (n == -(ssize_t)EINVAL) ? -(ssize_t)OPENDS_INVALID_VALUE
-		                            : -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+		n = (n == -(ssize_t)EINVAL)
+		            ? -(ssize_t)OPENDS_INVALID_VALUE
+		            : -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 
 	if (op->mode == FILE_OP_ASYNC) {
 		*op->u.async.bytes_read_p = n;
@@ -714,7 +717,8 @@ reap_in_flight(struct aisio_driver *d, struct file_op *op)
 static bool
 poll_async_pending(struct aisio_driver *d, struct file_op *op)
 {
-	if ((int32_t)(*op->u.async.opends_stream->gate - 2 * op->u.async.seq) < 0)
+	if ((int32_t)(*op->u.async.opends_stream->gate - 2 * op->u.async.seq) <
+	    0)
 		return true;
 	dispatch_pending(d, op);
 	return false;
@@ -743,8 +747,7 @@ io_thread_main(void *arg)
 					if (poll_async_pending(d, op))
 						busy = true;
 					break;
-				case FILE_OP_BATCH:
-					break;
+				case FILE_OP_BATCH: break;
 				}
 				break;
 			case FILE_OP_IN_FLIGHT: reap_in_flight(d, op); break;
@@ -847,7 +850,7 @@ opends_stream_get(struct aisio_driver *d, ds_accel_stream_t stream)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Driver lifecycle                                                   */
+/*  Driver lifecycle                                                  */
 /* ------------------------------------------------------------------ */
 
 opends_error_t
@@ -859,7 +862,8 @@ opends_driver_open(void)
 	const char *dev = getenv(ENV_HOMI_DEV);
 	if (!dev || !dev[0]) {
 		fprintf(stderr,
-		        "aisio: %s must name the NVMe device the HOMI daemon owns\n",
+		        "aisio: %s must name the NVMe device the HOMI daemon "
+		        "owns\n",
 		        ENV_HOMI_DEV);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
@@ -966,7 +970,7 @@ opends_get_version(unsigned *major, unsigned *minor, unsigned *patch)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Handle registration                                                */
+/*  Handle registration                                               */
 /* ------------------------------------------------------------------ */
 
 opends_error_t
@@ -1004,7 +1008,7 @@ opends_handle_deregister(opends_handle_t fh)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Buffer allocation                                                  */
+/*  Buffer allocation                                                 */
 /* ------------------------------------------------------------------ */
 
 void *
@@ -1100,7 +1104,7 @@ opends_buf_deregister(const void *buf_base)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Synchronous I/O                                                    */
+/*  Synchronous I/O                                                   */
 /* ------------------------------------------------------------------ */
 
 static ssize_t
@@ -1135,13 +1139,14 @@ submit_sync_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
 	ssize_t n = op->u.sync.result;
 	if (n < 0)
 		fprintf(stderr, "opends_%s(size=%zu, off=%ld) failed: rc=%zd\n",
-		        is_write ? "write" : "read", size, (long)file_offset, n);
+		        is_write ? "write" : "read", size, (long)file_offset,
+		        n);
 	return n;
 }
 
 ssize_t
-opends_read(opends_handle_t fh, void *buf_base, size_t size,
-             off_t file_offset, off_t buf_offset)
+opends_read(opends_handle_t fh, void *buf_base, size_t size, off_t file_offset,
+            off_t buf_offset)
 {
 	return submit_sync_op(drv, false, fh, buf_base, size, file_offset,
 	                      buf_offset);
@@ -1149,14 +1154,14 @@ opends_read(opends_handle_t fh, void *buf_base, size_t size,
 
 ssize_t
 opends_write(opends_handle_t fh, const void *buf_base, size_t size,
-              off_t file_offset, off_t buf_offset)
+             off_t file_offset, off_t buf_offset)
 {
-	return submit_sync_op(drv, true, fh, (void *)buf_base, size, file_offset,
-	                      buf_offset);
+	return submit_sync_op(drv, true, fh, (void *)buf_base, size,
+	                      file_offset, buf_offset);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Stream-based async I/O                                             */
+/*  Stream-based async I/O                                            */
 /* ------------------------------------------------------------------ */
 
 static opends_error_t
@@ -1226,8 +1231,8 @@ submit_async_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
 
 opends_error_t
 opends_read_async(opends_handle_t fh, void *buf_base, size_t *size_p,
-                   off_t *file_offset_p, off_t *buf_offset_p,
-                   ssize_t *bytes_read_p, opends_stream_t stream)
+                  off_t *file_offset_p, off_t *buf_offset_p,
+                  ssize_t *bytes_read_p, opends_stream_t stream)
 {
 	return submit_async_op(drv, false, fh, buf_base, size_p, file_offset_p,
 	                       buf_offset_p, bytes_read_p, stream);
@@ -1235,8 +1240,8 @@ opends_read_async(opends_handle_t fh, void *buf_base, size_t *size_p,
 
 opends_error_t
 opends_write_async(opends_handle_t fh, void *buf_base, size_t *size_p,
-                    off_t *file_offset_p, off_t *buf_offset_p,
-                    ssize_t *bytes_written_p, opends_stream_t stream)
+                   off_t *file_offset_p, off_t *buf_offset_p,
+                   ssize_t *bytes_written_p, opends_stream_t stream)
 {
 	return submit_async_op(drv, true, fh, buf_base, size_p, file_offset_p,
 	                       buf_offset_p, bytes_written_p, stream);
@@ -1291,7 +1296,7 @@ opends_stream_deregister(opends_stream_t stream)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Batch I/O (not implemented)                                        */
+/*  Batch I/O (not implemented)                                       */
 /* ------------------------------------------------------------------ */
 
 opends_error_t
@@ -1304,7 +1309,7 @@ opends_batch_io_setup(opends_batch_handle_t *batch_idp, unsigned nr)
 
 opends_error_t
 opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
-                        opends_io_params_t *iocbp, unsigned int flags)
+                       opends_io_params_t *iocbp, unsigned int flags)
 {
 	(void)batch_idp;
 	(void)nr;
@@ -1315,8 +1320,8 @@ opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
 
 opends_error_t
 opends_batch_io_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
-                            unsigned *nr, opends_io_events_t *iocbp,
-                            struct timespec *timeout)
+                           unsigned *nr, opends_io_events_t *iocbp,
+                           struct timespec *timeout)
 {
 	(void)batch_idp;
 	(void)min_nr;
