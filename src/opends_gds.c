@@ -39,7 +39,7 @@ static opends_error_t
 from_cufile_error(CUfileError_t e)
 {
 	return (opends_error_t){(opends_op_error_t)e.err,
-	                         (opends_result_t)e.cu_err};
+	                        (opends_result_t)e.cu_err};
 }
 
 /* ------------------------------------------------------------------ */
@@ -221,8 +221,8 @@ opends_buf_deregister(const void *buf_base)
 /* ------------------------------------------------------------------ */
 
 ssize_t
-opends_read(opends_handle_t fh, void *buf_base, size_t size,
-             off_t file_offset, off_t buf_offset)
+opends_read(opends_handle_t fh, void *buf_base, size_t size, off_t file_offset,
+            off_t buf_offset)
 {
 	struct gds_handle *h = fh;
 	return cuFileRead(h->cufh, buf_base, size, file_offset, buf_offset);
@@ -230,7 +230,7 @@ opends_read(opends_handle_t fh, void *buf_base, size_t size,
 
 ssize_t
 opends_write(opends_handle_t fh, const void *buf_base, size_t size,
-              off_t file_offset, off_t buf_offset)
+             off_t file_offset, off_t buf_offset)
 {
 	struct gds_handle *h = fh;
 	return cuFileWrite(h->cufh, buf_base, size, file_offset, buf_offset);
@@ -255,7 +255,7 @@ opends_batch_io_setup(opends_batch_handle_t *batch_idp, unsigned nr)
 
 opends_error_t
 opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
-                        opends_io_params_t *iocbp, unsigned int flags)
+                       opends_io_params_t *iocbp, unsigned int flags)
 {
 	if (!batch_idp || !iocbp)
 		return opends_err(OPENDS_INVALID_VALUE);
@@ -289,8 +289,8 @@ opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
 
 opends_error_t
 opends_batch_io_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
-                            unsigned *nr, opends_io_events_t *iocbp,
-                            struct timespec *timeout)
+                           unsigned *nr, opends_io_events_t *iocbp,
+                           struct timespec *timeout)
 {
 	if (!batch_idp || !nr || !iocbp)
 		return opends_err(OPENDS_INVALID_VALUE);
@@ -343,8 +343,8 @@ opends_batch_io_destroy(opends_batch_handle_t batch_idp)
 
 opends_error_t
 opends_read_async(opends_handle_t fh, void *buf_base, size_t *size_p,
-                   off_t *file_offset_p, off_t *buf_offset_p,
-                   ssize_t *bytes_read_p, opends_stream_t stream)
+                  off_t *file_offset_p, off_t *buf_offset_p,
+                  ssize_t *bytes_read_p, opends_stream_t stream)
 {
 	struct gds_handle *h = fh;
 	CUfileError_t err =
@@ -357,8 +357,8 @@ opends_read_async(opends_handle_t fh, void *buf_base, size_t *size_p,
 
 opends_error_t
 opends_write_async(opends_handle_t fh, void *buf_base, size_t *size_p,
-                    off_t *file_offset_p, off_t *buf_offset_p,
-                    ssize_t *bytes_written_p, opends_stream_t stream)
+                   off_t *file_offset_p, off_t *buf_offset_p,
+                   ssize_t *bytes_written_p, opends_stream_t stream)
 {
 	struct gds_handle *h = fh;
 	CUfileError_t err = cuFileWriteAsync(h->cufh, buf_base, size_p,
