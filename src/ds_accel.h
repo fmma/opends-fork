@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * ds_accel.h - vendor-neutral accelerator runtime interface for the aisio backend.
+ * ds_accel.h - vendor-neutral accelerator runtime interface for the aisio
+ * backend.
  *
  * The aisio NVMe path needs only a narrow accelerator surface: bind a
  * thread to the caller's context, allocate host pinned memory the
@@ -13,10 +14,10 @@
  *
  * Interface types are vendor-uniform so the ops ABI is fixed:
  *   - ds_accel_ctx_t and ds_accel_stream_t are opaque handles (void *).
- *   - ds_accel_devptr_t is an accelerator device address as a plain integer. Each
- *     vendor converts to and from its native pointer at the boundary
- *     (identity for CUDA's CUdeviceptr; a cast for HIP's void *), so
- *     callers can do ordinary arithmetic on it.
+ *   - ds_accel_devptr_t is an accelerator device address as a plain integer.
+ * Each vendor converts to and from its native pointer at the boundary (identity
+ * for CUDA's CUdeviceptr; a cast for HIP's void *), so callers can do ordinary
+ * arithmetic on it.
  *
  * ctx_set is a semantic, "make this thread's accelerator work target the
  * captured device", not a specific primitive: CUDA uses cuCtxSetCurrent,
@@ -63,8 +64,8 @@ struct ds_accel_ops {
 	int (*stream_write_value32)(ds_accel_stream_t s, ds_accel_devptr_t addr,
 	                            uint32_t value);
 	/* Hold the stream until the gate word reaches value (>=). */
-	int (*stream_wait_value32_geq)(ds_accel_stream_t s, ds_accel_devptr_t addr,
-	                               uint32_t value);
+	int (*stream_wait_value32_geq)(ds_accel_stream_t s,
+	                               ds_accel_devptr_t addr, uint32_t value);
 
 	/* Execute the copy described at desc (a ds_bounce_copy; n_bytes == 0
 	 * no-ops), ordered on the stream. The mechanism (a copy kernel or a

@@ -30,7 +30,8 @@ int
 main(int argc, char **argv)
 {
 	if (argc < 2 || argc > 3) {
-		fprintf(stderr, "usage: %s <file-on-mount> [dump-path]\n", argv[0]);
+		fprintf(stderr, "usage: %s <file-on-mount> [dump-path]\n",
+		        argv[0]);
 		return 1;
 	}
 	const char *path = argv[1];
@@ -52,9 +53,10 @@ main(int argc, char **argv)
 	if (aisio_homi_setup(path, &a) < 0)
 		return 1;
 
-	/* Compare a block-aligned span: the kernel reference uses O_DIRECT to read
-	 * the true on-disk bytes (a buffered read can return stale page-cache
-	 * pages that differ from what the device, and thus the P2P path, sees). */
+	/* Compare a block-aligned span: the kernel reference uses O_DIRECT to
+	 * read the true on-disk bytes (a buffered read can return stale
+	 * page-cache pages that differ from what the device, and thus the P2P
+	 * path, sees). */
 	size = size & ~((size_t)4095);
 	if (size == 0) {
 		fprintf(stderr, "file smaller than one block: %s\n", path);

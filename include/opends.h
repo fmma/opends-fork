@@ -94,8 +94,7 @@ typedef struct opends_error {
 
 #define OPENDS_BASE_ERR 5000
 #define IS_OPENDS_ERR(err) (abs((err)) > OPENDS_BASE_ERR)
-#define OPENDS_ERRSTR(err)                                                    \
-	opends_op_status_error((opends_op_error_t)abs((err)))
+#define OPENDS_ERRSTR(err) opends_op_status_error((opends_op_error_t)abs((err)))
 
 const char *opends_op_status_error(opends_op_error_t status);
 
@@ -118,10 +117,9 @@ opends_error_t opends_driver_open(void);
 opends_error_t opends_driver_close(void);
 long opends_use_count(void);
 opends_error_t opends_get_version(unsigned *major, unsigned *minor,
-                                    unsigned *patch);
+                                  unsigned *patch);
 opends_error_t opends_driver_get_properties(opends_drv_props_t *props);
-opends_error_t
-opends_driver_set_max_direct_io_size(size_t max_direct_io_size);
+opends_error_t opends_driver_set_max_direct_io_size(size_t max_direct_io_size);
 
 /*
  * File handle registration. Each file descriptor must be registered
@@ -147,7 +145,7 @@ void opends_free(void *buf);
  * it.
  */
 opends_error_t opends_buf_register(const void *buf_base, size_t size,
-                                     int flags);
+                                   int flags);
 opends_error_t opends_buf_deregister(const void *buf_base);
 
 /*
@@ -157,9 +155,9 @@ opends_error_t opends_buf_deregister(const void *buf_base);
  * single allocation.
  */
 ssize_t opends_read(opends_handle_t fh, void *buf_base, size_t size,
-                     off_t file_offset, off_t buf_offset);
+                    off_t file_offset, off_t buf_offset);
 ssize_t opends_write(opends_handle_t fh, const void *buf_base, size_t size,
-                      off_t file_offset, off_t buf_offset);
+                     off_t file_offset, off_t buf_offset);
 
 /*
  * Batch I/O. Submit multiple operations in a single call and poll for
@@ -210,15 +208,15 @@ typedef struct opends_io_events {
 typedef void *opends_batch_handle_t;
 
 opends_error_t opends_batch_io_setup(opends_batch_handle_t *batch_idp,
-                                       unsigned nr);
+                                     unsigned nr);
 opends_error_t opends_batch_io_submit(opends_batch_handle_t batch_idp,
-                                        unsigned nr, opends_io_params_t *iocbp,
-                                        unsigned int flags);
+                                      unsigned nr, opends_io_params_t *iocbp,
+                                      unsigned int flags);
 /* Poll for at least min_nr completions, returning up to *nr events. */
 opends_error_t opends_batch_io_get_status(opends_batch_handle_t batch_idp,
-                                            unsigned min_nr, unsigned *nr,
-                                            opends_io_events_t *iocbp,
-                                            struct timespec *timeout);
+                                          unsigned min_nr, unsigned *nr,
+                                          opends_io_events_t *iocbp,
+                                          struct timespec *timeout);
 opends_error_t opends_batch_io_cancel(opends_batch_handle_t batch_idp);
 void opends_batch_io_destroy(opends_batch_handle_t batch_idp);
 
@@ -238,14 +236,13 @@ void opends_batch_io_destroy(opends_batch_handle_t batch_idp);
 typedef void *opends_stream_t;
 
 opends_error_t opends_read_async(opends_handle_t fh, void *buf_base,
-                                   size_t *size_p, off_t *file_offset_p,
-                                   off_t *buf_offset_p, ssize_t *bytes_read_p,
-                                   opends_stream_t stream);
+                                 size_t *size_p, off_t *file_offset_p,
+                                 off_t *buf_offset_p, ssize_t *bytes_read_p,
+                                 opends_stream_t stream);
 opends_error_t opends_write_async(opends_handle_t fh, void *buf_base,
-                                    size_t *size_p, off_t *file_offset_p,
-                                    off_t *buf_offset_p,
-                                    ssize_t *bytes_written_p,
-                                    opends_stream_t stream);
+                                  size_t *size_p, off_t *file_offset_p,
+                                  off_t *buf_offset_p, ssize_t *bytes_written_p,
+                                  opends_stream_t stream);
 opends_error_t opends_stream_register(opends_stream_t stream, unsigned flags);
 opends_error_t opends_stream_deregister(opends_stream_t stream);
 

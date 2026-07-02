@@ -147,7 +147,7 @@ test_batch_io(opends_handle_t fh, char *wbuf, char *rbuf)
 	opends_io_events_t events[2];
 	unsigned nr_events = 2;
 	if (check(opends_batch_io_get_status(batch, 2, &nr_events, events,
-	                                      NULL),
+	                                     NULL),
 	          "batch_io_get_status")) {
 		opends_batch_io_destroy(batch);
 		return 1;
@@ -194,7 +194,7 @@ test_async_io(opends_handle_t fh, char *wbuf, char *rbuf)
 	ssize_t bytes = 0;
 
 	if (check(opends_write_async(fh, wbuf, &size, &file_off, &buf_off,
-	                              &bytes, stream),
+	                             &bytes, stream),
 	          "write_async"))
 		return 1;
 	if (bytes != BUF_SIZE) {
@@ -207,7 +207,7 @@ test_async_io(opends_handle_t fh, char *wbuf, char *rbuf)
 	bytes = 0;
 
 	if (check(opends_read_async(fh, rbuf, &size, &file_off, &buf_off,
-	                             &bytes, stream),
+	                            &bytes, stream),
 	          "read_async"))
 		return 1;
 	if (bytes != BUF_SIZE) {

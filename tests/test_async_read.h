@@ -103,8 +103,8 @@ verify_async_read(struct async_test_env *env, void *buf, size_t alloc_size,
 	off_t boff = buf_offset;
 	ssize_t bytes_read = 0;
 
-	opends_error_t err = opends_read_async(
-	        env->fh, buf, &sz, &foff, &boff, &bytes_read, env->stream);
+	opends_error_t err = opends_read_async(env->fh, buf, &sz, &foff, &boff,
+	                                       &bytes_read, env->stream);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  %s: opends_read_async: %s\n", label,
 		        opends_op_status_error(err.err));
@@ -318,11 +318,11 @@ async_test_stream_ordering(struct async_test_env *env)
 
 	opends_error_t err;
 	err = opends_read_async(env->fh, buf_a, &sz_a, &off_a, &boff, &br_a,
-	                         env->stream);
+	                        env->stream);
 	if (err.err != OPENDS_SUCCESS)
 		goto fail;
 	err = opends_read_async(env->fh, buf_b, &sz_b, &off_b, &boff, &br_b,
-	                         env->stream);
+	                        env->stream);
 	if (err.err != OPENDS_SUCCESS)
 		goto fail;
 
@@ -684,8 +684,8 @@ async_test_deferred_eval(struct async_test_env *env)
 		goto out;
 	}
 
-	opends_error_t err = opends_read_async(env->fh, buf, &sz, &foff,
-	                                         &boff, &br, env->stream);
+	opends_error_t err = opends_read_async(env->fh, buf, &sz, &foff, &boff,
+	                                       &br, env->stream);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  deferred_eval: submit: %s\n",
 		        opends_op_status_error(err.err));
@@ -889,8 +889,8 @@ async_test_stream_consumer(struct async_test_env *env)
 		off_t foff = (off_t)((i % FILE_PAGES) * PAGE);
 		off_t boff = 0;
 		ssize_t br = 0;
-		opends_error_t err = opends_read_async(
-		        env->fh, buf, &sz, &foff, &boff, &br, env->stream);
+		opends_error_t err = opends_read_async(env->fh, buf, &sz, &foff,
+		                                       &boff, &br, env->stream);
 		if (err.err != OPENDS_SUCCESS) {
 			fprintf(stderr, "  stream_consumer[%d]: submit: %s\n",
 			        i, opends_op_status_error(err.err));

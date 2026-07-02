@@ -86,15 +86,15 @@ cuda_stream_wait_value32_geq(ds_accel_stream_t s, ds_accel_devptr_t addr,
 }
 
 static const struct ds_accel_ops cuda_ops = {
-	.xnvme_be = "upcie-cuda",
-	.ctx_get = cuda_ctx_get,
-	.ctx_set = cuda_ctx_set,
-	.host_alloc_mapped = cuda_host_alloc_mapped,
-	.host_free = cuda_host_free,
-	.copy = cuda_copy,
-	.stream_write_value32 = cuda_stream_write_value32,
-	.stream_wait_value32_geq = cuda_stream_wait_value32_geq,
-	.copy_stream = cuda_copy_stream,
+        .xnvme_be = "upcie-cuda",
+        .ctx_get = cuda_ctx_get,
+        .ctx_set = cuda_ctx_set,
+        .host_alloc_mapped = cuda_host_alloc_mapped,
+        .host_free = cuda_host_free,
+        .copy = cuda_copy,
+        .stream_write_value32 = cuda_stream_write_value32,
+        .stream_wait_value32_geq = cuda_stream_wait_value32_geq,
+        .copy_stream = cuda_copy_stream,
 };
 
 const struct ds_accel_ops *const ds_accel = &cuda_ops;
