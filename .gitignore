@@ -5,6 +5,7 @@ configs/transport.toml
 configs/test.toml
 CLAUDE.md
 .claude/
+.vscode/
 __pycache__/
 
 # Vendor API headers kept locally for reference only, not redistributed.
