@@ -7,4 +7,5 @@ Generated bench data published by `scripts/artefacts.py`. Orphan branch: no shar
 
 ## Snapshots
 
+- [`20260703-35d2765`](snapshots/20260703-35d2765/report.md)
 - [`20260703-1cc09ec`](snapshots/20260703-1cc09ec/report.md)
