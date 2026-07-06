@@ -11,23 +11,35 @@ import ctypes as _ctypes
 
 from . import _cdll as _c
 from ._file import (
+    AsyncOp,
+    BatchIO,
     HostBuffer,
     OpenDSError,
     OpenDSFile,
     _check,
     deregister_buffer,
+    deregister_stream,
+    driver_properties,
     register_buffer,
+    register_stream,
+    set_max_direct_io_size,
 )
 
 __all__ = [
     "OpenDSFile",
     "OpenDSError",
     "HostBuffer",
+    "AsyncOp",
+    "BatchIO",
     "alloc",
     "free",
     "get_version",
     "register_buffer",
     "deregister_buffer",
+    "register_stream",
+    "deregister_stream",
+    "driver_properties",
+    "set_max_direct_io_size",
 ]
 
 
