@@ -3,8 +3,8 @@
 
 read/write are synchronous and return the byte count, mirroring the
 opends_read/opends_write C surface. Buffer arguments follow the
-cuFile convention (base pointer plus dev_offset) so consumers written
-against GDS port with minimal change.
+cuFile convention (base pointer plus offset) so consumers written
+against cuFile port with minimal change.
 """
 
 import atexit
@@ -368,6 +368,152 @@ _FLAGS = {
 _DIRECT_BACKENDS = {"gds"}
 
 
+# ---------------------------------------------------------------------------
+# Driver properties.
+# ---------------------------------------------------------------------------
+
+
+def driver_properties():
+    """Return the backend driver properties as a dict."""
+    _ensure_driver()
+    try:
+        p = _c.DsProps()
+        _check(_c.driver_get_properties(ctypes.byref(p)))
+        return {
+            "major_version": p.major_version,
+            "minor_version": p.minor_version,
+            "max_direct_io_size": p.max_direct_io_size,
+            "max_batch_io_size": p.max_batch_io_size,
+            "max_batch_io_timeout_msecs": p.max_batch_io_timeout_msecs,
+        }
+    finally:
+        _release_driver()
+
+
+def set_max_direct_io_size(size):
+    """Set the driver's max direct-I/O chunk size in bytes."""
+    _ensure_driver()
+    try:
+        _check(_c.driver_set_max_direct_io_size(int(size)))
+    finally:
+        _release_driver()
+
+
+# ---------------------------------------------------------------------------
+# Stream-based async I/O. The stream is an opaque accelerator stream handle
+# (e.g. a CUDA stream), passed through to the backend untouched; register it
+# before submitting async ops on it, deregister when done. The ref backend
+# ignores it and completes synchronously.
+# ---------------------------------------------------------------------------
+
+
+def _stream_handle(stream):
+    """Coerce an accelerator stream to a ctypes void* handle.
+
+    The handle is opaque here and forwarded to the backend as-is (e.g. a
+    CUDA stream). Accepts a raw int handle, a ctypes pointer, or an object
+    exposing the handle as .cuda_stream (torch) or .ptr (cupy). None is the
+    default (0) stream.
+    """
+    if stream is None or isinstance(stream, ctypes.c_void_p):
+        return stream
+    if isinstance(stream, int):
+        return ctypes.c_void_p(stream)
+    for attr in ("cuda_stream", "ptr"):
+        h = getattr(stream, attr, None)
+        if h is not None:
+            return ctypes.c_void_p(int(h))
+    raise TypeError(
+        "stream must be an int handle, a ctypes pointer, or a torch/cupy "
+        "stream; got %s" % type(stream).__name__
+    )
+
+
+def register_stream(stream, flags=0):
+    """Register an accelerator stream for async I/O (opends_stream_register)."""
+    _check(_c.stream_register(_stream_handle(stream), flags))
+
+
+def deregister_stream(stream):
+    """Deregister a previously registered stream."""
+    _check(_c.stream_deregister(_stream_handle(stream)))
+
+
+class AsyncOp:
+    """A submitted async I/O operation.
+
+    The backend reads the size/offset cells at stream-execution time, so keep
+    this object alive until the stream it was submitted on has synchronized,
+    then read `.result` for the transferred byte count.
+    """
+
+    __slots__ = ("_size", "_foff", "_boff", "_ret")
+
+    def __init__(self, size, file_offset, buf_offset):
+        self._size = ctypes.c_size_t(size)
+        self._foff = ctypes.c_long(file_offset)
+        self._boff = ctypes.c_long(buf_offset)
+        self._ret = ctypes.c_ssize_t(0)
+
+    @property
+    def result(self):
+        r = self._ret.value
+        if r < 0:
+            raise OpenDSError(-r)
+        return r
+
+
+class BatchIO:
+    """Batch I/O queue: submit multiple ops and poll for completion.
+
+    Build ops with OpenDSFile.read_op / write_op, submit them, then
+    get_status for the events. Usable as a context manager.
+    """
+
+    def __init__(self, nr):
+        self._h = ctypes.c_void_p()
+        _check(_c.batch_io_setup(ctypes.byref(self._h), int(nr)))
+        self._capacity = int(nr)
+
+    def submit(self, ops, flags=0):
+        n = len(ops)
+        arr = (_c.IoParams * n)(*ops)
+        with _preserve_cuda_context():
+            _check(_c.batch_io_submit(self._h, n, arr, flags))
+
+    def get_status(self, min_nr=1, max_nr=None, timeout=None):
+        """Poll for at least min_nr completions. Returns a list of
+        (cookie:int, status:int, bytes:int)."""
+        if max_nr is None:
+            max_nr = self._capacity
+        n = ctypes.c_uint(max_nr)
+        events = (_c.IoEvents * max_nr)()
+        ts_ref = None
+        if timeout is not None:
+            sec = int(timeout)
+            ts = _c.Timespec(sec, int((timeout - sec) * 1e9))
+            ts_ref = ctypes.byref(ts)
+        _check(_c.batch_io_get_status(
+            self._h, min_nr, ctypes.byref(n), events, ts_ref))
+        return [(events[i].cookie or 0, events[i].status, events[i].ret)
+                for i in range(n.value)]
+
+    def cancel(self):
+        _check(_c.batch_io_cancel(self._h))
+
+    def destroy(self):
+        if self._h:
+            _c.batch_io_destroy(self._h)
+            self._h = ctypes.c_void_p()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.destroy()
+        return False
+
+
 class OpenDSFile:
     def __init__(self, path, flags="r", *, use_direct_io=None, mode=0o644):
         if flags not in _FLAGS:
@@ -405,6 +551,64 @@ class OpenDSFile:
 
     def write(self, buf, size=None, file_offset=0, dev_offset=0):
         return self._submit(_c.write, buf, size, file_offset, dev_offset)
+
+    def _resolve_size(self, nbytes, size, dev_offset):
+        if size is None:
+            if nbytes is None:
+                raise ValueError("size is required for a bare pointer")
+            size = nbytes - dev_offset
+        return size
+
+    def _submit_async(self, c_fn, buf, size, file_offset, dev_offset, stream):
+        ptr, nbytes = _buffer_view(buf)
+        size = self._resolve_size(nbytes, size, dev_offset)
+        op = AsyncOp(size, file_offset, dev_offset)
+        with _preserve_cuda_context():
+            _registry.ensure(ptr, nbytes)
+            _check(c_fn(
+                self._fh, ptr, ctypes.byref(op._size), ctypes.byref(op._foff),
+                ctypes.byref(op._boff), ctypes.byref(op._ret),
+                _stream_handle(stream)))
+        return op
+
+    def read_async(self, buf, size=None, file_offset=0, dev_offset=0,
+                   stream=None):
+        """Submit an async read on `stream`. Returns an AsyncOp; read its
+        `.result` once the stream has synchronized."""
+        return self._submit_async(
+            _c.read_async, buf, size, file_offset, dev_offset, stream)
+
+    def write_async(self, buf, size=None, file_offset=0, dev_offset=0,
+                    stream=None):
+        """Submit an async write on `stream`. Returns an AsyncOp."""
+        return self._submit_async(
+            _c.write_async, buf, size, file_offset, dev_offset, stream)
+
+    def _io_op(self, opcode, buf, size, file_offset, dev_offset, cookie):
+        ptr, nbytes = _buffer_view(buf)
+        size = self._resolve_size(nbytes, size, dev_offset)
+        _registry.ensure(ptr, nbytes)
+        p = _c.IoParams()
+        p.mode = _c.OPENDS_BATCH
+        p.u.batch.dev_ptr_base = ptr
+        p.u.batch.file_offset = file_offset
+        p.u.batch.dev_ptr_offset = dev_offset
+        p.u.batch.size = size
+        fh = self._fh
+        p.fh = fh.value if isinstance(fh, ctypes.c_void_p) else fh
+        p.opcode = opcode
+        p.cookie = cookie
+        return p
+
+    def read_op(self, buf, size=None, file_offset=0, dev_offset=0, cookie=0):
+        """Build a batch read op for this file; submit it via BatchIO."""
+        return self._io_op(
+            _c.OPENDS_READ, buf, size, file_offset, dev_offset, cookie)
+
+    def write_op(self, buf, size=None, file_offset=0, dev_offset=0, cookie=0):
+        """Build a batch write op for this file; submit it via BatchIO."""
+        return self._io_op(
+            _c.OPENDS_WRITE, buf, size, file_offset, dev_offset, cookie)
 
     def close(self):
         if self._fh is not None:
