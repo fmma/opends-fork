@@ -11,6 +11,7 @@ import atexit
 import ctypes
 import math
 import os
+import signal
 import threading
 
 from . import _cdll as _c
@@ -84,7 +85,9 @@ def _io_result(ret):
 # count it so open files and pinned registrations share one open/close.
 # ---------------------------------------------------------------------------
 
-_lock = threading.Lock()
+# Reentrant so a signal-driven _cleanup can re-acquire while the same thread
+# already holds the lock, instead of deadlocking.
+_lock = threading.RLock()
 _driver_refs = 0
 # Pointers pinned by register_buffer. Each holds a driver reference so the
 # registration outlives individual file opens, matching cuFileBufRegister.
@@ -97,6 +100,7 @@ def _ensure_driver():
         if _driver_refs == 0:
             _check(_c.driver_open())
         _driver_refs += 1
+    _install_signal_handlers()
 
 
 def _release_driver():
@@ -111,15 +115,78 @@ def _release_driver():
             _check(_c.driver_close())
 
 
+# Canonical idempotent teardown: drop registrations and close the driver,
+# releasing the GPU dma-buf. Kept module-public under this exact name because
+# frameworks call opends._file._cleanup() from their own SIGTERM handler (they
+# shadow any handler we install, and their graceful shutdown may never run the
+# LMCache close that would deregister us). Renaming it silently leaks the buffer.
+#
+# _cleaning guards against signal reentrancy: a second SIGTERM/SIGINT arriving
+# while _cleanup is inside the slow buf_deregister re-enters it on the same
+# thread, where _registry's non-reentrant lock would self-deadlock and
+# driver_close would never run. A reentrant call is a no-op so the first
+# completes; reset in finally so a later driver lifecycle can clean up too.
+_cleaning = False
+
+
 @atexit.register
-def _shutdown():
-    global _driver_refs
-    with _lock:
-        if _driver_refs > 0:
-            _pinned.clear()
-            _registry.clear()
-            _c.driver_close()
-            _driver_refs = 0
+def _cleanup():
+    global _driver_refs, _cleaning
+    if _cleaning:
+        return
+    _cleaning = True
+    try:
+        with _lock:
+            if _driver_refs > 0:
+                _pinned.clear()
+                _registry.clear()
+                _c.driver_close()
+                _driver_refs = 0
+    finally:
+        _cleaning = False
+
+
+# ---------------------------------------------------------------------------
+# Backstop for standalone consumers: atexit does not run on signal death, so a
+# SIGTERM/SIGINT with no handler skips driver_close and leaks the GPU dma-buf.
+# Install a handler that runs _cleanup and chains to the prior one. A framework
+# that installs its own SIGTERM handler after import (e.g. vLLM) shadows this
+# and calls opends._file._cleanup() directly instead.
+# ---------------------------------------------------------------------------
+
+_CLEANUP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+_prev_handlers = {}
+
+
+def _signal_cleanup(signum, frame):
+    _cleanup()
+    prev = _prev_handlers.get(signum, signal.SIG_DFL)
+    if prev is None:  # handler installed outside Python; treat as default
+        prev = signal.SIG_DFL
+    if callable(prev):
+        prev(signum, frame)
+    else:
+        # SIG_DFL / SIG_IGN: restore it and re-raise so the original
+        # disposition (terminate for SIGTERM) still applies.
+        signal.signal(signum, prev)
+        os.kill(os.getpid(), signum)
+
+
+def _install_signal_handlers():
+    """Route SIGTERM/SIGINT through _signal_cleanup, chaining to whatever was
+    installed before. Idempotent (skips signals we already own, so it never
+    chains to itself). A no-op off the main thread, where signal.signal raises;
+    atexit still covers a clean exit there.
+    """
+    for sig in _CLEANUP_SIGNALS:
+        try:
+            cur = signal.getsignal(sig)
+            if cur is _signal_cleanup:
+                continue
+            signal.signal(sig, _signal_cleanup)
+            _prev_handlers[sig] = cur
+        except (ValueError, OSError):
+            pass
 
 
 # ---------------------------------------------------------------------------
