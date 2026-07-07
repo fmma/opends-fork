@@ -1319,7 +1319,7 @@ submit_sync_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
 	if (!d->async_ready)
 		return -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 
-	if (!is_write && d->n_io_threads > 1 && d->lba_size &&
+	if (0 && !is_write && d->n_io_threads > 1 && d->lba_size &&
 	    size >= SYNC_SPLIT_MIN_BYTES) {
 		int nslices = (int)(size / SYNC_SPLIT_MIN_BYTES);
 		if (nslices > d->n_io_threads)
