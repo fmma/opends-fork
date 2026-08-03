@@ -4,14 +4,13 @@
  *
  * Defines the ds_accel_ops instance for CUDA and binds the active-ops
  * pointer ds_accel to it. The bounce launch lives in ds_bounce_kernel_cuda.cu
- * (the device translation unit); everything else maps onto the CUDA
- * driver API (cu*) and the runtime copy (cudaMemcpy).
+ * (the device translation unit); every other op maps onto the CUDA driver
+ * API (cu*).
  */
 
 #include "ds_accel.h"
 
 #include <cuda.h>
-#include <cuda_runtime.h>
 
 /* The copy_stream kernel launcher, defined in the nvcc TU
  * (ds_bounce_kernel_cuda.cu). */
@@ -59,7 +58,8 @@ cuda_host_free(void *host)
 static int
 cuda_copy(void *dst, const void *src, size_t bytes)
 {
-	return cudaMemcpy(dst, src, bytes, cudaMemcpyDefault) == cudaSuccess
+	return cuMemcpy((CUdeviceptr)dst, (CUdeviceptr)src, bytes) ==
+	                       CUDA_SUCCESS
 	               ? 0
 	               : -1;
 }
