@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
-ref = "opends-0.1.0"
+ref = "opends-0.1.1"
 
 [xal.repository]
 remote = "https://github.com/fmma/xal"
