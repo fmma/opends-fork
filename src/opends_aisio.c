@@ -46,6 +46,7 @@
 #define ENV_HOMI_DEV "OPENDS_HOMI_DEV"
 #define ENV_IO_THREADS "OPENDS_AISIO_IO_THREADS"
 #define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
+#define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
 #define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
 #define DEFAULT_IO_THREADS 1
 #define MAX_IO_THREADS 16
@@ -175,6 +176,7 @@ struct driver {
 
 	int n_io_threads;
 	uint32_t queue_depth;
+	uint64_t cpu_mask;
 	struct io_worker *workers;
 	uint32_t rr_next;
 	bool stop;
@@ -806,6 +808,15 @@ io_thread_main(void *arg)
 }
 
 static int
+mask_nth_cpu(uint64_t mask, int n)
+{
+	for (int cpu = 0; cpu < 64; cpu++)
+		if (((mask >> cpu) & 1) && n-- == 0)
+			return cpu;
+	return -1;
+}
+
+static int
 async_setup(struct driver *d)
 {
 	if (ds_accel->ctx_get(&d->accel_ctx) < 0)
@@ -828,6 +839,7 @@ async_setup(struct driver *d)
 
 	d->stop = false;
 	int started = 0;
+	int mask_cpus = __builtin_popcountll(d->cpu_mask);
 	for (int i = 0; i < d->n_io_threads; i++) {
 		struct io_worker *w = &d->workers[i];
 		w->drv = d;
@@ -836,7 +848,20 @@ async_setup(struct driver *d)
 			w->queue = NULL;
 			goto fail;
 		}
-		if (pthread_create(&w->thread, NULL, io_thread_main, w) != 0) {
+		pthread_attr_t attr;
+		pthread_attr_t *attrp = NULL;
+		if (mask_cpus) {
+			cpu_set_t set;
+			CPU_ZERO(&set);
+			CPU_SET(mask_nth_cpu(d->cpu_mask, i % mask_cpus), &set);
+			pthread_attr_init(&attr);
+			pthread_attr_setaffinity_np(&attr, sizeof(set), &set);
+			attrp = &attr;
+		}
+		int rc = pthread_create(&w->thread, attrp, io_thread_main, w);
+		if (attrp)
+			pthread_attr_destroy(&attr);
+		if (rc != 0) {
 			xnvme_queue_term(w->queue);
 			w->queue = NULL;
 			goto fail;
@@ -930,6 +955,8 @@ read_env_config(struct driver *d)
 	        env_int(ENV_IO_THREADS, DEFAULT_IO_THREADS, 1, MAX_IO_THREADS);
 	d->queue_depth = (uint32_t)env_int(ENV_QUEUE_DEPTH, DEFAULT_QUEUE_DEPTH,
 	                                   1, MAX_QUEUE_DEPTH);
+	const char *mask = getenv(ENV_CPU_MASK);
+	d->cpu_mask = mask && mask[0] ? strtoull(mask, NULL, 0) : 0;
 }
 
 static struct io_worker *
