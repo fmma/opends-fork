@@ -47,6 +47,7 @@
 #define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
 #define ENV_ASSUME_ALIGNED_ONLY "OPENDS_AISIO_ASSUME_ALIGNED_ONLY"
+#define ENV_IDLE_SPIN_US "OPENDS_AISIO_IDLE_SPIN_US"
 #define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
 #define DEFAULT_IO_THREADS 1
 #define MAX_IO_THREADS 15
@@ -56,6 +57,8 @@
 #define NVME_PRP_PAGE 4096
 #define DEFAULT_QUEUE_DEPTH 512
 #define MAX_QUEUE_DEPTH 4096
+#define DEFAULT_IDLE_SPIN_US 200
+#define MAX_IDLE_SPIN_US 1000000
 #define MAX_STREAMS 8192
 #define STREAM_WORDS_BYTES (MAX_STREAMS * sizeof(uint32_t))
 #define FILE_OP_QUEUE_SIZE 1024
@@ -176,6 +179,7 @@ struct driver {
 
 	int n_io_threads;
 	uint32_t queue_depth;
+	uint32_t idle_spin_us;
 	uint64_t cpu_mask;
 	bool assume_aligned_only;
 	struct io_worker *workers;
@@ -193,6 +197,15 @@ static inline uint64_t
 max_u64(uint64_t a, uint64_t b)
 {
 	return a > b ? a : b;
+}
+
+static inline uint64_t
+monotonic_ns(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
 static void *
@@ -806,6 +819,10 @@ io_thread_main(void *arg)
 {
 	struct io_worker *w = arg;
 	struct driver *d = w->drv;
+	uint64_t idle_spin_ns = (uint64_t)d->idle_spin_us * 1000;
+	uint64_t spin_until_ns = 0;
+	bool stay_hot = true;
+
 	ds_accel->ctx_set(d->accel_ctx);
 
 	for (;;) {
@@ -851,12 +868,27 @@ io_thread_main(void *arg)
 		if (__atomic_load_n(&d->stop, __ATOMIC_ACQUIRE) && !busy)
 			break;
 
+		/* An op that lands on a napping worker eats the whole nap
+		 * (100 us plus timer slack) before dispatch, which dominates
+		 * small-op latency. Stay hot for a spin window after the last
+		 * activity and nap only past it, bounding the idle burn. The
+		 * clock is read on the busy->idle transition and while idle,
+		 * never on the busy path. */
 		if (busy) {
+			stay_hot = true;
 			xnvme_queue_poke(w->queue, 0);
 			sched_yield();
 		} else {
-			struct timespec ts = {0, 100000};
-			nanosleep(&ts, NULL);
+			if (stay_hot) {
+				spin_until_ns = monotonic_ns() + idle_spin_ns;
+				stay_hot = false;
+			}
+			if (monotonic_ns() < spin_until_ns) {
+				sched_yield();
+			} else {
+				struct timespec ts = {0, 100000};
+				nanosleep(&ts, NULL);
+			}
 		}
 	}
 
@@ -1025,6 +1057,11 @@ read_env_config(struct driver *d)
 	            &n) < 0)
 		return -EINVAL;
 	d->queue_depth = (uint32_t)n;
+
+	if (env_int(ENV_IDLE_SPIN_US, DEFAULT_IDLE_SPIN_US, 0, MAX_IDLE_SPIN_US,
+	            &n) < 0)
+		return -EINVAL;
+	d->idle_spin_us = (uint32_t)n;
 
 	const char *mask = getenv(ENV_CPU_MASK);
 	d->cpu_mask = mask && mask[0] ? strtoull(mask, NULL, 0) : 0;
