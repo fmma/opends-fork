@@ -295,6 +295,9 @@ last one: a hex mask whose CPUs the aisio IO workers are pinned to round-robin
 `OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` declares that every read is LBA-aligned:
 reads whose span ends off an LBA boundary fail with `OPENDS_INVALID_VALUE`,
 and the async path stops enqueueing the per-read bounce kernel.
+`OPENDS_AISIO_IDLE_SPIN_US` sets how long an idle IO worker keeps yielding
+after its last activity before falling back to a 100 us nap (default 200,
+`0` naps immediately); ops arriving within the window skip the nap latency.
 
 Every leg appends a structured record to
 `<out>/**/artifacts/history.jsonl`: config (backend, dataset, mode,
