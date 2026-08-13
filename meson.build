@@ -237,6 +237,11 @@ if aisio_test_enabled
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
+  executable('aisio_async_bench',
+    'examples/aisio_async_bench.c',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep, threads_dep],
+  )
   executable('aisio_sync_bench',
     'examples/aisio_sync_bench.c',
     include_directories : aisio_test_inc_dirs,

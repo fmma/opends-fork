@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * aisio_sync_bench - Thread-count sweep for the synchronous opends_read
- * path, the counterpart of aisio_ioq_bench for the thread-pool model:
+ * path, the counterpart of aisio_async_bench for the thread-pool model:
  * N threads each keep one blocking read in flight, which is how the
  * NIXL plugin drives the sync API today.
  *
