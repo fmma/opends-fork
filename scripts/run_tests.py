@@ -16,10 +16,11 @@ from _helpers import ok, run_cijoe
 
 BACKENDS = ["ref", "gds", "aisio"]
 TESTS_BY_BACKEND = {
-    "ref":   ["smoke", "sync_read", "mt_read"],
+    "ref":   ["smoke", "sync_read", "mt_read", "async_read"],
     "gds":   ["sync_read"],
     "aisio": ["sync_read", "mt_read", "register_large", "coherency",
-              "stream_read", "sync_write", "stream_write", "block_alloc"],
+              "async_read", "stream_read", "sync_write", "stream_write",
+              "block_alloc"],
 }
 ALL_TESTS = sorted({t for ts in TESTS_BY_BACKEND.values() for t in ts})
 
