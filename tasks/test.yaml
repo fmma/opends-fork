@@ -74,12 +74,7 @@ steps:
 
   - name: test_register_large_aisio
     run: |
-      # cudamem_mapping holds one dma-buf fd per alloc_granularity-aligned
-      # chunk (2 MiB); 8 GiB needs 4096 fds per
-      # registration. 1 Mi headroom absorbs multi-buffer flows and matches
-      # the kernel default fs.nr_open. prlimit sets both soft and hard
-      # atomically (raising hard requires CAP_SYS_RESOURCE; the cijoe
-      # runner is root).
+      # Increase fd limit to support more than enough file descriptors needed for xnvme cuda memory mapping.
       echo "fd limit (soft/hard): $(ulimit -Sn)/$(ulimit -Hn)"
       OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
