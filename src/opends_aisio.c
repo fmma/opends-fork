@@ -95,6 +95,7 @@ struct opends_stream {
 enum file_op_mode {
 	FILE_OP_SYNC,
 	FILE_OP_STREAM,
+	FILE_OP_ASYNC,
 	FILE_OP_BATCH,
 };
 
@@ -119,6 +120,13 @@ struct file_op_batch {
 	unsigned nr;
 };
 
+struct file_op_async {
+	size_t size;
+	off_t file_offset;
+	off_t buf_offset;
+	opends_async_future_t *future;
+};
+
 struct file_op {
 	enum file_op_mode mode;
 	bool is_write;
@@ -131,10 +139,12 @@ struct file_op {
 	int err;
 	void *tail_dst;
 	size_t tail_nbytes;
+	void *tail_bounce;
 	union {
 		struct file_op_sync sync;
 		struct file_op_stream stream;
 		struct file_op_batch batch;
+		struct file_op_async async;
 	} u;
 };
 
@@ -239,6 +249,16 @@ buf_free_locked(struct driver *d, void *p)
 	pthread_mutex_lock(&d->alloc_lock);
 	xnvme_buf_free(d->xdev, p);
 	pthread_mutex_unlock(&d->alloc_lock);
+}
+
+/* The async future is caller-owned storage that outlives the ring slot,
+ * which is recycled as soon as the op completes: the worker publishes
+ * the result through it and never touches it again. */
+static void
+async_future_complete(opends_async_future_t *fut, ssize_t result)
+{
+	fut->result = result;
+	__atomic_store_n(&fut->done, 1, __ATOMIC_RELEASE);
 }
 
 static int
@@ -565,15 +585,10 @@ submit_stream_tail(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
 }
 
 static int
-submit_sync_tail(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
-                 uint64_t cur_slba, size_t nbytes)
+submit_tail_read(struct io_worker *w, struct file_op *op, void *bounce_buf,
+                 uint8_t *abs_dst, uint64_t cur_slba, size_t nbytes)
 {
 	struct driver *d = w->drv;
-
-	if (ensure_bounce_buf(d, &w->sync_bounce_buf) < 0) {
-		op->err = OPENDS_INTERNAL_ERROR;
-		return -1;
-	}
 
 	uint64_t nlbas = (nbytes + (d->lba_size - 1)) >> d->lba_shift;
 	uint16_t nlb = (uint16_t)(nlbas - 1);
@@ -588,8 +603,8 @@ submit_sync_tail(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
 		}
 		xnvme_cmd_ctx_set_cb(ctx, bounce_cb, op);
 
-		int srv = xnvme_nvm_read(ctx, d->nsid, cur_slba, nlb,
-		                         w->sync_bounce_buf, NULL);
+		int srv = xnvme_nvm_read(ctx, d->nsid, cur_slba, nlb, bounce_buf,
+		                         NULL);
 		if (srv == -EBUSY) {
 			xnvme_queue_put_cmd_ctx(w->queue, ctx);
 			xnvme_queue_poke(w->queue, 0);
@@ -608,6 +623,36 @@ submit_sync_tail(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
 	op->bounces_outstanding++;
 	op->bytes_acc += nbytes;
 	return 0;
+}
+
+static int
+submit_sync_tail(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
+                 uint64_t cur_slba, size_t nbytes)
+{
+	if (ensure_bounce_buf(w->drv, &w->sync_bounce_buf) < 0) {
+		op->err = OPENDS_INTERNAL_ERROR;
+		return -1;
+	}
+	return submit_tail_read(w, op, w->sync_bounce_buf, abs_dst, cur_slba,
+	                        nbytes);
+}
+
+/* Async ops overlap on one worker, so each stages its sub-LBA tail through
+ * its own buffer rather than the shared per-worker slot. The bounce is
+ * cached on the ring slot for the worker's lifetime and released at
+ * teardown, keeping the allocator out of the completion path. */
+static int
+submit_async_tail(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
+               uint64_t cur_slba, size_t nbytes)
+{
+	if (!op->tail_bounce)
+		op->tail_bounce = buf_alloc_locked(w->drv, NVME_PRP_PAGE);
+	if (!op->tail_bounce) {
+		op->err = OPENDS_INTERNAL_ERROR;
+		return -1;
+	}
+	return submit_tail_read(w, op, op->tail_bounce, abs_dst, cur_slba,
+	                        nbytes);
 }
 
 static void
@@ -631,6 +676,10 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		size = *op->u.stream.size_p;
 		req_start = (uint64_t)*op->u.stream.file_offset_p;
 		dst_base = (uint8_t *)op->buf_base + *op->u.stream.buf_offset_p;
+	} else if (op->mode == FILE_OP_ASYNC) {
+		size = op->u.async.size;
+		req_start = (uint64_t)op->u.async.file_offset;
+		dst_base = (uint8_t *)op->buf_base + op->u.async.buf_offset;
 	} else {
 		size = op->u.sync.size;
 		req_start = (uint64_t)op->u.sync.file_offset;
@@ -700,6 +749,9 @@ start_read_op(struct io_worker *w, struct file_op *op)
 			if (op->mode == FILE_OP_STREAM)
 				trc = submit_stream_tail(w, op, abs_dst,
 				                         cur_slba, tail_bytes);
+			else if (op->mode == FILE_OP_ASYNC)
+				trc = submit_async_tail(w, op, abs_dst, cur_slba,
+				                     tail_bytes);
 			else
 				trc = submit_sync_tail(w, op, abs_dst, cur_slba,
 				                       tail_bytes);
@@ -746,6 +798,18 @@ complete_read_op(struct io_worker *w, struct file_op *op)
 		return;
 	}
 
+	if (op->mode == FILE_OP_ASYNC) {
+		if (tail_bytes) {
+			int rc = ds_accel->copy(op->tail_dst, op->tail_bounce,
+			                        op->tail_nbytes);
+			if (rc != 0)
+				n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+		}
+		async_future_complete(op->u.async.future, n);
+		op->state = FILE_OP_FREE;
+		return;
+	}
+
 	if (tail_bytes) {
 		int rc = ds_accel->copy(op->tail_dst, w->sync_bounce_buf,
 		                        op->tail_nbytes);
@@ -768,6 +832,10 @@ dispatch_write(struct io_worker *w, struct file_op *op)
 		src = (const uint8_t *)op->buf_base + *op->u.stream.buf_offset_p;
 		size = *op->u.stream.size_p;
 		file_offset = *op->u.stream.file_offset_p;
+	} else if (op->mode == FILE_OP_ASYNC) {
+		src = (const uint8_t *)op->buf_base + op->u.async.buf_offset;
+		size = op->u.async.size;
+		file_offset = op->u.async.file_offset;
 	} else {
 		src = (const uint8_t *)op->buf_base + op->u.sync.buf_offset;
 		size = op->u.sync.size;
@@ -783,6 +851,8 @@ dispatch_write(struct io_worker *w, struct file_op *op)
 	if (op->mode == FILE_OP_STREAM) {
 		*op->u.stream.bytes_read_p = n;
 		release_gate(op->u.stream.opends_stream, op->u.stream.seq);
+	} else if (op->mode == FILE_OP_ASYNC) {
+		async_future_complete(op->u.async.future, n);
 	} else {
 		op->u.sync.result = n;
 	}
@@ -854,6 +924,7 @@ io_thread_main(void *arg)
 			case FILE_OP_PENDING:
 				switch (op->mode) {
 				case FILE_OP_SYNC:
+				case FILE_OP_ASYNC:
 					dispatch_pending(w, op);
 					break;
 				case FILE_OP_STREAM:
@@ -1014,6 +1085,13 @@ workers_teardown(struct driver *d)
 
 	for (int i = 0; i < d->n_io_threads; i++) {
 		struct io_worker *w = &d->workers[i];
+		for (uint32_t s = 0; s < FILE_OP_QUEUE_SIZE; s++) {
+			struct file_op *op = &w->file_op_queue[s];
+			if (op->tail_bounce) {
+				xnvme_buf_free(d->xdev, op->tail_bounce);
+				op->tail_bounce = NULL;
+			}
+		}
 		if (w->sync_bounce_buf) {
 			xnvme_buf_free(d->xdev, w->sync_bounce_buf);
 			w->sync_bounce_buf = NULL;
@@ -1677,6 +1755,73 @@ opends_stream_deregister(opends_stream_t stream)
 {
 	(void)stream;
 	return opends_ok();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Async I/O                                                  */
+/* ------------------------------------------------------------------ */
+
+static opends_error_t
+submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
+             void *buf_base, size_t size, off_t file_offset, off_t buf_offset,
+             opends_async_future_t *future)
+{
+	if (!d)
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
+	if (!fh || !buf_base || !future)
+		return opends_err(OPENDS_INVALID_VALUE);
+	if (!d->workers_ready)
+		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
+
+	future->done = 0;
+	future->result = 0;
+
+	struct io_worker *w;
+	uint32_t head;
+
+	pthread_mutex_lock(&d->submit_lock);
+	struct file_op *op = claim_slot_locked(d, &w, &head);
+	op->mode = FILE_OP_ASYNC;
+	op->is_write = is_write;
+	op->h = (struct registered_file *)fh;
+	op->buf_base = buf_base;
+	op->u.async.size = size;
+	op->u.async.file_offset = file_offset;
+	op->u.async.buf_offset = buf_offset;
+	op->u.async.future = future;
+	op->state = FILE_OP_PENDING;
+	w->queue_head = head + 1;
+	pthread_mutex_unlock(&d->submit_lock);
+
+	return opends_ok();
+}
+
+opends_error_t
+opends_async_read(opends_handle_t fh, void *buf_base, size_t size,
+               off_t file_offset, off_t buf_offset, opends_async_future_t *future)
+{
+	return submit_async_op(drv, false, fh, buf_base, size, file_offset,
+	                    buf_offset, future);
+}
+
+opends_error_t
+opends_async_write(opends_handle_t fh, const void *buf_base, size_t size,
+                off_t file_offset, off_t buf_offset, opends_async_future_t *future)
+{
+	return submit_async_op(drv, true, fh, (void *)buf_base, size, file_offset,
+	                    buf_offset, future);
+}
+
+ssize_t
+opends_async_await(opends_async_future_t *future)
+{
+	if (!future)
+		return -(ssize_t)OPENDS_INVALID_VALUE;
+
+	while (!__atomic_load_n(&future->done, __ATOMIC_ACQUIRE))
+		sched_yield();
+
+	return future->result;
 }
 
 /* ------------------------------------------------------------------ */
