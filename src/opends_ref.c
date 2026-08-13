@@ -3,6 +3,7 @@
 
 #include "opends_internal.h"
 
+#include <sched.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
@@ -333,4 +334,57 @@ opends_stream_deregister(opends_stream_t stream)
 {
 	(void)stream;
 	return opends_ok();
+}
+
+/* Async I/O. Executes synchronously on submit and buffers the
+ * result in the caller's future until awaited, mirroring the batch
+ * implementation above. */
+static opends_error_t
+ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
+              off_t file_offset, off_t buf_offset, opends_async_future_t *future)
+{
+	if (!driver_open)
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
+	if (!fh || !buf_base || !future)
+		return opends_err(OPENDS_INVALID_VALUE);
+
+	ssize_t result;
+	if (is_write)
+		result = opends_write(fh, buf_base, size, file_offset,
+		                      buf_offset);
+	else
+		result = opends_read(fh, buf_base, size, file_offset,
+		                     buf_offset);
+
+	future->result = result;
+	__atomic_store_n(&future->done, 1, __ATOMIC_RELEASE);
+	return opends_ok();
+}
+
+opends_error_t
+opends_async_read(opends_handle_t fh, void *buf_base, size_t size,
+               off_t file_offset, off_t buf_offset, opends_async_future_t *future)
+{
+	return ref_async_submit(false, fh, buf_base, size, file_offset,
+	                     buf_offset, future);
+}
+
+opends_error_t
+opends_async_write(opends_handle_t fh, const void *buf_base, size_t size,
+                off_t file_offset, off_t buf_offset, opends_async_future_t *future)
+{
+	return ref_async_submit(true, fh, (void *)buf_base, size, file_offset,
+	                     buf_offset, future);
+}
+
+ssize_t
+opends_async_await(opends_async_future_t *future)
+{
+	if (!future)
+		return -(ssize_t)OPENDS_INVALID_VALUE;
+
+	while (!__atomic_load_n(&future->done, __ATOMIC_ACQUIRE))
+		sched_yield();
+
+	return future->result;
 }

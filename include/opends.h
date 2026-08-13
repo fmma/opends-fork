@@ -263,6 +263,38 @@ opends_error_t opends_stream_write(opends_handle_t fh, void *buf_base,
 opends_error_t opends_stream_register(opends_stream_t stream, unsigned flags);
 opends_error_t opends_stream_deregister(opends_stream_t stream);
 
+/*
+ * Async I/O. Not part of the cuFile surface.
+ *
+ * opends_async_read and opends_async_write are the synchronous calls with
+ * completion reaping deferred: submit returns immediately after
+ * initializing the caller-provided future, and opends_async_await blocks
+ * until that operation completes and returns its byte count (or a
+ * negated opends_op_error_t on failure).
+ *
+ * The caller owns the future storage; stack allocation is fine. The
+ * backend writes the completion through it, so it must stay valid at
+ * the same address from submit until awaited; do not copy or move a
+ * future with its operation in flight. Awaiting an already completed
+ * future again returns the same result; the storage may be reused for
+ * a new submit after that. Operations may complete in any order;
+ * awaiting in submission order is not required. Submit and await are
+ * thread-safe. Submission resources are bounded internally; submit
+ * applies backpressure rather than failing.
+ */
+typedef struct opends_async_future {
+	unsigned done;  /* nonzero once the operation has completed */
+	ssize_t result; /* byte count or negated error; valid once done */
+} opends_async_future_t;
+
+opends_error_t opends_async_read(opends_handle_t fh, void *buf_base, size_t size,
+                              off_t file_offset, off_t buf_offset,
+                              opends_async_future_t *future);
+opends_error_t opends_async_write(opends_handle_t fh, const void *buf_base,
+                               size_t size, off_t file_offset,
+                               off_t buf_offset, opends_async_future_t *future);
+ssize_t opends_async_await(opends_async_future_t *future);
+
 #ifdef __cplusplus
 }
 #endif

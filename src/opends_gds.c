@@ -386,3 +386,44 @@ opends_stream_deregister(opends_stream_t stream)
 		return from_cufile_error(err);
 	return opends_ok();
 }
+
+/* ------------------------------------------------------------------ */
+/*  Async I/O (not implemented)                                */
+/* ------------------------------------------------------------------ */
+
+/* cuFile has no stream-free async primitive to map these onto; the
+ * batch API's grouped submission and per-batch status do not fit the
+ * per-op submit/await contract. */
+
+opends_error_t
+opends_async_read(opends_handle_t fh, void *buf_base, size_t size,
+               off_t file_offset, off_t buf_offset, opends_async_future_t *future)
+{
+	(void)fh;
+	(void)buf_base;
+	(void)size;
+	(void)file_offset;
+	(void)buf_offset;
+	(void)future;
+	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
+}
+
+opends_error_t
+opends_async_write(opends_handle_t fh, const void *buf_base, size_t size,
+                off_t file_offset, off_t buf_offset, opends_async_future_t *future)
+{
+	(void)fh;
+	(void)buf_base;
+	(void)size;
+	(void)file_offset;
+	(void)buf_offset;
+	(void)future;
+	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
+}
+
+ssize_t
+opends_async_await(opends_async_future_t *future)
+{
+	(void)future;
+	return -(ssize_t)OPENDS_ASYNC_NOT_SUPPORTED;
+}
