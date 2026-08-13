@@ -48,6 +48,7 @@
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
 #define ENV_ASSUME_ALIGNED_ONLY "OPENDS_AISIO_ASSUME_ALIGNED_ONLY"
 #define ENV_IDLE_SPIN_US "OPENDS_AISIO_IDLE_SPIN_US"
+#define ENV_BUSY_SPIN "OPENDS_AISIO_BUSY_SPIN"
 #define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
 #define DEFAULT_IO_THREADS 1
 #define MAX_IO_THREADS 15
@@ -180,6 +181,7 @@ struct driver {
 	int n_io_threads;
 	uint32_t queue_depth;
 	uint32_t idle_spin_us;
+	bool busy_spin;
 	uint64_t cpu_mask;
 	bool assume_aligned_only;
 	struct io_worker *workers;
@@ -205,6 +207,16 @@ monotonic_ns(void)
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static inline void
+cpu_relax(void)
+{
+#if defined(__x86_64__) || defined(__i386__)
+	__builtin_ia32_pause();
+#elif defined(__aarch64__)
+	__asm__ __volatile__("yield");
+#endif
 }
 
 static int
@@ -803,6 +815,7 @@ io_thread_main(void *arg)
 	struct driver *d = w->drv;
 	uint64_t idle_spin_ns = (uint64_t)d->idle_spin_us * 1000;
 	uint64_t spin_until_ns = 0;
+	bool busy_spin = d->busy_spin;
 	bool stay_hot = true;
 
 	ds_accel->ctx_set(d->accel_ctx);
@@ -850,15 +863,14 @@ io_thread_main(void *arg)
 		if (__atomic_load_n(&d->stop, __ATOMIC_ACQUIRE) && !busy)
 			break;
 
-		/* An op that lands on a napping worker eats the whole nap
-		 * (100 us plus timer slack) before dispatch, which dominates
-		 * small-op latency. Stay hot for a spin window after the last
-		 * activity and nap only past it, bounding the idle burn. The
-		 * clock is read on the busy->idle transition and while idle,
-		 * never on the busy path. */
 		if (busy) {
 			stay_hot = true;
 			xnvme_queue_poke(w->queue, 0);
+		}
+
+		if (busy_spin) {
+			cpu_relax();
+		} else if (busy) {
 			sched_yield();
 		} else {
 			if (stay_hot) {
@@ -1050,6 +1062,9 @@ read_env_config(struct driver *d)
 
 	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
 	d->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
+
+	const char *spin = getenv(ENV_BUSY_SPIN);
+	d->busy_spin = spin && spin[0] && spin[0] != '0';
 
 	/* The tail mode picks the async gate mechanism, and the vendor ops it
 	 * drives are required only for that mode (see ds_accel.h). A partial
