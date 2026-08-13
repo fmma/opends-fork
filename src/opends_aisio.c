@@ -188,6 +188,7 @@ struct driver {
 	uint32_t rr_next;
 	pthread_mutex_t submit_lock;
 	pthread_mutex_t reg_lock;
+	pthread_mutex_t alloc_lock;
 	bool stop;
 };
 
@@ -219,12 +220,33 @@ cpu_relax(void)
 #endif
 }
 
+/* xnvme buffer alloc/free land in upcie's cudamem heap, whose freelist
+ * has no internal locking; every call that can run concurrently (worker
+ * threads staging tail bounces, app threads registering streams or
+ * allocating buffers) must go through these. */
+static void *
+buf_alloc_locked(struct driver *d, size_t nbytes)
+{
+	pthread_mutex_lock(&d->alloc_lock);
+	void *p = xnvme_buf_alloc(d->xdev, nbytes);
+	pthread_mutex_unlock(&d->alloc_lock);
+	return p;
+}
+
+static void
+buf_free_locked(struct driver *d, void *p)
+{
+	pthread_mutex_lock(&d->alloc_lock);
+	xnvme_buf_free(d->xdev, p);
+	pthread_mutex_unlock(&d->alloc_lock);
+}
+
 static int
 ensure_bounce_buf(struct driver *d, void **bounce_buf_p)
 {
 	if (*bounce_buf_p)
 		return 0;
-	*bounce_buf_p = xnvme_buf_alloc(d->xdev, NVME_PRP_PAGE);
+	*bounce_buf_p = buf_alloc_locked(d, NVME_PRP_PAGE);
 	return *bounce_buf_p ? 0 : -ENOMEM;
 }
 
@@ -234,7 +256,7 @@ ensure_bounce_buf(struct driver *d, void **bounce_buf_p)
  * Returns 0 on success; on failure, the dev_err to report (vendor code or
  * -1), with the fields left zeroed. */
 static int
-stream_bounce_alloc(struct opends_stream *s, struct xnvme_dev *xdev)
+stream_bounce_alloc(struct opends_stream *s, struct driver *d)
 {
 	s->bounce_buf = NULL;
 	s->bounce_desc_host = NULL;
@@ -253,7 +275,7 @@ stream_bounce_alloc(struct opends_stream *s, struct xnvme_dev *xdev)
 
 	/* One slot suffices: at most one bounce per op, and the per-stream gate
 	 * serialises ops. */
-	void *buf = xnvme_buf_alloc(xdev, NVME_PRP_PAGE);
+	void *buf = buf_alloc_locked(d, NVME_PRP_PAGE);
 	if (!buf) {
 		ds_accel->host_free(desc_host);
 		return -1;
@@ -266,10 +288,10 @@ stream_bounce_alloc(struct opends_stream *s, struct xnvme_dev *xdev)
 }
 
 static void
-stream_bounce_free(struct opends_stream *s, struct xnvme_dev *xdev)
+stream_bounce_free(struct opends_stream *s, struct driver *d)
 {
 	if (s->bounce_buf) {
-		xnvme_buf_free(xdev, s->bounce_buf);
+		buf_free_locked(d, s->bounce_buf);
 		s->bounce_buf = NULL;
 	}
 	if (s->bounce_desc_host) {
@@ -987,7 +1009,7 @@ async_teardown(struct driver *d)
 		pthread_join(d->workers[i].thread, NULL);
 
 	for (int i = 0; i < d->n_streams; i++) {
-		stream_bounce_free(&d->streams[i], d->xdev);
+		stream_bounce_free(&d->streams[i], d);
 	}
 
 	for (int i = 0; i < d->n_io_threads; i++) {
@@ -1146,11 +1168,13 @@ opends_driver_open(void)
 	}
 	pthread_mutex_init(&d->submit_lock, NULL);
 	pthread_mutex_init(&d->reg_lock, NULL);
+	pthread_mutex_init(&d->alloc_lock, NULL);
 
 	const char *sock = getenv(ENV_HOMI_SOCKET);
 	int rc = homic_connect(
 	        (char *)(sock && sock[0] ? sock : DEFAULT_HOMI_SOCKET));
 	if (rc < 0) {
+		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
 		free(d);
@@ -1163,6 +1187,7 @@ opends_driver_open(void)
 	if (orc < 0) {
 		homic_disconnect();
 		free(d->attach_descpath);
+		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
 		free(d);
@@ -1176,6 +1201,7 @@ opends_driver_open(void)
 		homic_detach_qpair();
 		homic_disconnect();
 		free(d->attach_descpath);
+		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
 		free(d);
@@ -1210,6 +1236,7 @@ opends_driver_close(void)
 	homic_disconnect();
 	free(drv->attach_descpath);
 
+	pthread_mutex_destroy(&drv->alloc_lock);
 	pthread_mutex_destroy(&drv->submit_lock);
 	pthread_mutex_destroy(&drv->reg_lock);
 	free(drv);
@@ -1304,7 +1331,7 @@ opends_alloc(size_t size)
 		return NULL;
 	}
 
-	void *buf = xnvme_buf_alloc(drv->xdev, size);
+	void *buf = buf_alloc_locked(drv, size);
 	if (!buf) {
 		pthread_mutex_unlock(&drv->reg_lock);
 		return NULL;
@@ -1329,7 +1356,7 @@ opends_free(void *buf)
 		if (drv->bufs[i].base == buf) {
 			if (!drv->bufs[i].owned)
 				break;
-			xnvme_buf_free(drv->xdev, buf);
+			buf_free_locked(drv, buf);
 			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
 			drv->buf_count--;
 			break;
@@ -1628,14 +1655,14 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 	*opends_stream->gate = 0;
 	opends_stream->next_seq = 0;
 
-	int rc = stream_bounce_alloc(opends_stream, drv->xdev);
+	int rc = stream_bounce_alloc(opends_stream, drv);
 	if (rc != 0) {
 		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_err_dev(OPENDS_INTERNAL_ERROR, rc);
 	}
 
 	if (ds_stream_map_put(drv->stream_map, STREAM_MAP_MASK, cus, n) < 0) {
-		stream_bounce_free(opends_stream, drv->xdev);
+		stream_bounce_free(opends_stream, drv);
 		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
