@@ -298,6 +298,10 @@ and the async path stops enqueueing the per-read bounce kernel.
 `OPENDS_AISIO_IDLE_SPIN_US` sets how long an idle IO worker keeps yielding
 after its last activity before falling back to a 100 us nap (default 200,
 `0` naps immediately); ops arriving within the window skip the nap latency.
+`OPENDS_AISIO_BUSY_SPIN=1` makes the IO workers poll flat out, never yielding
+the CPU or napping (`OPENDS_AISIO_IDLE_SPIN_US` becomes moot). Each worker
+then occupies a full core for the driver's lifetime; pair it with
+`OPENDS_AISIO_CPU_MASK` so the spinning workers sit on dedicated cores.
 
 Every leg appends a structured record to
 `<out>/**/artifacts/history.jsonl`: config (backend, dataset, mode,
