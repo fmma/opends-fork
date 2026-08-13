@@ -144,6 +144,30 @@ opends_sync_read(fh, dev_buf, 4096, 0,    0);     /* -> dev_buf[0..4095]    */
 opends_sync_read(fh, dev_buf, 4096, 4096, 4096);  /* -> dev_buf[4096..8191] */
 ```
 
+### Async I/O
+
+`opends_async_*` is per-operation async without streams (no cuFile
+counterpart).
+`opends_async_read` and `opends_async_write` are the synchronous calls with
+completion reaping deferred: submit returns immediately after initializing
+the caller-provided future, and `opends_async_await` blocks until that
+operation completes, returning its byte count (or a negated error). The
+caller owns the future storage (stack allocation is fine) and must keep it
+valid at the same address until awaited. Futures may be awaited in any
+order, and awaiting a completed future again returns the same result.
+
+```c
+opends_async_future_t fut0, fut1;
+
+opends_async_read(fh, dev_buf, 4096, 0,    0,    &fut0);
+opends_async_read(fh, dev_buf, 4096, 4096, 4096, &fut1);
+
+/* ... overlap with computation ... */
+
+ssize_t n0 = opends_async_await(&fut0);
+ssize_t n1 = opends_async_await(&fut1);
+```
+
 ### Error handling
 
 Functions returning `opends_error_t` carry both an opends error code and an
