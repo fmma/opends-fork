@@ -2,7 +2,7 @@
 #define _GNU_SOURCE
 
 #include "test_aisio_homi.h"
-#include "test_async_read.h"
+#include "test_stream_read.h"
 #include "test_cuda_common.h"
 
 #include <cuda.h>
@@ -37,8 +37,8 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	CUstream extras[ASYNC_TEST_MAX_STREAMS];
-	int extra_count = ASYNC_TEST_MAX_STREAMS;
+	CUstream extras[STREAM_TEST_MAX_STREAMS];
+	int extra_count = STREAM_TEST_MAX_STREAMS;
 	for (int i = 0; i < extra_count; i++) {
 		if (cuStreamCreate(&extras[i], CU_STREAM_NON_BLOCKING) !=
 		    CUDA_SUCCESS) {
@@ -58,12 +58,12 @@ main(int argc, char **argv)
 		}
 	}
 
-	fprintf(stderr, "opends_read_async tests (aisio backend, HOMI)\n");
+	fprintf(stderr, "opends_stream_read tests (aisio backend, HOMI)\n");
 
 	const char *aligned = getenv("OPENDS_AISIO_ASSUME_ALIGNED_ONLY");
 	bool no_sub_lba = aligned && aligned[0] && aligned[0] != '0';
 
-	struct async_test_env env_alloc = {
+	struct stream_test_env env_alloc = {
 	        .fh = a.fh,
 	        .stream = main_stream,
 	        .extra_stream_count = extra_count,
@@ -77,7 +77,7 @@ main(int argc, char **argv)
 	};
 	for (int i = 0; i < extra_count; i++)
 		env_alloc.extra_streams[i] = extras[i];
-	int failed = run_async_read_tests(&env_alloc);
+	int failed = run_stream_read_tests(&env_alloc);
 	if (failed) {
 		/* A failed alloc-mode test left a stream stuck on
 		 * cuStreamWaitValue32; running register mode on the same
@@ -87,7 +87,7 @@ main(int argc, char **argv)
 		_exit(1);
 	}
 
-	struct async_test_env env_register = {
+	struct stream_test_env env_register = {
 	        .fh = a.fh,
 	        .stream = main_stream,
 	        .extra_stream_count = extra_count,
@@ -101,7 +101,7 @@ main(int argc, char **argv)
 	};
 	for (int i = 0; i < extra_count; i++)
 		env_register.extra_streams[i] = extras[i];
-	failed += run_async_read_tests(&env_register);
+	failed += run_stream_read_tests(&env_register);
 
 	if (failed) {
 		/* A timed-out test leaves streams stuck on

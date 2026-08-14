@@ -53,16 +53,16 @@ _Commit `7a61a12` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU
 `NVIDIA RTX 2000 Ada Generation`). `OPENDS_AISIO_IO_THREADS=2` and
 `OPENDS_AISIO_QUEUE_DEPTH=8`._
 
-| Dataset       | mode  | gds (MiB/s) | opends (MiB/s) |
-|---------------|-------|-------------|----------------|
-| filesize8gib  | sync  |        6983 |           7064 |
-| filesize8gib  | async |        2219 |           7039 |
-| tiktokish     | sync  |        3840 |           5143 |
-| tiktokish     | async |        2486 |           5385 |
-| imagenetish   | sync  |         335 |            579 |
-| imagenetish   | async |         681 |           2749 |
-| lmcacheish    | sync  |        5512 |           6140 |
-| lmcacheish    | async |        4989 |           5369 |
+| Dataset       | mode   | gds (MiB/s) | opends (MiB/s) |
+|---------------|--------|-------------|----------------|
+| filesize8gib  | sync   |        6983 |           7064 |
+| filesize8gib  | stream |        2219 |           7039 |
+| tiktokish     | sync   |        3840 |           5143 |
+| tiktokish     | stream |        2486 |           5385 |
+| imagenetish   | sync   |         335 |            579 |
+| imagenetish   | stream |         681 |           2749 |
+| lmcacheish    | sync   |        5512 |           6140 |
+| lmcacheish    | stream |        4989 |           5369 |
 
 ## opends API
 

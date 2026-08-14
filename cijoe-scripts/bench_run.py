@@ -2,11 +2,7 @@
 """Run a single filperf bench and stash its stdout as an artifact.
 
 The artifact is the verbatim filperf output (CSV plus `--summary`
-block) written to
-artifacts/<backend>_<data_dir>[_async].log (the `_async` suffix is
-only appended when `mode: async`). Parsing is deferred to
-scripts/bench/report.py so the cijoe step stays oblivious to
-filperf's exact output shape.
+block) written to artifacts/<backend>_<data_dir>_<mode>.log.
 
 Each bench run runs filperf under `prlimit --nofile`. nofile is
 required for opends and harmless elsewhere. gds runs get a cold-cache `drop_caches`; opends
@@ -22,6 +18,9 @@ import re
 from pathlib import Path
 
 NOFILE = 1048576
+
+# fil 0.1.0 still names the stream-ordered family --async
+MODE_FLAG = {"sync": None, "stream": "--async"}
 
 SUMMARY_FIELDS = {
     "Total time": "total_time_s",
@@ -60,7 +59,7 @@ def _append_record(cijoe, args, log_name, text, io_threads, queue_depth,
     env_keys = ("hostname", "kernel", "cuda", "nvme_bdf", "nvme_model",
                 "gpu_model", "hugepages_2m")
     record = {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": f"{meta['timestamp']}-{meta['hostname']}",
         "run_timestamp": meta["timestamp"],
         "opends": {"sha": meta.get("commit_sha", ""),
@@ -116,7 +115,7 @@ def add_args(parser):
     parser.add_argument("--batches", type=int, required=True)
     parser.add_argument("--batch-size", type=int, required=True)
     parser.add_argument("--mnt", default="")
-    parser.add_argument("--mode", choices=["sync", "async"], default="sync")
+    parser.add_argument("--mode", choices=list(MODE_FLAG), default="sync")
 
 
 def main(args, cijoe):
@@ -188,8 +187,8 @@ def main(args, cijoe):
     ]
     if mnt:
         filperf.insert(2, f"--mnt '{mnt}'")
-    if args.mode == "async":
-        filperf.append("--async")
+    if MODE_FLAG[args.mode]:
+        filperf.append(MODE_FLAG[args.mode])
 
     cmd = "echo 3 > /proc/sys/vm/drop_caches\n" + " \\\n  ".join(filperf)
     err, state = cijoe.run(cmd)
@@ -199,9 +198,8 @@ def main(args, cijoe):
     if err and not assume_aligned_only:
         return err
 
-    suffix = "_async" if args.mode == "async" else ""
     out = (Path(cijoe.output_path) / "artifacts"
-           / f"{args.backend}_{args.data_dir}{suffix}.log")
+           / f"{args.backend}_{args.data_dir}_{args.mode}.log")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(state.output())
     log.info(f"wrote {out}")

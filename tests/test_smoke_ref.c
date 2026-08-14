@@ -180,7 +180,7 @@ test_batch_io(opends_handle_t fh, char *wbuf, char *rbuf)
 }
 
 static int
-test_async_io(opends_handle_t fh, char *wbuf, char *rbuf)
+test_stream_io(opends_handle_t fh, char *wbuf, char *rbuf)
 {
 	opends_stream_t stream = NULL;
 	if (check(opends_stream_register(stream, 0), "stream_register"))
@@ -193,12 +193,12 @@ test_async_io(opends_handle_t fh, char *wbuf, char *rbuf)
 	off_t buf_off = 0;
 	ssize_t bytes = 0;
 
-	if (check(opends_write_async(fh, wbuf, &size, &file_off, &buf_off,
-	                             &bytes, stream),
-	          "write_async"))
+	if (check(opends_stream_write(fh, wbuf, &size, &file_off, &buf_off,
+	                              &bytes, stream),
+	          "stream_write"))
 		return 1;
 	if (bytes != BUF_SIZE) {
-		fprintf(stderr, "write_async bytes: %zd, expected %d\n", bytes,
+		fprintf(stderr, "stream_write bytes: %zd, expected %d\n", bytes,
 		        BUF_SIZE);
 		return 1;
 	}
@@ -206,18 +206,18 @@ test_async_io(opends_handle_t fh, char *wbuf, char *rbuf)
 	memset(rbuf, 0, BUF_SIZE);
 	bytes = 0;
 
-	if (check(opends_read_async(fh, rbuf, &size, &file_off, &buf_off,
-	                            &bytes, stream),
-	          "read_async"))
+	if (check(opends_stream_read(fh, rbuf, &size, &file_off, &buf_off,
+	                             &bytes, stream),
+	          "stream_read"))
 		return 1;
 	if (bytes != BUF_SIZE) {
-		fprintf(stderr, "read_async bytes: %zd, expected %d\n", bytes,
+		fprintf(stderr, "stream_read bytes: %zd, expected %d\n", bytes,
 		        BUF_SIZE);
 		return 1;
 	}
 
 	if (memcmp(wbuf, rbuf, BUF_SIZE) != 0) {
-		fprintf(stderr, "async read/write mismatch\n");
+		fprintf(stderr, "stream read/write mismatch\n");
 		return 1;
 	}
 
@@ -259,7 +259,7 @@ main(void)
 		return 1;
 	if (test_batch_io(fh, wbuf, rbuf))
 		return 1;
-	if (test_async_io(fh, wbuf, rbuf))
+	if (test_stream_io(fh, wbuf, rbuf))
 		return 1;
 
 	opends_free(rbuf);
