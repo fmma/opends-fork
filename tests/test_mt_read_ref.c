@@ -54,7 +54,7 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	fprintf(stderr, "opends_read multithreaded test (ref backend)\n");
+	fprintf(stderr, "opends_sync_read multithreaded test (ref backend)\n");
 
 	struct mt_read_env env = {
 	        .fh = fh,

@@ -2,7 +2,7 @@
 """User-facing OpenDS classes: OpenDSFile and HostBuffer.
 
 read/write are synchronous and return the byte count, mirroring the
-opends_read/opends_write C surface. Buffer arguments follow the
+opends_sync_read/opends_sync_write C surface. Buffer arguments follow the
 cuFile convention (base pointer plus dev_offset) so consumers written
 against GDS port with minimal change.
 """

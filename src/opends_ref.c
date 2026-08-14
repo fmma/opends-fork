@@ -161,8 +161,8 @@ opends_buf_deregister(const void *buf_base)
 }
 
 ssize_t
-opends_read(opends_handle_t fh, void *buf_base, size_t size, off_t file_offset,
-            off_t buf_offset)
+opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
+                 off_t file_offset, off_t buf_offset)
 {
 	struct ref_handle *h = fh;
 	ssize_t ret =
@@ -173,8 +173,8 @@ opends_read(opends_handle_t fh, void *buf_base, size_t size, off_t file_offset,
 }
 
 ssize_t
-opends_write(opends_handle_t fh, const void *buf_base, size_t size,
-             off_t file_offset, off_t buf_offset)
+opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
+                  off_t file_offset, off_t buf_offset)
 {
 	struct ref_handle *h = fh;
 	ssize_t ret = pwrite(h->fd, (const char *)buf_base + buf_offset, size,
@@ -191,7 +191,7 @@ struct ref_batch {
 };
 
 opends_error_t
-opends_batch_io_setup(opends_batch_handle_t *batch_idp, unsigned nr)
+opends_batch_setup(opends_batch_handle_t *batch_idp, unsigned nr)
 {
 	if (!batch_idp || nr == 0)
 		return opends_err(OPENDS_INVALID_VALUE);
@@ -212,8 +212,8 @@ opends_batch_io_setup(opends_batch_handle_t *batch_idp, unsigned nr)
 }
 
 opends_error_t
-opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
-                       opends_io_params_t *iocbp, unsigned int flags)
+opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
+                    opends_io_params_t *iocbp, unsigned int flags)
 {
 	(void)flags;
 	struct ref_batch *b = batch_idp;
@@ -229,15 +229,15 @@ opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
 		ssize_t ret;
 
 		if (p->opcode == OPENDS_READ) {
-			ret = opends_read(p->fh, p->u.batch.dev_ptr_base,
-			                  p->u.batch.size,
-			                  p->u.batch.file_offset,
-			                  p->u.batch.dev_ptr_offset);
+			ret = opends_sync_read(p->fh, p->u.batch.dev_ptr_base,
+			                       p->u.batch.size,
+			                       p->u.batch.file_offset,
+			                       p->u.batch.dev_ptr_offset);
 		} else {
-			ret = opends_write(p->fh, p->u.batch.dev_ptr_base,
-			                   p->u.batch.size,
-			                   p->u.batch.file_offset,
-			                   p->u.batch.dev_ptr_offset);
+			ret = opends_sync_write(p->fh, p->u.batch.dev_ptr_base,
+			                        p->u.batch.size,
+			                        p->u.batch.file_offset,
+			                        p->u.batch.dev_ptr_offset);
 		}
 
 		opends_io_events_t *e = &b->events[b->count++];
@@ -255,9 +255,9 @@ opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
 }
 
 opends_error_t
-opends_batch_io_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
-                           unsigned *nr, opends_io_events_t *iocbp,
-                           struct timespec *timeout)
+opends_batch_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
+                        unsigned *nr, opends_io_events_t *iocbp,
+                        struct timespec *timeout)
 {
 	(void)timeout;
 	struct ref_batch *b = batch_idp;
@@ -274,7 +274,7 @@ opends_batch_io_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
 }
 
 opends_error_t
-opends_batch_io_cancel(opends_batch_handle_t batch_idp)
+opends_batch_cancel(opends_batch_handle_t batch_idp)
 {
 	struct ref_batch *b = batch_idp;
 
@@ -288,7 +288,7 @@ opends_batch_io_cancel(opends_batch_handle_t batch_idp)
 }
 
 void
-opends_batch_io_destroy(opends_batch_handle_t batch_idp)
+opends_batch_destroy(opends_batch_handle_t batch_idp)
 {
 	struct ref_batch *b = batch_idp;
 	if (!b)
@@ -303,8 +303,8 @@ opends_stream_read(opends_handle_t fh, void *buf_base, size_t *size_p,
                    ssize_t *bytes_read_p, opends_stream_t stream)
 {
 	(void)stream;
-	ssize_t ret = opends_read(fh, buf_base, *size_p, *file_offset_p,
-	                          *buf_offset_p);
+	ssize_t ret = opends_sync_read(fh, buf_base, *size_p, *file_offset_p,
+	                               *buf_offset_p);
 	*bytes_read_p = ret;
 	return ret < 0 ? opends_err(OPENDS_INTERNAL_ERROR) : opends_ok();
 }
@@ -315,8 +315,8 @@ opends_stream_write(opends_handle_t fh, void *buf_base, size_t *size_p,
                     ssize_t *bytes_written_p, opends_stream_t stream)
 {
 	(void)stream;
-	ssize_t ret = opends_write(fh, buf_base, *size_p, *file_offset_p,
-	                           *buf_offset_p);
+	ssize_t ret = opends_sync_write(fh, buf_base, *size_p, *file_offset_p,
+	                                *buf_offset_p);
 	*bytes_written_p = ret;
 	return ret < 0 ? opends_err(OPENDS_INTERNAL_ERROR) : opends_ok();
 }
@@ -348,11 +348,11 @@ ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
 
 	ssize_t result;
 	if (is_write)
-		result = opends_write(fh, buf_base, size, file_offset,
-		                      buf_offset);
+		result = opends_sync_write(fh, buf_base, size, file_offset,
+		                           buf_offset);
 	else
-		result = opends_read(fh, buf_base, size, file_offset,
-		                     buf_offset);
+		result = opends_sync_read(fh, buf_base, size, file_offset,
+		                          buf_offset);
 
 	future->result = result;
 	__atomic_store_n(&future->done, 1, __ATOMIC_RELEASE);

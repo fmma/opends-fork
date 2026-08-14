@@ -62,9 +62,9 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	ssize_t n = opends_read(h, gbuf, size, 0, 0);
+	ssize_t n = opends_sync_read(h, gbuf, size, 0, 0);
 	if (n < 0) {
-		fprintf(stderr, "FAILED: opends_read rc=%zd\n", n);
+		fprintf(stderr, "FAILED: opends_sync_read rc=%zd\n", n);
 		return 1;
 	}
 	printf("aisio: read %zd bytes into GPU memory via a HOMI-served qpair\n", n);

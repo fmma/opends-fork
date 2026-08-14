@@ -95,7 +95,6 @@ enum file_op_mode {
 	FILE_OP_SYNC,
 	FILE_OP_STREAM,
 	FILE_OP_ASYNC,
-	FILE_OP_BATCH,
 };
 
 struct file_op_sync {
@@ -112,11 +111,6 @@ struct file_op_stream {
 	ssize_t *bytes_read_p;
 	struct opends_stream *opends_stream;
 	uint32_t seq;
-};
-
-struct file_op_batch {
-	opends_io_params_t *iocbp;
-	unsigned nr;
 };
 
 struct file_op_async {
@@ -142,7 +136,6 @@ struct file_op {
 	union {
 		struct file_op_sync sync;
 		struct file_op_stream stream;
-		struct file_op_batch batch;
 		struct file_op_async async;
 	} u;
 };
@@ -920,7 +913,6 @@ io_thread_main(void *arg)
 					if (poll_stream_pending(w, op))
 						busy = true;
 					break;
-				case FILE_OP_BATCH: break;
 				}
 				break;
 			case FILE_OP_IN_FLIGHT: reap_in_flight(w, op); break;
@@ -1556,23 +1548,23 @@ submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
 }
 
 ssize_t
-opends_read(opends_handle_t fh, void *buf_base, size_t size, off_t file_offset,
-            off_t buf_offset)
+opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
+                 off_t file_offset, off_t buf_offset)
 {
 	return submit_sync_op(drv, false, fh, buf_base, size, file_offset,
 	                      buf_offset);
 }
 
 ssize_t
-opends_write(opends_handle_t fh, const void *buf_base, size_t size,
-             off_t file_offset, off_t buf_offset)
+opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
+                  off_t file_offset, off_t buf_offset)
 {
 	return submit_sync_op(drv, true, fh, (void *)buf_base, size,
 	                      file_offset, buf_offset);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Stream-based async I/O                                            */
+/*  Stream-ordered I/O                                                */
 /* ------------------------------------------------------------------ */
 
 static opends_error_t
@@ -1759,7 +1751,7 @@ opends_stream_deregister(opends_stream_t stream)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Async I/O                                                  */
+/*  Async I/O                                                         */
 /* ------------------------------------------------------------------ */
 
 static opends_error_t
@@ -1832,7 +1824,7 @@ opends_async_await(opends_async_future_t *future)
 /* ------------------------------------------------------------------ */
 
 opends_error_t
-opends_batch_io_setup(opends_batch_handle_t *batch_idp, unsigned nr)
+opends_batch_setup(opends_batch_handle_t *batch_idp, unsigned nr)
 {
 	(void)batch_idp;
 	(void)nr;
@@ -1840,8 +1832,8 @@ opends_batch_io_setup(opends_batch_handle_t *batch_idp, unsigned nr)
 }
 
 opends_error_t
-opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
-                       opends_io_params_t *iocbp, unsigned int flags)
+opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
+                    opends_io_params_t *iocbp, unsigned int flags)
 {
 	(void)batch_idp;
 	(void)nr;
@@ -1851,9 +1843,9 @@ opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
 }
 
 opends_error_t
-opends_batch_io_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
-                           unsigned *nr, opends_io_events_t *iocbp,
-                           struct timespec *timeout)
+opends_batch_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
+                        unsigned *nr, opends_io_events_t *iocbp,
+                        struct timespec *timeout)
 {
 	(void)batch_idp;
 	(void)min_nr;
@@ -1864,14 +1856,14 @@ opends_batch_io_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
 }
 
 opends_error_t
-opends_batch_io_cancel(opends_batch_handle_t batch_idp)
+opends_batch_cancel(opends_batch_handle_t batch_idp)
 {
 	(void)batch_idp;
 	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
 }
 
 void
-opends_batch_io_destroy(opends_batch_handle_t batch_idp)
+opends_batch_destroy(opends_batch_handle_t batch_idp)
 {
 	(void)batch_idp;
 }
