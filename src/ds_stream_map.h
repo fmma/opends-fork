@@ -4,7 +4,7 @@
  *
  * Backs opends_aisio's stream -> stream_state lookup. The driver
  * registers up to MAX_STREAMS streams and then performs an
- * O(1) lookup per opends_read_async call. Grow-only: there is no
+ * O(1) lookup per opends_stream_read call. Grow-only: there is no
  * delete primitive, so the table needs no tombstones.
  *
  * Caller owns the entry array (typically inline in the driver struct).

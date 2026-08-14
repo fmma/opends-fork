@@ -43,8 +43,14 @@ def _records(in_dirs):
     for _, hist in iter_history(in_dirs):
         for line in hist.read_text().splitlines():
             line = line.strip()
-            if line:
-                yield json.loads(line)
+            if not line:
+                continue
+            rec = json.loads(line)
+            if rec.get("schema_version", 1) < 2:
+                cfg = rec.get("config", {})
+                if cfg.get("mode") == "async":
+                    cfg["mode"] = "stream"
+            yield rec
 
 
 def _collect(in_dirs):
@@ -171,7 +177,7 @@ def _plot(grids, threads, depths, dst, spec_mbs=None):
     top = 1.07 * max(peak, spec or 0) or 1000
 
     workloads = sorted({wl for wl, _ in grids})
-    modes = ["async", "sync"]
+    modes = ["stream", "sync"]
 
     fig, axes = plt.subplots(
         len(modes), len(workloads),
@@ -235,7 +241,7 @@ def _plot(grids, threads, depths, dst, spec_mbs=None):
     fig.suptitle("NVMe read throughput sweep", x=0.075, y=0.975,
                  ha="left", fontsize=14, color=INK_PRIMARY)
     fig.text(0.075, 0.905,
-             "MiB/s by queue depth and io_threads, async vs sync, per workload",
+             "MiB/s by queue depth and io_threads, stream vs sync, per workload",
              fontsize=9.5, color=INK_SECONDARY)
 
     handles = [

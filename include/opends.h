@@ -248,18 +248,19 @@ void opends_batch_io_destroy(opends_batch_handle_t batch_idp);
  * and at most 1024 async ops may be in flight across all streams. Exceeding
  * the stream limit returns OPENDS_INTERNAL_ERROR from opends_stream_register;
  * the in-flight limit applies back-pressure rather than failing
- * (opends_read_async spins until a slot frees).
+ * (opends_stream_read spins until a slot frees).
  */
 typedef void *opends_stream_t;
 
-opends_error_t opends_read_async(opends_handle_t fh, void *buf_base,
-                                 size_t *size_p, off_t *file_offset_p,
-                                 off_t *buf_offset_p, ssize_t *bytes_read_p,
-                                 opends_stream_t stream);
-opends_error_t opends_write_async(opends_handle_t fh, void *buf_base,
+opends_error_t opends_stream_read(opends_handle_t fh, void *buf_base,
                                   size_t *size_p, off_t *file_offset_p,
-                                  off_t *buf_offset_p, ssize_t *bytes_written_p,
+                                  off_t *buf_offset_p, ssize_t *bytes_read_p,
                                   opends_stream_t stream);
+opends_error_t opends_stream_write(opends_handle_t fh, void *buf_base,
+                                   size_t *size_p, off_t *file_offset_p,
+                                   off_t *buf_offset_p,
+                                   ssize_t *bytes_written_p,
+                                   opends_stream_t stream);
 opends_error_t opends_stream_register(opends_stream_t stream, unsigned flags);
 opends_error_t opends_stream_deregister(opends_stream_t stream);
 

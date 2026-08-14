@@ -26,7 +26,7 @@ doc: |
 
   bench_meta records the build commit + target platform to
   artifacts/meta.json; each bench_run stashes filperf's verbatim
-  stdout to artifacts/<backend>_<data_dir>.log for downstream
+  stdout to artifacts/<backend>_<data_dir>_<mode>.log for downstream
   parsing by scripts/bench/report.py.
 
 steps:
@@ -49,14 +49,14 @@ steps:
       batches: 1
       batch-size: 1
 
-  - name: opends_filesize8gib_async
+  - name: opends_filesize8gib_stream
     uses: bench_run
     with:
       backend: opends
       data-dir: filesize8gib
       batches: 1
       batch-size: 1
-      mode: async
+      mode: stream
 
   - name: opends_tiktokish
     uses: bench_run
@@ -66,14 +66,14 @@ steps:
       batches: 200
       batch-size: 26
 
-  - name: opends_tiktokish_async
+  - name: opends_tiktokish_stream
     uses: bench_run
     with:
       backend: opends
       data-dir: tiktokish
       batches: 200
       batch-size: 26
-      mode: async
+      mode: stream
 
   - name: opends_lmcacheish
     uses: bench_run
@@ -83,14 +83,14 @@ steps:
       batches: 70
       batch-size: 26
 
-  - name: opends_lmcacheish_async
+  - name: opends_lmcacheish_stream
     uses: bench_run
     with:
       backend: opends
       data-dir: lmcacheish
       batches: 70
       batch-size: 26
-      mode: async
+      mode: stream
 
   - name: opends_imagenetish
     uses: bench_run
@@ -100,14 +100,14 @@ steps:
       batches: 300
       batch-size: 4096
 
-  - name: opends_imagenetish_async
+  - name: opends_imagenetish_stream
     uses: bench_run
     with:
       backend: opends
       data-dir: imagenetish
       batches: 300
       batch-size: 4096
-      mode: async
+      mode: stream
 
   - name: homi_stack_down
     run: |

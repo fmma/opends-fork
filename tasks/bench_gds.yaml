@@ -20,7 +20,7 @@ doc: |
 
   bench_meta records the build commit + target platform to
   artifacts/meta.json; each bench_run stashes filperf's verbatim
-  stdout to artifacts/<backend>_<data_dir>.log for downstream
+  stdout to artifacts/<backend>_<data_dir>_<mode>.log for downstream
   parsing by scripts/bench/report.py.
 
 steps:
@@ -52,14 +52,14 @@ steps:
       batch-size: 1
       mnt: "{{ config.test.mount_point }}"
 
-  - name: gds_filesize8gib_async
+  - name: gds_filesize8gib_stream
     uses: bench_run
     with:
       backend: gds
       data-dir: filesize8gib
       batches: 1
       batch-size: 1
-      mode: async
+      mode: stream
       mnt: "{{ config.test.mount_point }}"
 
   - name: gds_tiktokish
@@ -71,14 +71,14 @@ steps:
       batch-size: 26
       mnt: "{{ config.test.mount_point }}"
 
-  - name: gds_tiktokish_async
+  - name: gds_tiktokish_stream
     uses: bench_run
     with:
       backend: gds
       data-dir: tiktokish
       batches: 200
       batch-size: 26
-      mode: async
+      mode: stream
       mnt: "{{ config.test.mount_point }}"
 
   - name: gds_imagenetish
@@ -90,14 +90,14 @@ steps:
       batch-size: 4096
       mnt: "{{ config.test.mount_point }}"
 
-  - name: gds_imagenetish_async
+  - name: gds_imagenetish_stream
     uses: bench_run
     with:
       backend: gds
       data-dir: imagenetish
       batches: 300
       batch-size: 4096
-      mode: async
+      mode: stream
       mnt: "{{ config.test.mount_point }}"
 
   - name: gds_lmcacheish
@@ -109,14 +109,14 @@ steps:
       batch-size: 26
       mnt: "{{ config.test.mount_point }}"
 
-  - name: gds_lmcacheish_async
+  - name: gds_lmcacheish_stream
     uses: bench_run
     with:
       backend: gds
       data-dir: lmcacheish
       batches: 70
       batch-size: 26
-      mode: async
+      mode: stream
       mnt: "{{ config.test.mount_point }}"
 
   - name: cpu_governor_restore

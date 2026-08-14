@@ -41,7 +41,7 @@ SUITES = {
 
 DATASETS = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
 
-MODES = ["sync", "async"]
+MODES = ["sync", "stream"]
 
 DEFAULT_CONFIGS = Path(__file__).resolve().parent / "sweep.toml"
 
@@ -59,7 +59,7 @@ GDS_SETUP = ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"]
 
 
 def _bench_steps(backend, modes, datasets):
-    return [f"{backend}_{ds}" + ("_async" if m == "async" else "")
+    return [f"{backend}_{ds}" + ("" if m == "sync" else f"_{m}")
             for ds in datasets for m in modes]
 
 
@@ -222,7 +222,7 @@ parser.add_argument("--suite", action="append", choices=list(SUITES),
 parser.add_argument("--mode", type=_mode_list,
                     metavar="LIST",
                     help="Comma-separated modes to keep, sync and/or "
-                         "async. Default sync,async.")
+                         "stream. Default sync,stream.")
 parser.add_argument("--dataset", action="append", choices=DATASETS,
                     help="Narrow every config to this dataset, dropping the "
                          "configs that do not name it. Repeat to combine.")
