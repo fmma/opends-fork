@@ -68,10 +68,10 @@ _Commit `7a61a12` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU
 
 | opends family     | cuFile equivalent                    |
 |-------------------|--------------------------------------|
+| `opends_async_*`  | none                                 |
 | `opends_sync_*`   | `cuFileRead`/`cuFileWrite`           |
 | `opends_stream_*` | `cuFileReadAsync`/`cuFileWriteAsync` |
 | `opends_batch_*`  | `cuFileBatchIO*`                     |
-| `opends_async_*`  | none                                 |
 
 ### Threading and context
 
