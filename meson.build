@@ -201,8 +201,8 @@ if aisio_test_enabled
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep],
   )
-  executable('test_async_read_aisio',
-    'tests/test_async_read_aisio.c',
+  executable('test_stream_read_aisio',
+    'tests/test_stream_read_aisio.c',
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
@@ -211,8 +211,8 @@ if aisio_test_enabled
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
-  executable('test_async_write_aisio',
-    'tests/test_async_write_aisio.c',
+  executable('test_stream_write_aisio',
+    'tests/test_stream_write_aisio.c',
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
@@ -237,9 +237,9 @@ else
   executable('test_mt_read_aisio', 'tests/skip.c')
   executable('test_register_large_aisio', 'tests/skip.c')
   executable('test_coherency_aisio', 'tests/skip.c')
-  executable('test_async_read_aisio', 'tests/skip.c')
+  executable('test_stream_read_aisio', 'tests/skip.c')
   executable('test_sync_write_aisio', 'tests/skip.c')
-  executable('test_async_write_aisio', 'tests/skip.c')
+  executable('test_stream_write_aisio', 'tests/skip.c')
   executable('test_block_alloc_aisio', 'tests/skip.c')
 endif
 

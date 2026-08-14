@@ -1,19 +1,19 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * test_async_read.h - Backend-agnostic unit tests for stream-based
- * opends_read_async.
+ * test_stream_read.h - Backend-agnostic unit tests for stream-based
+ * opends_stream_read.
  *
  * Mirrors test_sync_read.h but routes every read through
- * opends_read_async with a real CUDA stream and waits for completion
+ * opends_stream_read with a real CUDA stream and waits for completion
  * via cuStreamSynchronize. Includes additional cases that exercise
  * stream ordering and concurrent submission across multiple streams.
  *
  * Include from a backend-specific source file that provides main() and
- * initializes a struct async_test_env. Expects the same 16-page
+ * initializes a struct stream_test_env. Expects the same 16-page
  * (65536-byte) pattern file used by the sync tests.
  */
-#ifndef TEST_ASYNC_READ_H_
-#define TEST_ASYNC_READ_H_
+#ifndef TEST_STREAM_READ_H_
+#define TEST_STREAM_READ_H_
 
 #include "opends.h"
 #include "opends.h"
@@ -28,7 +28,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define ASYNC_TEST_MAX_STREAMS 32
+#define STREAM_TEST_MAX_STREAMS 32
 
 /*
  * Bounded sync: poll cuStreamQuery against a wall-clock deadline.
@@ -36,7 +36,7 @@
  * tests that must not block the whole runner if the backend hangs.
  */
 static int
-async_test_stream_sync_timeout(CUstream stream, double timeout_s,
+stream_test_stream_sync_timeout(CUstream stream, double timeout_s,
                                const char *label)
 {
 	struct timespec t0, now;
@@ -64,10 +64,10 @@ async_test_stream_sync_timeout(CUstream stream, double timeout_s,
 	}
 }
 
-struct async_test_env {
+struct stream_test_env {
 	opends_handle_t fh;
 	CUstream stream;
-	CUstream extra_streams[ASYNC_TEST_MAX_STREAMS];
+	CUstream extra_streams[STREAM_TEST_MAX_STREAMS];
 	int extra_stream_count;
 	void *(*buf_to_host)(void *dst, const void *src, size_t n);
 	void (*buf_zero)(void *buf, size_t n);
@@ -79,7 +79,7 @@ struct async_test_env {
 };
 
 static ssize_t
-async_expected_bytes(char *dst, off_t offset, size_t size)
+stream_expected_bytes(char *dst, off_t offset, size_t size)
 {
 	if (offset < 0 || (size_t)offset >= FILE_SIZE)
 		return 0;
@@ -94,7 +94,7 @@ async_expected_bytes(char *dst, off_t offset, size_t size)
 }
 
 static int
-verify_async_read(struct async_test_env *env, void *buf, size_t alloc_size,
+verify_stream_read(struct stream_test_env *env, void *buf, size_t alloc_size,
                   size_t size, off_t file_offset, off_t buf_offset,
                   const char *label)
 {
@@ -105,10 +105,10 @@ verify_async_read(struct async_test_env *env, void *buf, size_t alloc_size,
 	off_t boff = buf_offset;
 	ssize_t bytes_read = 0;
 
-	opends_error_t err = opends_read_async(env->fh, buf, &sz, &foff, &boff,
+	opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff, &boff,
 	                                       &bytes_read, env->stream);
 	if (err.err != OPENDS_SUCCESS) {
-		fprintf(stderr, "  %s: opends_read_async: %s\n", label,
+		fprintf(stderr, "  %s: opends_stream_read: %s\n", label,
 		        opends_op_status_error(err.err));
 		return 1;
 	}
@@ -137,7 +137,7 @@ verify_async_read(struct async_test_env *env, void *buf, size_t alloc_size,
 
 	env->buf_to_host(host, buf, alloc_size);
 
-	ssize_t expected_n = async_expected_bytes(expected, file_offset, size);
+	ssize_t expected_n = stream_expected_bytes(expected, file_offset, size);
 	if (bytes_read != expected_n) {
 		fprintf(stderr, "  %s: got %zd bytes, expected %zd\n", label,
 		        bytes_read, expected_n);
@@ -162,103 +162,103 @@ verify_async_read(struct async_test_env *env, void *buf, size_t alloc_size,
 /* --- Test cases ------------------------------------------------- */
 
 static int
-async_test_single_block(struct async_test_env *env)
+stream_test_single_block(struct stream_test_env *env)
 {
 	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
 		return 1;
-	int rc = verify_async_read(env, buf, PAGE, PAGE, 0, 0, "single_block");
+	int rc = verify_stream_read(env, buf, PAGE, PAGE, 0, 0, "single_block");
 	env->buf_release(buf);
 	return rc;
 }
 
 static int
-async_test_multi_block(struct async_test_env *env)
+stream_test_multi_block(struct stream_test_env *env)
 {
 	size_t size = 4 * PAGE;
 	void *buf = env->buf_acquire(size);
 	if (!buf)
 		return 1;
-	int rc = verify_async_read(env, buf, size, size, 0, 0, "multi_block");
+	int rc = verify_stream_read(env, buf, size, size, 0, 0, "multi_block");
 	env->buf_release(buf);
 	return rc;
 }
 
 static int
-async_test_at_offset(struct async_test_env *env)
+stream_test_at_offset(struct stream_test_env *env)
 {
 	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
 		return 1;
-	int rc = verify_async_read(env, buf, PAGE, PAGE, 2 * PAGE, 0,
+	int rc = verify_stream_read(env, buf, PAGE, PAGE, 2 * PAGE, 0,
 	                           "at_offset");
 	env->buf_release(buf);
 	return rc;
 }
 
 static int
-async_test_full_file(struct async_test_env *env)
+stream_test_full_file(struct stream_test_env *env)
 {
 	void *buf = env->buf_acquire(FILE_SIZE);
 	if (!buf)
 		return 1;
-	int rc = verify_async_read(env, buf, FILE_SIZE, FILE_SIZE, 0, 0,
+	int rc = verify_stream_read(env, buf, FILE_SIZE, FILE_SIZE, 0, 0,
 	                           "full_file");
 	env->buf_release(buf);
 	return rc;
 }
 
 static int
-async_test_last_block(struct async_test_env *env)
+stream_test_last_block(struct stream_test_env *env)
 {
 	off_t off = (off_t)((FILE_PAGES - 1) * PAGE);
 	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
 		return 1;
-	int rc = verify_async_read(env, buf, PAGE, PAGE, off, 0, "last_block");
+	int rc = verify_stream_read(env, buf, PAGE, PAGE, off, 0, "last_block");
 	env->buf_release(buf);
 	return rc;
 }
 
 static int
-async_test_short_at_eof(struct async_test_env *env)
+stream_test_short_at_eof(struct stream_test_env *env)
 {
 	size_t req = 2 * PAGE;
 	off_t off = (off_t)((FILE_PAGES - 1) * PAGE);
 	void *buf = env->buf_acquire(req);
 	if (!buf)
 		return 1;
-	int rc = verify_async_read(env, buf, req, req, off, 0, "short_at_eof");
+	int rc = verify_stream_read(env, buf, req, req, off, 0, "short_at_eof");
 	env->buf_release(buf);
 	return rc;
 }
 
 static int
-async_test_zero_size(struct async_test_env *env)
+stream_test_zero_size(struct stream_test_env *env)
 {
 	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
 		return 1;
-	int rc = verify_async_read(env, buf, PAGE, 0, 0, 0, "zero_size");
+	int rc = verify_stream_read(env, buf, PAGE, 0, 0, 0, "zero_size");
 	env->buf_release(buf);
 	return rc;
 }
 
 static int
-async_test_buf_offset(struct async_test_env *env)
+stream_test_buf_offset(struct stream_test_env *env)
 {
 	size_t alloc = 2 * PAGE;
 	void *buf = env->buf_acquire(alloc);
 	if (!buf)
 		return 1;
 	int rc =
-	        verify_async_read(env, buf, alloc, PAGE, 0, PAGE, "buf_offset");
+	        verify_stream_read(env, buf, alloc, PAGE, 0, PAGE, "buf_offset");
 	env->buf_release(buf);
 	return rc;
 }
 
 static int
-async_test_offset_size_sweep(struct async_test_env *env)
+stream_test_offset_size_sweep(struct stream_test_env *env)
 {
 	static const struct {
 		off_t offset;
@@ -283,7 +283,7 @@ async_test_offset_size_sweep(struct async_test_env *env)
 		char label[64];
 		snprintf(label, sizeof(label), "sweep[off=%ld,sz=%zu]",
 		         (long)cases[i].offset, cases[i].size);
-		rc = verify_async_read(env, buf, max_size, cases[i].size,
+		rc = verify_stream_read(env, buf, max_size, cases[i].size,
 		                       cases[i].offset, 0, label);
 		if (rc)
 			break;
@@ -298,7 +298,7 @@ async_test_offset_size_sweep(struct async_test_env *env)
  * before syncing. Both must complete and contain the right data.
  */
 static int
-async_test_stream_ordering(struct async_test_env *env)
+stream_test_stream_ordering(struct stream_test_env *env)
 {
 	void *buf_a = env->buf_acquire(PAGE);
 	void *buf_b = env->buf_acquire(PAGE);
@@ -319,11 +319,11 @@ async_test_stream_ordering(struct async_test_env *env)
 	ssize_t br_a = 0, br_b = 0;
 
 	opends_error_t err;
-	err = opends_read_async(env->fh, buf_a, &sz_a, &off_a, &boff, &br_a,
+	err = opends_stream_read(env->fh, buf_a, &sz_a, &off_a, &boff, &br_a,
 	                        env->stream);
 	if (err.err != OPENDS_SUCCESS)
 		goto fail;
-	err = opends_read_async(env->fh, buf_b, &sz_b, &off_b, &boff, &br_b,
+	err = opends_stream_read(env->fh, buf_b, &sz_b, &off_b, &boff, &br_b,
 	                        env->stream);
 	if (err.err != OPENDS_SUCCESS)
 		goto fail;
@@ -345,8 +345,8 @@ async_test_stream_ordering(struct async_test_env *env)
 
 	env->buf_to_host(host_a, buf_a, PAGE);
 	env->buf_to_host(host_b, buf_b, PAGE);
-	async_expected_bytes(exp_a, 0, PAGE);
-	async_expected_bytes(exp_b, 4 * PAGE, PAGE);
+	stream_expected_bytes(exp_a, 0, PAGE);
+	stream_expected_bytes(exp_b, 4 * PAGE, PAGE);
 
 	if (memcmp(host_a, exp_a, PAGE) != 0) {
 		fprintf(stderr, "  ordering: read A mismatch\n");
@@ -377,7 +377,7 @@ fail:
  * same time.
  */
 static int
-async_test_concurrent_streams(struct async_test_env *env)
+stream_test_concurrent_streams(struct stream_test_env *env)
 {
 	if (env->extra_stream_count <= 0)
 		return 0;
@@ -404,7 +404,7 @@ async_test_concurrent_streams(struct async_test_env *env)
 	}
 
 	for (int i = 0; i < n; i++) {
-		opends_error_t err = opends_read_async(
+		opends_error_t err = opends_stream_read(
 		        env->fh, bufs[i], &sizes[i], &foffs[i], &boffs[i],
 		        &brs[i], env->extra_streams[i]);
 		if (err.err != OPENDS_SUCCESS) {
@@ -437,7 +437,7 @@ async_test_concurrent_streams(struct async_test_env *env)
 			goto out_free_bufs;
 		}
 		env->buf_to_host(host, bufs[i], PAGE);
-		async_expected_bytes(exp, foffs[i], PAGE);
+		stream_expected_bytes(exp, foffs[i], PAGE);
 		int mm = memcmp(host, exp, PAGE);
 		free(host);
 		free(exp);
@@ -469,7 +469,7 @@ out_free_arrays:
  * page-aligned concurrent_streams test cannot catch.
  */
 static int
-async_test_concurrent_short_reads(struct async_test_env *env)
+stream_test_concurrent_short_reads(struct stream_test_env *env)
 {
 	if (env->extra_stream_count <= 0)
 		return 0;
@@ -501,7 +501,7 @@ async_test_concurrent_short_reads(struct async_test_env *env)
 	}
 
 	for (int i = 0; i < n; i++) {
-		opends_error_t err = opends_read_async(
+		opends_error_t err = opends_stream_read(
 		        env->fh, bufs[i], &sizes[i], &foffs[i], &boffs[i],
 		        &brs[i], env->extra_streams[i]);
 		if (err.err != OPENDS_SUCCESS) {
@@ -514,7 +514,7 @@ async_test_concurrent_short_reads(struct async_test_env *env)
 	for (int i = 0; i < n; i++) {
 		char label[64];
 		snprintf(label, sizeof(label), "concurrent_short[%d]", i);
-		if (async_test_stream_sync_timeout(env->extra_streams[i], 20.0,
+		if (stream_test_stream_sync_timeout(env->extra_streams[i], 20.0,
 		                                   label) != 0)
 			goto out_free_bufs;
 	}
@@ -533,7 +533,7 @@ async_test_concurrent_short_reads(struct async_test_env *env)
 			goto out_free_bufs;
 		}
 		env->buf_to_host(host, bufs[i], short_size);
-		async_expected_bytes(exp, foffs[i], short_size);
+		stream_expected_bytes(exp, foffs[i], short_size);
 		int mm = memcmp(host, exp, short_size);
 		free(host);
 		free(exp);
@@ -565,7 +565,7 @@ out_free_arrays:
  * orchestrator drains a backlog correctly.
  */
 static int
-async_test_burst_single_stream(struct async_test_env *env)
+stream_test_burst_single_stream(struct stream_test_env *env)
 {
 	enum { N = 32 };
 	void *bufs[N] = {0};
@@ -586,7 +586,7 @@ async_test_burst_single_stream(struct async_test_env *env)
 	}
 
 	for (int i = 0; i < N; i++) {
-		opends_error_t err = opends_read_async(
+		opends_error_t err = opends_stream_read(
 		        env->fh, bufs[i], &sizes[i], &foffs[i], &boffs[i],
 		        &brs[i], env->stream);
 		if (err.err != OPENDS_SUCCESS) {
@@ -612,7 +612,7 @@ async_test_burst_single_stream(struct async_test_env *env)
 			goto out;
 		}
 		env->buf_to_host(host, bufs[i], PAGE);
-		async_expected_bytes(exp, foffs[i], PAGE);
+		stream_expected_bytes(exp, foffs[i], PAGE);
 		int mm = memcmp(host, exp, PAGE);
 		free(host);
 		free(exp);
@@ -630,7 +630,7 @@ out:
 }
 
 /*
- * Deferred-evaluation semantics: opends_read_async must dereference
+ * Deferred-evaluation semantics: opends_stream_read must dereference
  * size_p / file_offset_p / buf_offset_p when the stream actually runs
  * the op, not when the call is posted. Submit a host fn that mutates
  * those values, then submit the read on the same stream with the
@@ -647,7 +647,7 @@ struct deferred_mutate_args {
 };
 
 static void CUDA_CB
-async_test_deferred_mutate(void *userdata)
+stream_test_deferred_mutate(void *userdata)
 {
 	struct deferred_mutate_args *a = userdata;
 	*a->size_p = a->target_size;
@@ -656,7 +656,7 @@ async_test_deferred_mutate(void *userdata)
 }
 
 static int
-async_test_deferred_eval(struct async_test_env *env)
+stream_test_deferred_eval(struct stream_test_env *env)
 {
 	size_t alloc = 2 * PAGE;
 	void *buf = env->buf_acquire(alloc);
@@ -680,13 +680,13 @@ async_test_deferred_eval(struct async_test_env *env)
 	};
 
 	int rc = 1;
-	if (cuLaunchHostFunc(env->stream, async_test_deferred_mutate, &mut) !=
+	if (cuLaunchHostFunc(env->stream, stream_test_deferred_mutate, &mut) !=
 	    CUDA_SUCCESS) {
 		fprintf(stderr, "  deferred_eval: cuLaunchHostFunc failed\n");
 		goto out;
 	}
 
-	opends_error_t err = opends_read_async(env->fh, buf, &sz, &foff, &boff,
+	opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff, &boff,
 	                                       &br, env->stream);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  deferred_eval: submit: %s\n",
@@ -713,7 +713,7 @@ async_test_deferred_eval(struct async_test_env *env)
 		goto out;
 	}
 	env->buf_to_host(host, buf, alloc);
-	async_expected_bytes(exp, mut.target_file_offset, PAGE);
+	stream_expected_bytes(exp, mut.target_file_offset, PAGE);
 	int mm = memcmp(host + mut.target_buf_offset, exp, PAGE);
 	free(host);
 	free(exp);
@@ -740,7 +740,7 @@ out:
  * pattern of one DMA-eligible buffer per worker stream.
  */
 static int
-async_test_multi_stream_burst(struct async_test_env *env)
+stream_test_multi_stream_burst(struct stream_test_env *env)
 {
 	if (env->extra_stream_count <= 0)
 		return 0;
@@ -778,7 +778,7 @@ async_test_multi_stream_burst(struct async_test_env *env)
 	for (int j = 0; j < per; j++) {
 		for (int s = 0; s < n; s++) {
 			int i = s * per + j;
-			opends_error_t err = opends_read_async(
+			opends_error_t err = opends_stream_read(
 			        env->fh, bufs[s], &sizes[i], &foffs[i],
 			        &boffs[i], &brs[i], env->extra_streams[s]);
 			if (err.err != OPENDS_SUCCESS) {
@@ -818,7 +818,7 @@ async_test_multi_stream_burst(struct async_test_env *env)
 				        s, j, brs[i]);
 				goto out_free_host;
 			}
-			async_expected_bytes(exp, foffs[i], PAGE);
+			stream_expected_bytes(exp, foffs[i], PAGE);
 			if (memcmp(host + boffs[i], exp, PAGE) != 0) {
 				fprintf(stderr,
 				        "  multi_burst[s=%d j=%d]: "
@@ -848,10 +848,10 @@ out_free_arrays:
 
 /*
  * Stream-ordered consumer: an op enqueued on the user's stream right
- * after opends_read_async must observe the bytes written by the
+ * after opends_stream_read must observe the bytes written by the
  * read, without any host-side sync between them. We zero the GPU buf
  * first (under a full device sync), then submit:
- *   1) opends_read_async on stream
+ *   1) opends_stream_read on stream
  *   2) cuMemcpyDtoHAsync(pinned, buf, ...) on the same stream
  * and only sync after both are queued. The memcpy is stream-ordered
  * behind the read's cuStreamWaitValue32(done_seq) gate. If that gate
@@ -860,7 +860,7 @@ out_free_arrays:
  * expected pattern. Loops to make any race observable across runs.
  */
 static int
-async_test_stream_consumer(struct async_test_env *env)
+stream_test_stream_consumer(struct stream_test_env *env)
 {
 	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
@@ -891,7 +891,7 @@ async_test_stream_consumer(struct async_test_env *env)
 		off_t foff = (off_t)((i % FILE_PAGES) * PAGE);
 		off_t boff = 0;
 		ssize_t br = 0;
-		opends_error_t err = opends_read_async(env->fh, buf, &sz, &foff,
+		opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff,
 		                                       &boff, &br, env->stream);
 		if (err.err != OPENDS_SUCCESS) {
 			fprintf(stderr, "  stream_consumer[%d]: submit: %s\n",
@@ -919,7 +919,7 @@ async_test_stream_consumer(struct async_test_env *env)
 			        br);
 			goto out;
 		}
-		async_expected_bytes(expected, foff, PAGE);
+		stream_expected_bytes(expected, foff, PAGE);
 		if (memcmp(host_pinned, expected, PAGE) != 0) {
 			fprintf(stderr,
 			        "  stream_consumer[%d]: consumer observed "
@@ -946,7 +946,7 @@ out:
  * succeed afterwards.
  */
 static int
-async_test_unaligned_rejected(struct async_test_env *env)
+stream_test_unaligned_rejected(struct stream_test_env *env)
 {
 	void *buf = env->buf_acquire(PAGE);
 	if (!buf)
@@ -961,7 +961,7 @@ async_test_unaligned_rejected(struct async_test_env *env)
 	off_t boff = 0;
 	ssize_t bytes_read = 0;
 
-	opends_error_t err = opends_read_async(env->fh, buf, &sz, &foff, &boff,
+	opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff, &boff,
 	                                       &bytes_read, env->stream);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  unaligned_rejected: submit: %s\n",
@@ -969,7 +969,7 @@ async_test_unaligned_rejected(struct async_test_env *env)
 		goto out;
 	}
 
-	if (async_test_stream_sync_timeout(env->stream, 20.0,
+	if (stream_test_stream_sync_timeout(env->stream, 20.0,
 	                                   "unaligned_rejected") != 0)
 		goto out;
 
@@ -981,7 +981,7 @@ async_test_unaligned_rejected(struct async_test_env *env)
 		goto out;
 	}
 
-	rc = verify_async_read(env, buf, PAGE, PAGE, 0, 0,
+	rc = verify_stream_read(env, buf, PAGE, PAGE, 0, 0,
 	                       "unaligned_rejected/aligned_after");
 out:
 	env->buf_release(buf);
@@ -990,40 +990,40 @@ out:
 
 /* --- Test runner ------------------------------------------------ */
 
-struct async_test_entry {
+struct stream_test_entry {
 	const char *name;
-	int (*fn)(struct async_test_env *);
+	int (*fn)(struct stream_test_env *);
 	bool needs_sub_lba;
 	bool needs_aligned_only;
 };
 
 /* clang-format off */
-static const struct async_test_entry async_read_tests[] = {
-	{"single_block",        async_test_single_block},
-	{"multi_block",         async_test_multi_block},
-	{"at_offset",           async_test_at_offset},
-	{"full_file",           async_test_full_file},
-	{"last_block",          async_test_last_block},
-	{"short_at_eof",        async_test_short_at_eof},
-	{"zero_size",           async_test_zero_size},
-	{"buf_offset",          async_test_buf_offset},
-	{"offset_size_sweep",   async_test_offset_size_sweep},
-	{"stream_ordering",     async_test_stream_ordering},
-	{"stream_consumer",     async_test_stream_consumer},
-	{"deferred_eval",       async_test_deferred_eval},
-	{"concurrent_streams",      async_test_concurrent_streams},
-	{"concurrent_short_reads",  async_test_concurrent_short_reads, true},
-	{"unaligned_rejected",      async_test_unaligned_rejected, false, true},
-	{"burst_single_stream",     async_test_burst_single_stream},
-	{"multi_stream_burst",      async_test_multi_stream_burst},
+static const struct stream_test_entry stream_read_tests[] = {
+	{"single_block",        stream_test_single_block},
+	{"multi_block",         stream_test_multi_block},
+	{"at_offset",           stream_test_at_offset},
+	{"full_file",           stream_test_full_file},
+	{"last_block",          stream_test_last_block},
+	{"short_at_eof",        stream_test_short_at_eof},
+	{"zero_size",           stream_test_zero_size},
+	{"buf_offset",          stream_test_buf_offset},
+	{"offset_size_sweep",   stream_test_offset_size_sweep},
+	{"stream_ordering",     stream_test_stream_ordering},
+	{"stream_consumer",     stream_test_stream_consumer},
+	{"deferred_eval",       stream_test_deferred_eval},
+	{"concurrent_streams",      stream_test_concurrent_streams},
+	{"concurrent_short_reads",  stream_test_concurrent_short_reads, true},
+	{"unaligned_rejected",      stream_test_unaligned_rejected, false, true},
+	{"burst_single_stream",     stream_test_burst_single_stream},
+	{"multi_stream_burst",      stream_test_multi_stream_burst},
 };
 /* clang-format on */
 
-#define NASYNC_READ_TESTS                                                      \
-	(sizeof(async_read_tests) / sizeof(async_read_tests[0]))
+#define NSTREAM_READ_TESTS                                                      \
+	(sizeof(stream_read_tests) / sizeof(stream_read_tests[0]))
 
 static int
-run_async_read_tests(struct async_test_env *env)
+run_stream_read_tests(struct stream_test_env *env)
 {
 	fprintf(stderr, "  [%s mode]\n",
 	        env->mode_label ? env->mode_label : "default");
@@ -1039,20 +1039,20 @@ run_async_read_tests(struct async_test_env *env)
 	}
 
 	int failed = 0;
-	for (size_t i = 0; i < NASYNC_READ_TESTS; i++) {
-		if ((async_read_tests[i].needs_sub_lba &&
+	for (size_t i = 0; i < NSTREAM_READ_TESTS; i++) {
+		if ((stream_read_tests[i].needs_sub_lba &&
 		     env->sub_lba_unsupported) ||
-		    (async_read_tests[i].needs_aligned_only &&
+		    (stream_read_tests[i].needs_aligned_only &&
 		     !env->sub_lba_unsupported)) {
 			fprintf(stderr, "  %-24s skip\n",
-			        async_read_tests[i].name);
+			        stream_read_tests[i].name);
 			continue;
 		}
-		int rc = async_read_tests[i].fn(env);
-		fprintf(stderr, "  %-24s %s\n", async_read_tests[i].name,
+		int rc = stream_read_tests[i].fn(env);
+		fprintf(stderr, "  %-24s %s\n", stream_read_tests[i].name,
 		        rc ? "FAIL" : "ok");
 		if (rc) {
-			/* A failed async test (especially a timed-out
+			/* A failed stream test (especially a timed-out
 			 * cuStreamQuery) leaves CUDA streams and backend
 			 * state poisoned; later tests would hang or report
 			 * cascading errors. Stop immediately. */
@@ -1063,4 +1063,4 @@ run_async_read_tests(struct async_test_env *env)
 	return failed;
 }
 
-#endif /* TEST_ASYNC_READ_H_ */
+#endif /* TEST_STREAM_READ_H_ */

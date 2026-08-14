@@ -106,11 +106,11 @@ steps:
         '{{ config.test.build_dir }}/test_coherency_aisio' \
           '{{ config.test.mount_point }}/opends_tests/coherency_large.bin'
 
-  - name: test_async_read_aisio
+  - name: test_stream_read_aisio
     run: |
       OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
-        '{{ config.test.build_dir }}/test_async_read_aisio' \
+        '{{ config.test.build_dir }}/test_stream_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: test_sync_write_aisio
@@ -120,11 +120,11 @@ steps:
         '{{ config.test.build_dir }}/test_sync_write_aisio' \
           '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
 
-  - name: test_async_write_aisio
+  - name: test_stream_write_aisio
     run: |
       OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
-        '{{ config.test.build_dir }}/test_async_write_aisio' \
+        '{{ config.test.build_dir }}/test_stream_write_aisio' \
           '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
 
   - name: test_block_alloc_aisio

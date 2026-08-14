@@ -94,7 +94,7 @@ struct opends_stream {
 
 enum file_op_mode {
 	FILE_OP_SYNC,
-	FILE_OP_ASYNC,
+	FILE_OP_STREAM,
 	FILE_OP_BATCH,
 };
 
@@ -105,7 +105,7 @@ struct file_op_sync {
 	ssize_t result;
 };
 
-struct file_op_async {
+struct file_op_stream {
 	size_t *size_p;
 	off_t *file_offset_p;
 	off_t *buf_offset_p;
@@ -133,7 +133,7 @@ struct file_op {
 	size_t tail_nbytes;
 	union {
 		struct file_op_sync sync;
-		struct file_op_async async;
+		struct file_op_stream stream;
 		struct file_op_batch batch;
 	} u;
 };
@@ -168,7 +168,7 @@ struct driver {
 	struct buf_entry bufs[MAX_BUF_ENTRIES];
 	int buf_count;
 
-	bool async_ready;
+	bool workers_ready;
 	ds_accel_ctx_t accel_ctx;
 
 	struct opends_stream streams[MAX_STREAMS];
@@ -519,11 +519,11 @@ bounce_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 }
 
 static int
-submit_read_bounce(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
+submit_stream_tail(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
                    uint64_t cur_slba, size_t nbytes)
 {
 	struct driver *d = w->drv;
-	struct opends_stream *s = op->u.async.opends_stream;
+	struct opends_stream *s = op->u.stream.opends_stream;
 	void *bounce_src = s->bounce_buf;
 
 	uint64_t nlbas = (nbytes + (d->lba_size - 1)) >> d->lba_shift;
@@ -627,10 +627,10 @@ start_read_op(struct io_worker *w, struct file_op *op)
 	size_t size;
 	uint64_t req_start;
 	uint8_t *dst_base;
-	if (op->mode == FILE_OP_ASYNC) {
-		size = *op->u.async.size_p;
-		req_start = (uint64_t)*op->u.async.file_offset_p;
-		dst_base = (uint8_t *)op->buf_base + *op->u.async.buf_offset_p;
+	if (op->mode == FILE_OP_STREAM) {
+		size = *op->u.stream.size_p;
+		req_start = (uint64_t)*op->u.stream.file_offset_p;
+		dst_base = (uint8_t *)op->buf_base + *op->u.stream.buf_offset_p;
 	} else {
 		size = op->u.sync.size;
 		req_start = (uint64_t)op->u.sync.file_offset;
@@ -697,8 +697,8 @@ start_read_op(struct io_worker *w, struct file_op *op)
 				goto out;
 			}
 			int trc;
-			if (op->mode == FILE_OP_ASYNC)
-				trc = submit_read_bounce(w, op, abs_dst,
+			if (op->mode == FILE_OP_STREAM)
+				trc = submit_stream_tail(w, op, abs_dst,
 				                         cur_slba, tail_bytes);
 			else
 				trc = submit_sync_tail(w, op, abs_dst, cur_slba,
@@ -721,8 +721,8 @@ static void
 park_gate_cb(void *arg)
 {
 	struct file_op *op = arg;
-	struct opends_stream *s = op->u.async.opends_stream;
-	uint32_t seq = op->u.async.seq;
+	struct opends_stream *s = op->u.stream.opends_stream;
+	uint32_t seq = op->u.stream.seq;
 
 	__atomic_store_n(s->gate, 2 * seq, __ATOMIC_RELEASE);
 
@@ -737,11 +737,11 @@ complete_read_op(struct io_worker *w, struct file_op *op)
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
 	uint32_t tail_bytes = op->err ? 0 : (uint32_t)op->tail_nbytes;
 
-	if (op->mode == FILE_OP_ASYNC) {
-		struct opends_stream *s = op->u.async.opends_stream;
-		*op->u.async.bytes_read_p = n;
+	if (op->mode == FILE_OP_STREAM) {
+		struct opends_stream *s = op->u.stream.opends_stream;
+		*op->u.stream.bytes_read_p = n;
 		s->bounce_desc_host->n_bytes = tail_bytes;
-		release_gate(s, op->u.async.seq);
+		release_gate(s, op->u.stream.seq);
 		__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
 		return;
 	}
@@ -764,10 +764,10 @@ dispatch_write(struct io_worker *w, struct file_op *op)
 	const void *src;
 	size_t size;
 	off_t file_offset;
-	if (op->mode == FILE_OP_ASYNC) {
-		src = (const uint8_t *)op->buf_base + *op->u.async.buf_offset_p;
-		size = *op->u.async.size_p;
-		file_offset = *op->u.async.file_offset_p;
+	if (op->mode == FILE_OP_STREAM) {
+		src = (const uint8_t *)op->buf_base + *op->u.stream.buf_offset_p;
+		size = *op->u.stream.size_p;
+		file_offset = *op->u.stream.file_offset_p;
 	} else {
 		src = (const uint8_t *)op->buf_base + op->u.sync.buf_offset;
 		size = op->u.sync.size;
@@ -780,9 +780,9 @@ dispatch_write(struct io_worker *w, struct file_op *op)
 		            ? -(ssize_t)OPENDS_INVALID_VALUE
 		            : -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 
-	if (op->mode == FILE_OP_ASYNC) {
-		*op->u.async.bytes_read_p = n;
-		release_gate(op->u.async.opends_stream, op->u.async.seq);
+	if (op->mode == FILE_OP_STREAM) {
+		*op->u.stream.bytes_read_p = n;
+		release_gate(op->u.stream.opends_stream, op->u.stream.seq);
 	} else {
 		op->u.sync.result = n;
 	}
@@ -819,12 +819,12 @@ reap_in_flight(struct io_worker *w, struct file_op *op)
  * arithmetic to match the device-side GEQ wait, keeping the sequence
  * wrap-safe. */
 static bool
-poll_async_pending(struct io_worker *w, struct file_op *op)
+poll_stream_pending(struct io_worker *w, struct file_op *op)
 {
-	uint32_t gate = __atomic_load_n(op->u.async.opends_stream->gate,
+	uint32_t gate = __atomic_load_n(op->u.stream.opends_stream->gate,
 	                                __ATOMIC_ACQUIRE);
 
-	if ((int32_t)(gate - 2 * op->u.async.seq) < 0)
+	if ((int32_t)(gate - 2 * op->u.stream.seq) < 0)
 		return true;
 	dispatch_pending(w, op);
 	return false;
@@ -856,8 +856,8 @@ io_thread_main(void *arg)
 				case FILE_OP_SYNC:
 					dispatch_pending(w, op);
 					break;
-				case FILE_OP_ASYNC:
-					if (poll_async_pending(w, op))
+				case FILE_OP_STREAM:
+					if (poll_stream_pending(w, op))
 						busy = true;
 					break;
 				case FILE_OP_BATCH: break;
@@ -923,7 +923,7 @@ mask_nth_cpu(uint64_t mask, int n)
 /* Returns 0 on success; on failure, the dev_err to report (vendor code or
  * -1). */
 static int
-async_setup(struct driver *d)
+workers_setup(struct driver *d)
 {
 	int rc = ds_accel->ctx_get(&d->accel_ctx);
 	if (rc != 0)
@@ -976,7 +976,7 @@ async_setup(struct driver *d)
 		started++;
 	}
 
-	d->async_ready = true;
+	d->workers_ready = true;
 	return 0;
 
 fail:
@@ -999,9 +999,9 @@ fail_words:
 }
 
 static void
-async_teardown(struct driver *d)
+workers_teardown(struct driver *d)
 {
-	if (!d->async_ready)
+	if (!d->workers_ready)
 		return;
 
 	__atomic_store_n(&d->stop, true, __ATOMIC_RELEASE);
@@ -1029,7 +1029,7 @@ async_teardown(struct driver *d)
 	ds_accel->host_free(d->stream_words_host);
 	d->stream_words_host = NULL;
 
-	d->async_ready = false;
+	d->workers_ready = false;
 }
 
 static struct opends_stream *
@@ -1194,9 +1194,9 @@ opends_driver_open(void)
 		drv = NULL;
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	}
-	int arc = async_setup(d);
+	int arc = workers_setup(d);
 	if (arc != 0) {
-		fprintf(stderr, "aisio: async_setup failed\n");
+		fprintf(stderr, "aisio: workers_setup failed\n");
 		xnvme_dev_close(d->xdev);
 		homic_detach_qpair();
 		homic_disconnect();
@@ -1218,7 +1218,7 @@ opends_driver_close(void)
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 
-	async_teardown(drv);
+	workers_teardown(drv);
 
 	for (int i = 0; i < drv->buf_count; i++) {
 		struct buf_entry *e = &drv->bufs[i];
@@ -1446,7 +1446,7 @@ submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
 		return -(ssize_t)OPENDS_DRIVER_NOT_INITIALIZED;
 	if (!fh || !buf_base)
 		return -(ssize_t)OPENDS_INVALID_VALUE;
-	if (!d->async_ready)
+	if (!d->workers_ready)
 		return -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 
 	struct io_worker *w;
@@ -1507,7 +1507,7 @@ classify_accel_failure(struct driver *d, int accel_rc)
 }
 
 static opends_error_t
-submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
+submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
                 void *buf_base, size_t *size_p, off_t *file_offset_p,
                 off_t *buf_offset_p, ssize_t *bytes_p, opends_stream_t stream)
 {
@@ -1518,7 +1518,7 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 		return opends_err(OPENDS_INVALID_VALUE);
 	if (!stream)
 		return opends_err(OPENDS_INVALID_VALUE);
-	if (!d->async_ready)
+	if (!d->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
 	ds_accel_stream_t cus = (ds_accel_stream_t)stream;
@@ -1532,16 +1532,16 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	pthread_mutex_lock(&d->submit_lock);
 	struct file_op *op = claim_slot_locked(d, &w, &head);
 	uint32_t seq = ++opends_stream->next_seq;
-	op->mode = FILE_OP_ASYNC;
+	op->mode = FILE_OP_STREAM;
 	op->is_write = is_write;
 	op->h = (struct registered_file *)fh;
 	op->buf_base = buf_base;
-	op->u.async.size_p = size_p;
-	op->u.async.file_offset_p = file_offset_p;
-	op->u.async.buf_offset_p = buf_offset_p;
-	op->u.async.bytes_read_p = bytes_p;
-	op->u.async.opends_stream = opends_stream;
-	op->u.async.seq = seq;
+	op->u.stream.size_p = size_p;
+	op->u.stream.file_offset_p = file_offset_p;
+	op->u.stream.buf_offset_p = buf_offset_p;
+	op->u.stream.bytes_read_p = bytes_p;
+	op->u.stream.opends_stream = opends_stream;
+	op->u.stream.seq = seq;
 
 	/* Order the I/O thread against the user's stream through a per-stream
 	 * gate word (strictly monotonic, two phases per op): the submitter
@@ -1604,20 +1604,20 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 }
 
 opends_error_t
-opends_read_async(opends_handle_t fh, void *buf_base, size_t *size_p,
+opends_stream_read(opends_handle_t fh, void *buf_base, size_t *size_p,
                   off_t *file_offset_p, off_t *buf_offset_p,
                   ssize_t *bytes_read_p, opends_stream_t stream)
 {
-	return submit_async_op(drv, false, fh, buf_base, size_p, file_offset_p,
+	return submit_stream_op(drv, false, fh, buf_base, size_p, file_offset_p,
 	                       buf_offset_p, bytes_read_p, stream);
 }
 
 opends_error_t
-opends_write_async(opends_handle_t fh, void *buf_base, size_t *size_p,
+opends_stream_write(opends_handle_t fh, void *buf_base, size_t *size_p,
                    off_t *file_offset_p, off_t *buf_offset_p,
                    ssize_t *bytes_written_p, opends_stream_t stream)
 {
-	return submit_async_op(drv, true, fh, buf_base, size_p, file_offset_p,
+	return submit_stream_op(drv, true, fh, buf_base, size_p, file_offset_p,
 	                       buf_offset_p, bytes_written_p, stream);
 }
 
@@ -1631,7 +1631,7 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 	if (!stream)
 		return opends_err(OPENDS_INVALID_VALUE);
 
-	if (!drv->async_ready)
+	if (!drv->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
 	ds_accel_stream_t cus = (ds_accel_stream_t)stream;

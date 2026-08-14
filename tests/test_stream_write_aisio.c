@@ -2,7 +2,7 @@
 #define _GNU_SOURCE
 
 #include "test_aisio_homi.h"
-#include "test_async_read.h" /* async_test_stream_sync_timeout */
+#include "test_stream_read.h" /* stream_test_stream_sync_timeout */
 #include "test_cuda_common.h"
 #include "test_write_homi.h"
 
@@ -14,20 +14,20 @@
 #include <unistd.h>
 
 static ssize_t
-async_submit_write(struct write_homi_env *e, void *gpu, size_t size, off_t foff)
+stream_submit_write(struct write_homi_env *e, void *gpu, size_t size, off_t foff)
 {
 	size_t sz = size;
 	off_t fo = foff;
 	off_t bo = 0;
 	ssize_t bytes = -1;
-	opends_error_t err = opends_write_async(e->fh, gpu, &sz, &fo, &bo,
+	opends_error_t err = opends_stream_write(e->fh, gpu, &sz, &fo, &bo,
 	                                        &bytes, e->stream);
 	if (err.err != OPENDS_SUCCESS) {
-		fprintf(stderr, "  write_async submit: %s\n",
+		fprintf(stderr, "  stream_write submit: %s\n",
 		        opends_op_status_error(err.err));
 		return -1;
 	}
-	if (async_test_stream_sync_timeout(e->stream, 10.0, "write_async") != 0)
+	if (stream_test_stream_sync_timeout(e->stream, 10.0, "stream_write") != 0)
 		return -1;
 	return bytes;
 }
@@ -54,13 +54,13 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	fprintf(stderr, "opends_write_async tests (aisio backend, HOMI)\n");
+	fprintf(stderr, "opends_stream_write tests (aisio backend, HOMI)\n");
 
 	struct write_homi_env env = {
 	        .fh = a.fh,
 	        .stream = stream,
-	        .submit_write = async_submit_write,
-	        .mode_label = "async",
+	        .submit_write = stream_submit_write,
+	        .mode_label = "stream",
 	};
 	int failed = run_write_homi_tests(&env);
 

@@ -342,7 +342,7 @@ opends_batch_io_destroy(opends_batch_handle_t batch_idp)
 /* ------------------------------------------------------------------ */
 
 opends_error_t
-opends_read_async(opends_handle_t fh, void *buf_base, size_t *size_p,
+opends_stream_read(opends_handle_t fh, void *buf_base, size_t *size_p,
                   off_t *file_offset_p, off_t *buf_offset_p,
                   ssize_t *bytes_read_p, opends_stream_t stream)
 {
@@ -356,7 +356,7 @@ opends_read_async(opends_handle_t fh, void *buf_base, size_t *size_p,
 }
 
 opends_error_t
-opends_write_async(opends_handle_t fh, void *buf_base, size_t *size_p,
+opends_stream_write(opends_handle_t fh, void *buf_base, size_t *size_p,
                    off_t *file_offset_p, off_t *buf_offset_p,
                    ssize_t *bytes_written_p, opends_stream_t stream)
 {
