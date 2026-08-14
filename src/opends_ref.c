@@ -160,6 +160,62 @@ opends_buf_deregister(const void *buf_base)
 	return opends_err(OPENDS_MEMORY_NOT_REGISTERED);
 }
 
+/* Async I/O. Executes synchronously on submit and buffers the result
+ * in the caller's future until awaited, mirroring the batch
+ * implementation below. */
+static opends_error_t
+ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
+                 off_t file_offset, off_t buf_offset,
+                 opends_async_future_t *future)
+{
+	if (!driver_open)
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
+	if (!fh || !buf_base || !future)
+		return opends_err(OPENDS_INVALID_VALUE);
+
+	ssize_t result;
+	if (is_write)
+		result = opends_sync_write(fh, buf_base, size, file_offset,
+		                           buf_offset);
+	else
+		result = opends_sync_read(fh, buf_base, size, file_offset,
+		                          buf_offset);
+
+	future->result = result;
+	__atomic_store_n(&future->done, 1, __ATOMIC_RELEASE);
+	return opends_ok();
+}
+
+opends_error_t
+opends_async_read(opends_handle_t fh, void *buf_base, size_t size,
+                  off_t file_offset, off_t buf_offset,
+                  opends_async_future_t *future)
+{
+	return ref_async_submit(false, fh, buf_base, size, file_offset,
+	                        buf_offset, future);
+}
+
+opends_error_t
+opends_async_write(opends_handle_t fh, const void *buf_base, size_t size,
+                   off_t file_offset, off_t buf_offset,
+                   opends_async_future_t *future)
+{
+	return ref_async_submit(true, fh, (void *)buf_base, size, file_offset,
+	                        buf_offset, future);
+}
+
+ssize_t
+opends_async_await(opends_async_future_t *future)
+{
+	if (!future)
+		return -(ssize_t)OPENDS_INVALID_VALUE;
+
+	while (!__atomic_load_n(&future->done, __ATOMIC_ACQUIRE))
+		sched_yield();
+
+	return future->result;
+}
+
 ssize_t
 opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
                  off_t file_offset, off_t buf_offset)
@@ -182,6 +238,45 @@ opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
 	if (ret < 0)
 		return -(ssize_t)OPENDS_INTERNAL_ERROR;
 	return ret;
+}
+
+opends_error_t
+opends_stream_read(opends_handle_t fh, void *buf_base, size_t *size_p,
+                   off_t *file_offset_p, off_t *buf_offset_p,
+                   ssize_t *bytes_read_p, opends_stream_t stream)
+{
+	(void)stream;
+	ssize_t ret = opends_sync_read(fh, buf_base, *size_p, *file_offset_p,
+	                               *buf_offset_p);
+	*bytes_read_p = ret;
+	return ret < 0 ? opends_err(OPENDS_INTERNAL_ERROR) : opends_ok();
+}
+
+opends_error_t
+opends_stream_write(opends_handle_t fh, void *buf_base, size_t *size_p,
+                    off_t *file_offset_p, off_t *buf_offset_p,
+                    ssize_t *bytes_written_p, opends_stream_t stream)
+{
+	(void)stream;
+	ssize_t ret = opends_sync_write(fh, buf_base, *size_p, *file_offset_p,
+	                                *buf_offset_p);
+	*bytes_written_p = ret;
+	return ret < 0 ? opends_err(OPENDS_INTERNAL_ERROR) : opends_ok();
+}
+
+opends_error_t
+opends_stream_register(opends_stream_t stream, unsigned flags)
+{
+	(void)stream;
+	(void)flags;
+	return opends_ok();
+}
+
+opends_error_t
+opends_stream_deregister(opends_stream_t stream)
+{
+	(void)stream;
+	return opends_ok();
 }
 
 struct ref_batch {
@@ -295,99 +390,4 @@ opends_batch_destroy(opends_batch_handle_t batch_idp)
 		return;
 	free(b->events);
 	free(b);
-}
-
-opends_error_t
-opends_stream_read(opends_handle_t fh, void *buf_base, size_t *size_p,
-                   off_t *file_offset_p, off_t *buf_offset_p,
-                   ssize_t *bytes_read_p, opends_stream_t stream)
-{
-	(void)stream;
-	ssize_t ret = opends_sync_read(fh, buf_base, *size_p, *file_offset_p,
-	                               *buf_offset_p);
-	*bytes_read_p = ret;
-	return ret < 0 ? opends_err(OPENDS_INTERNAL_ERROR) : opends_ok();
-}
-
-opends_error_t
-opends_stream_write(opends_handle_t fh, void *buf_base, size_t *size_p,
-                    off_t *file_offset_p, off_t *buf_offset_p,
-                    ssize_t *bytes_written_p, opends_stream_t stream)
-{
-	(void)stream;
-	ssize_t ret = opends_sync_write(fh, buf_base, *size_p, *file_offset_p,
-	                                *buf_offset_p);
-	*bytes_written_p = ret;
-	return ret < 0 ? opends_err(OPENDS_INTERNAL_ERROR) : opends_ok();
-}
-
-opends_error_t
-opends_stream_register(opends_stream_t stream, unsigned flags)
-{
-	(void)stream;
-	(void)flags;
-	return opends_ok();
-}
-
-opends_error_t
-opends_stream_deregister(opends_stream_t stream)
-{
-	(void)stream;
-	return opends_ok();
-}
-
-/* Async I/O. Executes synchronously on submit and buffers the result
- * in the caller's future until awaited, mirroring the batch
- * implementation above. */
-static opends_error_t
-ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
-                 off_t file_offset, off_t buf_offset,
-                 opends_async_future_t *future)
-{
-	if (!driver_open)
-		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
-	if (!fh || !buf_base || !future)
-		return opends_err(OPENDS_INVALID_VALUE);
-
-	ssize_t result;
-	if (is_write)
-		result = opends_sync_write(fh, buf_base, size, file_offset,
-		                           buf_offset);
-	else
-		result = opends_sync_read(fh, buf_base, size, file_offset,
-		                          buf_offset);
-
-	future->result = result;
-	__atomic_store_n(&future->done, 1, __ATOMIC_RELEASE);
-	return opends_ok();
-}
-
-opends_error_t
-opends_async_read(opends_handle_t fh, void *buf_base, size_t size,
-                  off_t file_offset, off_t buf_offset,
-                  opends_async_future_t *future)
-{
-	return ref_async_submit(false, fh, buf_base, size, file_offset,
-	                        buf_offset, future);
-}
-
-opends_error_t
-opends_async_write(opends_handle_t fh, const void *buf_base, size_t size,
-                   off_t file_offset, off_t buf_offset,
-                   opends_async_future_t *future)
-{
-	return ref_async_submit(true, fh, (void *)buf_base, size, file_offset,
-	                        buf_offset, future);
-}
-
-ssize_t
-opends_async_await(opends_async_future_t *future)
-{
-	if (!future)
-		return -(ssize_t)OPENDS_INVALID_VALUE;
-
-	while (!__atomic_load_n(&future->done, __ATOMIC_ACQUIRE))
-		sched_yield();
-
-	return future->result;
 }

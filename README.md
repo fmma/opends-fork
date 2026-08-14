@@ -60,10 +60,10 @@ families are named by what they do rather than by what cuFile calls them:
 
 | opends family     | cuFile equivalent                    |
 |-------------------|--------------------------------------|
+| `opends_async_*`  | none                                 |
 | `opends_sync_*`   | `cuFileRead`/`cuFileWrite`           |
 | `opends_stream_*` | `cuFileReadAsync`/`cuFileWriteAsync` |
 | `opends_batch_*`  | `cuFileBatchIO*`                     |
-| `opends_async_*`  | none                                 |
 
 Mind the false friend when porting: cuFile's "Async" calls are stream-ordered
 I/O and map to `opends_stream_*`. The `opends_async_*` family is per-operation

@@ -8,10 +8,10 @@
  * cuFile calls it. Parameter conventions follow cuFile, so porting is
  * a mechanical rename by this table:
  *
+ *   (no cuFile counterpart)    -> opends_async_read/write/await
  *   cuFileRead/Write           -> opends_sync_read/write
  *   cuFileReadAsync/WriteAsync -> opends_stream_read/write
  *   cuFileBatchIO*             -> opends_batch_*
- *   (no cuFile counterpart)    -> opends_async_read/write/await
  *
  * Mind the false friend: cuFile's "Async" calls are stream-ordered
  * I/O and map to opends_stream_*. The opends_async_* family is
@@ -178,6 +178,41 @@ opends_error_t opends_buf_register(const void *buf_base, size_t size,
 opends_error_t opends_buf_deregister(const void *buf_base);
 
 /*
+ * Asynchronous I/O. No cuFile counterpart; cuFile's "Async" calls are
+ * the stream-ordered API below.
+ *
+ * opends_async_read and opends_async_write are the synchronous calls with
+ * completion reaping deferred: submit returns immediately after
+ * initializing the caller-provided future, and opends_async_await blocks
+ * until that operation completes and returns its byte count (or a
+ * negated opends_op_error_t on failure).
+ *
+ * The caller owns the future storage; stack allocation is fine. The
+ * backend writes the completion through it, so it must stay valid at
+ * the same address from submit until awaited; do not copy or move a
+ * future with its operation in flight. Awaiting an already completed
+ * future again returns the same result; the storage may be reused for
+ * a new submit after that. Operations may complete in any order;
+ * awaiting in submission order is not required. Submit and await are
+ * thread-safe. Submission resources are bounded internally; submit
+ * applies backpressure rather than failing.
+ */
+typedef struct opends_async_future {
+	unsigned done;  /* nonzero once the operation has completed */
+	ssize_t result; /* byte count or negated error; valid once done */
+} opends_async_future_t;
+
+opends_error_t opends_async_read(opends_handle_t fh, void *buf_base,
+                                 size_t size, off_t file_offset,
+                                 off_t buf_offset,
+                                 opends_async_future_t *future);
+opends_error_t opends_async_write(opends_handle_t fh, const void *buf_base,
+                                  size_t size, off_t file_offset,
+                                  off_t buf_offset,
+                                  opends_async_future_t *future);
+ssize_t opends_async_await(opends_async_future_t *future);
+
+/*
  * Synchronous I/O. Returns byte count on success or a negated
  * opends_op_error_t on failure. The buf_offset parameter writes
  * into the buffer at an offset, useful for scatter reads into a
@@ -188,6 +223,33 @@ ssize_t opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
                          off_t file_offset, off_t buf_offset);
 ssize_t opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
                           off_t file_offset, off_t buf_offset);
+
+/*
+ * Stream-ordered I/O (cuFileReadAsync/WriteAsync). Operations are
+ * associated with a stream (e.g. a CUDA stream) and complete in stream
+ * order. The size, offset, and byte count parameters are pointers so
+ * the values can be read at stream execution time rather than
+ * submission time. The reference backend reads them immediately.
+ *
+ * Backend limits (aisio): at most 8192 streams may be registered at once,
+ * and at most 1024 stream ops may be in flight across all streams. Exceeding
+ * the stream limit returns OPENDS_INTERNAL_ERROR from opends_stream_register;
+ * the in-flight limit applies back-pressure rather than failing
+ * (opends_stream_read spins until a slot frees).
+ */
+typedef void *opends_stream_t;
+
+opends_error_t opends_stream_read(opends_handle_t fh, void *buf_base,
+                                  size_t *size_p, off_t *file_offset_p,
+                                  off_t *buf_offset_p, ssize_t *bytes_read_p,
+                                  opends_stream_t stream);
+opends_error_t opends_stream_write(opends_handle_t fh, void *buf_base,
+                                   size_t *size_p, off_t *file_offset_p,
+                                   off_t *buf_offset_p,
+                                   ssize_t *bytes_written_p,
+                                   opends_stream_t stream);
+opends_error_t opends_stream_register(opends_stream_t stream, unsigned flags);
+opends_error_t opends_stream_deregister(opends_stream_t stream);
 
 /*
  * Batch I/O. Submit multiple operations in a single call and poll for
@@ -249,68 +311,6 @@ opends_error_t opends_batch_get_status(opends_batch_handle_t batch_idp,
                                        struct timespec *timeout);
 opends_error_t opends_batch_cancel(opends_batch_handle_t batch_idp);
 void opends_batch_destroy(opends_batch_handle_t batch_idp);
-
-/*
- * Stream-ordered I/O (cuFileReadAsync/WriteAsync). Operations are
- * associated with a stream (e.g. a CUDA stream) and complete in stream
- * order. The size, offset, and byte count parameters are pointers so
- * the values can be read at stream execution time rather than
- * submission time. The reference backend reads them immediately.
- *
- * Backend limits (aisio): at most 8192 streams may be registered at once,
- * and at most 1024 stream ops may be in flight across all streams. Exceeding
- * the stream limit returns OPENDS_INTERNAL_ERROR from opends_stream_register;
- * the in-flight limit applies back-pressure rather than failing
- * (opends_stream_read spins until a slot frees).
- */
-typedef void *opends_stream_t;
-
-opends_error_t opends_stream_read(opends_handle_t fh, void *buf_base,
-                                  size_t *size_p, off_t *file_offset_p,
-                                  off_t *buf_offset_p, ssize_t *bytes_read_p,
-                                  opends_stream_t stream);
-opends_error_t opends_stream_write(opends_handle_t fh, void *buf_base,
-                                   size_t *size_p, off_t *file_offset_p,
-                                   off_t *buf_offset_p,
-                                   ssize_t *bytes_written_p,
-                                   opends_stream_t stream);
-opends_error_t opends_stream_register(opends_stream_t stream, unsigned flags);
-opends_error_t opends_stream_deregister(opends_stream_t stream);
-
-/*
- * Asynchronous I/O. No cuFile counterpart; cuFile's "Async" calls are
- * the stream-ordered API above.
- *
- * opends_async_read and opends_async_write are the synchronous calls with
- * completion reaping deferred: submit returns immediately after
- * initializing the caller-provided future, and opends_async_await blocks
- * until that operation completes and returns its byte count (or a
- * negated opends_op_error_t on failure).
- *
- * The caller owns the future storage; stack allocation is fine. The
- * backend writes the completion through it, so it must stay valid at
- * the same address from submit until awaited; do not copy or move a
- * future with its operation in flight. Awaiting an already completed
- * future again returns the same result; the storage may be reused for
- * a new submit after that. Operations may complete in any order;
- * awaiting in submission order is not required. Submit and await are
- * thread-safe. Submission resources are bounded internally; submit
- * applies backpressure rather than failing.
- */
-typedef struct opends_async_future {
-	unsigned done;  /* nonzero once the operation has completed */
-	ssize_t result; /* byte count or negated error; valid once done */
-} opends_async_future_t;
-
-opends_error_t opends_async_read(opends_handle_t fh, void *buf_base,
-                                 size_t size, off_t file_offset,
-                                 off_t buf_offset,
-                                 opends_async_future_t *future);
-opends_error_t opends_async_write(opends_handle_t fh, const void *buf_base,
-                                  size_t size, off_t file_offset,
-                                  off_t buf_offset,
-                                  opends_async_future_t *future);
-ssize_t opends_async_await(opends_async_future_t *future);
 
 #ifdef __cplusplus
 }

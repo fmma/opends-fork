@@ -217,6 +217,49 @@ opends_buf_deregister(const void *buf_base)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Async I/O (not implemented)                                        */
+/* ------------------------------------------------------------------ */
+
+/* cuFile has no stream-free async primitive to map these onto; the
+ * batch API's grouped submission and per-batch status do not fit the
+ * per-op submit/await contract. */
+
+opends_error_t
+opends_async_read(opends_handle_t fh, void *buf_base, size_t size,
+                  off_t file_offset, off_t buf_offset,
+                  opends_async_future_t *future)
+{
+	(void)fh;
+	(void)buf_base;
+	(void)size;
+	(void)file_offset;
+	(void)buf_offset;
+	(void)future;
+	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
+}
+
+opends_error_t
+opends_async_write(opends_handle_t fh, const void *buf_base, size_t size,
+                   off_t file_offset, off_t buf_offset,
+                   opends_async_future_t *future)
+{
+	(void)fh;
+	(void)buf_base;
+	(void)size;
+	(void)file_offset;
+	(void)buf_offset;
+	(void)future;
+	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
+}
+
+ssize_t
+opends_async_await(opends_async_future_t *future)
+{
+	(void)future;
+	return -(ssize_t)OPENDS_ASYNC_NOT_SUPPORTED;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Synchronous I/O                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -234,6 +277,56 @@ opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
 {
 	struct gds_handle *h = fh;
 	return cuFileWrite(h->cufh, buf_base, size, file_offset, buf_offset);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Stream-ordered I/O                                                 */
+/* ------------------------------------------------------------------ */
+
+opends_error_t
+opends_stream_read(opends_handle_t fh, void *buf_base, size_t *size_p,
+                   off_t *file_offset_p, off_t *buf_offset_p,
+                   ssize_t *bytes_read_p, opends_stream_t stream)
+{
+	struct gds_handle *h = fh;
+	CUfileError_t err =
+	        cuFileReadAsync(h->cufh, buf_base, size_p, file_offset_p,
+	                        buf_offset_p, bytes_read_p, (CUstream)stream);
+	if (err.err != CU_FILE_SUCCESS)
+		return from_cufile_error(err);
+	return opends_ok();
+}
+
+opends_error_t
+opends_stream_write(opends_handle_t fh, void *buf_base, size_t *size_p,
+                    off_t *file_offset_p, off_t *buf_offset_p,
+                    ssize_t *bytes_written_p, opends_stream_t stream)
+{
+	struct gds_handle *h = fh;
+	CUfileError_t err = cuFileWriteAsync(h->cufh, buf_base, size_p,
+	                                     file_offset_p, buf_offset_p,
+	                                     bytes_written_p, (CUstream)stream);
+	if (err.err != CU_FILE_SUCCESS)
+		return from_cufile_error(err);
+	return opends_ok();
+}
+
+opends_error_t
+opends_stream_register(opends_stream_t stream, unsigned flags)
+{
+	CUfileError_t err = cuFileStreamRegister((CUstream)stream, flags);
+	if (err.err != CU_FILE_SUCCESS)
+		return from_cufile_error(err);
+	return opends_ok();
+}
+
+opends_error_t
+opends_stream_deregister(opends_stream_t stream)
+{
+	CUfileError_t err = cuFileStreamDeregister((CUstream)stream);
+	if (err.err != CU_FILE_SUCCESS)
+		return from_cufile_error(err);
+	return opends_ok();
 }
 
 /* ------------------------------------------------------------------ */
@@ -335,97 +428,4 @@ opends_batch_destroy(opends_batch_handle_t batch_idp)
 	if (!batch_idp)
 		return;
 	cuFileBatchIODestroy((CUfileBatchHandle_t)batch_idp);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Stream-ordered I/O                                                 */
-/* ------------------------------------------------------------------ */
-
-opends_error_t
-opends_stream_read(opends_handle_t fh, void *buf_base, size_t *size_p,
-                   off_t *file_offset_p, off_t *buf_offset_p,
-                   ssize_t *bytes_read_p, opends_stream_t stream)
-{
-	struct gds_handle *h = fh;
-	CUfileError_t err =
-	        cuFileReadAsync(h->cufh, buf_base, size_p, file_offset_p,
-	                        buf_offset_p, bytes_read_p, (CUstream)stream);
-	if (err.err != CU_FILE_SUCCESS)
-		return from_cufile_error(err);
-	return opends_ok();
-}
-
-opends_error_t
-opends_stream_write(opends_handle_t fh, void *buf_base, size_t *size_p,
-                    off_t *file_offset_p, off_t *buf_offset_p,
-                    ssize_t *bytes_written_p, opends_stream_t stream)
-{
-	struct gds_handle *h = fh;
-	CUfileError_t err = cuFileWriteAsync(h->cufh, buf_base, size_p,
-	                                     file_offset_p, buf_offset_p,
-	                                     bytes_written_p, (CUstream)stream);
-	if (err.err != CU_FILE_SUCCESS)
-		return from_cufile_error(err);
-	return opends_ok();
-}
-
-opends_error_t
-opends_stream_register(opends_stream_t stream, unsigned flags)
-{
-	CUfileError_t err = cuFileStreamRegister((CUstream)stream, flags);
-	if (err.err != CU_FILE_SUCCESS)
-		return from_cufile_error(err);
-	return opends_ok();
-}
-
-opends_error_t
-opends_stream_deregister(opends_stream_t stream)
-{
-	CUfileError_t err = cuFileStreamDeregister((CUstream)stream);
-	if (err.err != CU_FILE_SUCCESS)
-		return from_cufile_error(err);
-	return opends_ok();
-}
-
-/* ------------------------------------------------------------------ */
-/*  Async I/O (not implemented)                                        */
-/* ------------------------------------------------------------------ */
-
-/* cuFile has no stream-free async primitive to map these onto; the
- * batch API's grouped submission and per-batch status do not fit the
- * per-op submit/await contract. */
-
-opends_error_t
-opends_async_read(opends_handle_t fh, void *buf_base, size_t size,
-                  off_t file_offset, off_t buf_offset,
-                  opends_async_future_t *future)
-{
-	(void)fh;
-	(void)buf_base;
-	(void)size;
-	(void)file_offset;
-	(void)buf_offset;
-	(void)future;
-	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
-}
-
-opends_error_t
-opends_async_write(opends_handle_t fh, const void *buf_base, size_t size,
-                   off_t file_offset, off_t buf_offset,
-                   opends_async_future_t *future)
-{
-	(void)fh;
-	(void)buf_base;
-	(void)size;
-	(void)file_offset;
-	(void)buf_offset;
-	(void)future;
-	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
-}
-
-ssize_t
-opends_async_await(opends_async_future_t *future)
-{
-	(void)future;
-	return -(ssize_t)OPENDS_ASYNC_NOT_SUPPORTED;
 }
