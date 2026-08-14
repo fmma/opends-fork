@@ -280,16 +280,21 @@ python scripts/bench/artefacts.py --push
 `run.py` sweeps every suite over its own knob grid into
 `cijoe-output-bench/<suite>/`. The gds suite has no knobs, so its sweep is the
 singleton: one run of the whole suite. The opends suite sweeps io_threads x
-queue_depth x assume_aligned_only: the HOMI/qublk stack comes up once, and
-each grid point runs into `cijoe-output-bench/opends/t<t>_q<q>[_aligned]/`;
+queue_depth x assume_aligned_only x idle_spin: the HOMI/qublk stack comes up
+once, and each grid point runs into
+`cijoe-output-bench/opends/t<t>_q<q>[_aligned][_spin<v>][_busy]/`;
 the grid comes from `--io-threads` (default 1,2,4,8), `--queue-depth` (default
-1..512) and `--assume-aligned-only` (default 0,1). Restrict with `--suite`,
-`--mode`, and `--dataset`. An aligned leg rejects any read with a sub-LBA
+1..512), `--assume-aligned-only` (default 0,1) and `--idle-spin` (default
+'default': the library default with the env unset; an integer is microseconds
+and 0 naps immediately, so 'default,0' is an on/off comparison of the idle-spin
+window). `--busy-spin` applies `OPENDS_AISIO_BUSY_SPIN=1` to every leg of the
+invocation. Restrict with `--suite`, `--mode`, and `--dataset`. An aligned leg rejects any read with a sub-LBA
 tail, so datasets whose files are not LBA-multiples fail by construction;
 those legs are recorded with an empty result, the sweep continues to the
 datasets that do qualify, and `report.py` gives them their own section. The
 aisio knobs travel as environment variables (`OPENDS_AISIO_IO_THREADS`,
-`OPENDS_AISIO_QUEUE_DEPTH`, `OPENDS_AISIO_CPU_MASK`). `--cpu-mask` sets the
+`OPENDS_AISIO_QUEUE_DEPTH`, `OPENDS_AISIO_CPU_MASK`,
+`OPENDS_AISIO_IDLE_SPIN_US`, `OPENDS_AISIO_BUSY_SPIN`). `--cpu-mask` sets the
 last one: a hex mask whose CPUs the aisio IO workers are pinned to round-robin
 (`0x0` or unset leaves placement to the scheduler). Outside the sweep,
 `OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` declares that every read is LBA-aligned:
@@ -305,7 +310,8 @@ then occupies a full core for the driver's lifetime; pair it with
 
 Every leg appends a structured record to
 `<out>/**/artifacts/history.jsonl`: config (backend, dataset, mode,
-io_threads, queue_depth, cpu_mask), result (MiB/s, IOPS, timings), and
+io_threads, queue_depth, cpu_mask, idle_spin_us, busy_spin), result
+(MiB/s, IOPS, timings), and
 environment (commit, host, kernel, NVMe, GPU, from `meta.json`), next to the
 verbatim `filperf` stdout (`<backend>_<dataset>[_async].log`). Each `filperf`
 run drops page caches first, so numbers are cold-cache, N=1.
