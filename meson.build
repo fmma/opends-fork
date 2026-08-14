@@ -174,6 +174,11 @@ executable('test_async_read_ref',
   dependencies : [opends_ref_dep],
 )
 
+executable('test_batch_read_ref',
+  'tests/test_batch_read_ref.c',
+  dependencies : [opends_ref_dep],
+)
+
 if gds_enabled
   executable('test_sync_read_gds',
     'tests/test_sync_read_gds.c',
@@ -200,6 +205,11 @@ if aisio_test_enabled
   )
   executable('test_async_read_aisio',
     'tests/test_async_read_aisio.c',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
+  )
+  executable('test_batch_read_aisio',
+    'tests/test_batch_read_aisio.c',
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
@@ -243,6 +253,7 @@ else
   executable('test_sync_read_aisio', 'tests/skip.c')
   executable('test_mt_read_aisio', 'tests/skip.c')
   executable('test_async_read_aisio', 'tests/skip.c')
+  executable('test_batch_read_aisio', 'tests/skip.c')
   executable('test_register_large_aisio', 'tests/skip.c')
   executable('test_coherency_aisio', 'tests/skip.c')
   executable('test_stream_read_aisio', 'tests/skip.c')
