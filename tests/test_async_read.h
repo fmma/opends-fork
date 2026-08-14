@@ -52,7 +52,8 @@ static const struct {
         {0, FILE_SIZE / 2},
 };
 
-#define ASYNC_READ_NCASES (sizeof(async_read_cases) / sizeof(async_read_cases[0]))
+#define ASYNC_READ_NCASES                                                      \
+	(sizeof(async_read_cases) / sizeof(async_read_cases[0]))
 
 struct async_read_slot {
 	void *buf;
@@ -63,7 +64,7 @@ struct async_read_slot {
 
 static int
 async_submit_case(struct async_read_env *env, struct async_read_slot *slot,
-               unsigned case_idx)
+                  unsigned case_idx)
 {
 	size_t ci = case_idx % ASYNC_READ_NCASES;
 
@@ -71,7 +72,7 @@ async_submit_case(struct async_read_env *env, struct async_read_slot *slot,
 	slot->size = async_read_cases[ci].size;
 
 	opends_error_t err = opends_async_read(env->fh, slot->buf, slot->size,
-	                                    slot->offset, 0, &slot->future);
+	                                       slot->offset, 0, &slot->future);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  submit(op=%u, off=%ld, size=%zu): %s\n",
 		        case_idx, (long)slot->offset, slot->size,
@@ -82,7 +83,8 @@ async_submit_case(struct async_read_env *env, struct async_read_slot *slot,
 }
 
 static int
-async_await_verify(struct async_read_env *env, struct async_read_slot *slot, char *host)
+async_await_verify(struct async_read_env *env, struct async_read_slot *slot,
+                   char *host)
 {
 	ssize_t n = opends_async_await(&slot->future);
 
@@ -107,8 +109,8 @@ async_await_verify(struct async_read_env *env, struct async_read_slot *slot, cha
 
 /* Submit a full window, then await in reverse submission order. */
 static int
-run_async_reverse_test(struct async_read_env *env, struct async_read_slot *slots,
-                    char *host)
+run_async_reverse_test(struct async_read_env *env,
+                       struct async_read_slot *slots, char *host)
 {
 	int failures = 0;
 	unsigned submitted = 0;

@@ -21,7 +21,7 @@ main(int argc, char **argv)
 	if (aisio_homi_setup(argv[1], &a) < 0)
 		return 1;
 
-	fprintf(stderr, "opends_read sync tests (aisio backend, HOMI)\n");
+	fprintf(stderr, "opends_sync_read sync tests (aisio backend, HOMI)\n");
 
 	struct test_env env_alloc = {
 	        .fh = a.fh,

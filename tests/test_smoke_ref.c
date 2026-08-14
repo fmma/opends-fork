@@ -34,14 +34,14 @@ test_sync_read_write(opends_handle_t fh, char *wbuf, char *rbuf)
 {
 	fill_pattern(wbuf, BUF_SIZE, 0);
 
-	ssize_t w = opends_write(fh, wbuf, BUF_SIZE, 0, 0);
+	ssize_t w = opends_sync_write(fh, wbuf, BUF_SIZE, 0, 0);
 	if (w != BUF_SIZE) {
 		fprintf(stderr, "sync write: %zd, expected %d\n", w, BUF_SIZE);
 		return 1;
 	}
 
 	memset(rbuf, 0, BUF_SIZE);
-	ssize_t n = opends_read(fh, rbuf, BUF_SIZE, 0, 0);
+	ssize_t n = opends_sync_read(fh, rbuf, BUF_SIZE, 0, 0);
 	if (n != BUF_SIZE) {
 		fprintf(stderr, "sync read: %zd, expected %d\n", n, BUF_SIZE);
 		return 1;
@@ -60,7 +60,7 @@ test_buf_offset(opends_handle_t fh, char *wbuf)
 {
 	fill_pattern(wbuf, BUF_SIZE, 0);
 
-	ssize_t w = opends_write(fh, wbuf, BUF_SIZE, 4096, 0);
+	ssize_t w = opends_sync_write(fh, wbuf, BUF_SIZE, 4096, 0);
 	if (w != BUF_SIZE) {
 		fprintf(stderr, "buf_offset write: %zd, expected %d\n", w,
 		        BUF_SIZE);
@@ -75,7 +75,7 @@ test_buf_offset(opends_handle_t fh, char *wbuf)
 	}
 	memset(bigbuf, 0, big_size);
 
-	ssize_t n = opends_read(fh, bigbuf, BUF_SIZE, 4096, 512);
+	ssize_t n = opends_sync_read(fh, bigbuf, BUF_SIZE, 4096, 512);
 	if (n != BUF_SIZE) {
 		fprintf(stderr, "buf_offset read: %zd, expected %d\n", n,
 		        BUF_SIZE);
@@ -116,7 +116,7 @@ static int
 test_batch_io(opends_handle_t fh, char *wbuf, char *rbuf)
 {
 	opends_batch_handle_t batch;
-	if (check(opends_batch_io_setup(&batch, 4), "batch_io_setup"))
+	if (check(opends_batch_setup(&batch, 4), "batch_setup"))
 		return 1;
 
 	fill_pattern(wbuf, BUF_SIZE, 0x42);
@@ -138,24 +138,22 @@ test_batch_io(opends_handle_t fh, char *wbuf, char *rbuf)
 	        },
 	};
 
-	if (check(opends_batch_io_submit(batch, 2, params, 0),
-	          "batch_io_submit")) {
-		opends_batch_io_destroy(batch);
+	if (check(opends_batch_submit(batch, 2, params, 0), "batch_submit")) {
+		opends_batch_destroy(batch);
 		return 1;
 	}
 
 	opends_io_events_t events[2];
 	unsigned nr_events = 2;
-	if (check(opends_batch_io_get_status(batch, 2, &nr_events, events,
-	                                     NULL),
-	          "batch_io_get_status")) {
-		opends_batch_io_destroy(batch);
+	if (check(opends_batch_get_status(batch, 2, &nr_events, events, NULL),
+	          "batch_get_status")) {
+		opends_batch_destroy(batch);
 		return 1;
 	}
 
 	if (nr_events != 2) {
 		fprintf(stderr, "batch events: %u, expected 2\n", nr_events);
-		opends_batch_io_destroy(batch);
+		opends_batch_destroy(batch);
 		return 1;
 	}
 
@@ -164,12 +162,12 @@ test_batch_io(opends_handle_t fh, char *wbuf, char *rbuf)
 		    events[i].ret != BUF_SIZE) {
 			fprintf(stderr, "batch event %u: status=%d ret=%zu\n",
 			        i, events[i].status, events[i].ret);
-			opends_batch_io_destroy(batch);
+			opends_batch_destroy(batch);
 			return 1;
 		}
 	}
 
-	opends_batch_io_destroy(batch);
+	opends_batch_destroy(batch);
 
 	if (memcmp(wbuf, rbuf, BUF_SIZE) != 0) {
 		fprintf(stderr, "batch read/write mismatch\n");
@@ -194,7 +192,7 @@ test_stream_io(opends_handle_t fh, char *wbuf, char *rbuf)
 	ssize_t bytes = 0;
 
 	if (check(opends_stream_write(fh, wbuf, &size, &file_off, &buf_off,
-	                             &bytes, stream),
+	                              &bytes, stream),
 	          "stream_write"))
 		return 1;
 	if (bytes != BUF_SIZE) {
@@ -207,7 +205,7 @@ test_stream_io(opends_handle_t fh, char *wbuf, char *rbuf)
 	bytes = 0;
 
 	if (check(opends_stream_read(fh, rbuf, &size, &file_off, &buf_off,
-	                            &bytes, stream),
+	                             &bytes, stream),
 	          "stream_read"))
 		return 1;
 	if (bytes != BUF_SIZE) {

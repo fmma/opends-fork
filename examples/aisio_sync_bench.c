@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * aisio_sync_bench - Thread-count sweep for the synchronous opends_read
+ * aisio_sync_bench - Thread-count sweep for the synchronous opends_sync_read
  * path, the counterpart of aisio_async_bench for the thread-pool model:
  * N threads each keep one blocking read in flight, which is how the
  * NIXL plugin drives the sync API today.
@@ -58,7 +58,8 @@ sync_worker_fn(void *arg)
 	cuCtxSetCurrent(w->cuctx);
 
 	for (uint64_t i = 0; i < w->nops; i++) {
-		ssize_t n = opends_read(w->fh, w->buf, w->block, (off_t)off, 0);
+		ssize_t n = opends_sync_read(w->fh, w->buf, w->block,
+		                             (off_t)off, 0);
 
 		if (n != (ssize_t)w->block)
 			w->errors++;

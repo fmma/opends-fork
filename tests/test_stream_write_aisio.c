@@ -14,20 +14,22 @@
 #include <unistd.h>
 
 static ssize_t
-stream_submit_write(struct write_homi_env *e, void *gpu, size_t size, off_t foff)
+stream_submit_write(struct write_homi_env *e, void *gpu, size_t size,
+                    off_t foff)
 {
 	size_t sz = size;
 	off_t fo = foff;
 	off_t bo = 0;
 	ssize_t bytes = -1;
 	opends_error_t err = opends_stream_write(e->fh, gpu, &sz, &fo, &bo,
-	                                        &bytes, e->stream);
+	                                         &bytes, e->stream);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  stream_write submit: %s\n",
 		        opends_op_status_error(err.err));
 		return -1;
 	}
-	if (stream_test_stream_sync_timeout(e->stream, 10.0, "stream_write") != 0)
+	if (stream_test_stream_sync_timeout(e->stream, 10.0, "stream_write") !=
+	    0)
 		return -1;
 	return bytes;
 }

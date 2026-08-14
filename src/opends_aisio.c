@@ -95,7 +95,6 @@ struct opends_stream {
 enum file_op_mode {
 	FILE_OP_STREAM,
 	FILE_OP_ASYNC,
-	FILE_OP_BATCH,
 };
 
 struct file_op_stream {
@@ -105,11 +104,6 @@ struct file_op_stream {
 	ssize_t *bytes_read_p;
 	struct opends_stream *opends_stream;
 	uint32_t seq;
-};
-
-struct file_op_batch {
-	opends_io_params_t *iocbp;
-	unsigned nr;
 };
 
 struct file_op_async {
@@ -134,7 +128,6 @@ struct file_op {
 	void *tail_bounce;
 	union {
 		struct file_op_stream stream;
-		struct file_op_batch batch;
 		struct file_op_async async;
 	} u;
 };
@@ -612,7 +605,7 @@ submit_tail_read(struct io_worker *w, struct file_op *op, void *bounce_buf,
  * completion path. */
 static int
 submit_async_tail(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
-               uint64_t cur_slba, size_t nbytes)
+                  uint64_t cur_slba, size_t nbytes)
 {
 	if (!op->tail_bounce)
 		op->tail_bounce = buf_alloc_locked(w->drv, NVME_PRP_PAGE);
@@ -715,8 +708,8 @@ start_read_op(struct io_worker *w, struct file_op *op)
 				trc = submit_stream_tail(w, op, abs_dst,
 				                         cur_slba, tail_bytes);
 			else
-				trc = submit_async_tail(w, op, abs_dst, cur_slba,
-				                     tail_bytes);
+				trc = submit_async_tail(w, op, abs_dst,
+				                        cur_slba, tail_bytes);
 			if (trc < 0)
 				goto out;
 		}
@@ -778,7 +771,8 @@ dispatch_write(struct io_worker *w, struct file_op *op)
 	size_t size;
 	off_t file_offset;
 	if (op->mode == FILE_OP_STREAM) {
-		src = (const uint8_t *)op->buf_base + *op->u.stream.buf_offset_p;
+		src = (const uint8_t *)op->buf_base +
+		      *op->u.stream.buf_offset_p;
 		size = *op->u.stream.size_p;
 		file_offset = *op->u.stream.file_offset_p;
 	} else {
@@ -873,7 +867,6 @@ io_thread_main(void *arg)
 					if (poll_stream_pending(w, op))
 						busy = true;
 					break;
-				case FILE_OP_BATCH: break;
 				}
 				break;
 			case FILE_OP_IN_FLIGHT: reap_in_flight(op); break;
@@ -1453,10 +1446,10 @@ opends_buf_deregister(const void *buf_base)
 /* ------------------------------------------------------------------ */
 
 static opends_error_t submit_async_op(struct driver *d, bool is_write,
-                                   opends_handle_t fh, void *buf_base,
-                                   size_t size, off_t file_offset,
-                                   off_t buf_offset,
-                                   opends_async_future_t *future);
+                                      opends_handle_t fh, void *buf_base,
+                                      size_t size, off_t file_offset,
+                                      off_t buf_offset,
+                                      opends_async_future_t *future);
 
 /* The sync calls are the async submission awaited in place. The future
  * lives on this frame, so the result never round-trips through the
@@ -1468,7 +1461,7 @@ submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
 	opends_async_future_t future;
 
 	opends_error_t err = submit_async_op(d, is_write, fh, buf_base, size,
-	                                  file_offset, buf_offset, &future);
+	                                     file_offset, buf_offset, &future);
 	if (err.err != OPENDS_SUCCESS)
 		return -(ssize_t)err.err;
 
@@ -1481,23 +1474,23 @@ submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
 }
 
 ssize_t
-opends_read(opends_handle_t fh, void *buf_base, size_t size, off_t file_offset,
-            off_t buf_offset)
+opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
+                 off_t file_offset, off_t buf_offset)
 {
 	return submit_sync_op(drv, false, fh, buf_base, size, file_offset,
 	                      buf_offset);
 }
 
 ssize_t
-opends_write(opends_handle_t fh, const void *buf_base, size_t size,
-             off_t file_offset, off_t buf_offset)
+opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
+                  off_t file_offset, off_t buf_offset)
 {
 	return submit_sync_op(drv, true, fh, (void *)buf_base, size,
 	                      file_offset, buf_offset);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Stream-based async I/O                                            */
+/*  Stream-ordered I/O                                                */
 /* ------------------------------------------------------------------ */
 
 static opends_error_t
@@ -1512,8 +1505,8 @@ classify_accel_failure(struct driver *d, int accel_rc)
 
 static opends_error_t
 submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
-                void *buf_base, size_t *size_p, off_t *file_offset_p,
-                off_t *buf_offset_p, ssize_t *bytes_p, opends_stream_t stream)
+                 void *buf_base, size_t *size_p, off_t *file_offset_p,
+                 off_t *buf_offset_p, ssize_t *bytes_p, opends_stream_t stream)
 {
 	if (!d)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
@@ -1609,20 +1602,20 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 
 opends_error_t
 opends_stream_read(opends_handle_t fh, void *buf_base, size_t *size_p,
-                  off_t *file_offset_p, off_t *buf_offset_p,
-                  ssize_t *bytes_read_p, opends_stream_t stream)
+                   off_t *file_offset_p, off_t *buf_offset_p,
+                   ssize_t *bytes_read_p, opends_stream_t stream)
 {
 	return submit_stream_op(drv, false, fh, buf_base, size_p, file_offset_p,
-	                       buf_offset_p, bytes_read_p, stream);
+	                        buf_offset_p, bytes_read_p, stream);
 }
 
 opends_error_t
 opends_stream_write(opends_handle_t fh, void *buf_base, size_t *size_p,
-                   off_t *file_offset_p, off_t *buf_offset_p,
-                   ssize_t *bytes_written_p, opends_stream_t stream)
+                    off_t *file_offset_p, off_t *buf_offset_p,
+                    ssize_t *bytes_written_p, opends_stream_t stream)
 {
 	return submit_stream_op(drv, true, fh, buf_base, size_p, file_offset_p,
-	                       buf_offset_p, bytes_written_p, stream);
+	                        buf_offset_p, bytes_written_p, stream);
 }
 
 opends_error_t
@@ -1684,13 +1677,13 @@ opends_stream_deregister(opends_stream_t stream)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Async I/O                                                  */
+/*  Async I/O                                                         */
 /* ------------------------------------------------------------------ */
 
 static opends_error_t
 submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
-             void *buf_base, size_t size, off_t file_offset, off_t buf_offset,
-             opends_async_future_t *future)
+                void *buf_base, size_t size, off_t file_offset,
+                off_t buf_offset, opends_async_future_t *future)
 {
 	if (!d)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
@@ -1724,18 +1717,20 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 
 opends_error_t
 opends_async_read(opends_handle_t fh, void *buf_base, size_t size,
-               off_t file_offset, off_t buf_offset, opends_async_future_t *future)
+                  off_t file_offset, off_t buf_offset,
+                  opends_async_future_t *future)
 {
 	return submit_async_op(drv, false, fh, buf_base, size, file_offset,
-	                    buf_offset, future);
+	                       buf_offset, future);
 }
 
 opends_error_t
 opends_async_write(opends_handle_t fh, const void *buf_base, size_t size,
-                off_t file_offset, off_t buf_offset, opends_async_future_t *future)
+                   off_t file_offset, off_t buf_offset,
+                   opends_async_future_t *future)
 {
-	return submit_async_op(drv, true, fh, (void *)buf_base, size, file_offset,
-	                    buf_offset, future);
+	return submit_async_op(drv, true, fh, (void *)buf_base, size,
+	                       file_offset, buf_offset, future);
 }
 
 ssize_t
@@ -1755,7 +1750,7 @@ opends_async_await(opends_async_future_t *future)
 /* ------------------------------------------------------------------ */
 
 opends_error_t
-opends_batch_io_setup(opends_batch_handle_t *batch_idp, unsigned nr)
+opends_batch_setup(opends_batch_handle_t *batch_idp, unsigned nr)
 {
 	(void)batch_idp;
 	(void)nr;
@@ -1763,8 +1758,8 @@ opends_batch_io_setup(opends_batch_handle_t *batch_idp, unsigned nr)
 }
 
 opends_error_t
-opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
-                       opends_io_params_t *iocbp, unsigned int flags)
+opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
+                    opends_io_params_t *iocbp, unsigned int flags)
 {
 	(void)batch_idp;
 	(void)nr;
@@ -1774,9 +1769,9 @@ opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
 }
 
 opends_error_t
-opends_batch_io_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
-                           unsigned *nr, opends_io_events_t *iocbp,
-                           struct timespec *timeout)
+opends_batch_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
+                        unsigned *nr, opends_io_events_t *iocbp,
+                        struct timespec *timeout)
 {
 	(void)batch_idp;
 	(void)min_nr;
@@ -1787,14 +1782,14 @@ opends_batch_io_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
 }
 
 opends_error_t
-opends_batch_io_cancel(opends_batch_handle_t batch_idp)
+opends_batch_cancel(opends_batch_handle_t batch_idp)
 {
 	(void)batch_idp;
 	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
 }
 
 void
-opends_batch_io_destroy(opends_batch_handle_t batch_idp)
+opends_batch_destroy(opends_batch_handle_t batch_idp)
 {
 	(void)batch_idp;
 }

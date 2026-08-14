@@ -7,10 +7,10 @@
  * awaiting the oldest future and resubmitting into its slot, each
  * thread striping a disjoint interleaved range. Reports aggregate
  * throughput and per-op latency. Compare qd=1 against the synchronous
- * opends_read floor and higher depths against the device limit.
+ * opends_sync_read floor and higher depths against the device limit.
  *
  * Usage: aisio_async_bench <file-on-mount> <block_bytes> <qd> <total_mib>
- *                       [threads]
+ *                          [threads]
  *
  * Requires the HOMI/qublk stack up and OPENDS_HOMI_DEV /
  * OPENDS_HOMI_SOCKET / OPENDS_HOMI_MNT exported, like the aisio tests.
@@ -68,7 +68,7 @@ async_worker_fn(void *arg)
 
 	while (submitted < w->qd && submitted < w->nops) {
 		err = opends_async_read(w->fh, w->bufs[submitted], w->block,
-		                     (off_t)off, 0, &w->futures[submitted]);
+		                        (off_t)off, 0, &w->futures[submitted]);
 		if (err.err != OPENDS_SUCCESS) {
 			fprintf(stderr, "submit: %s\n",
 			        opends_op_status_error(err.err));
@@ -91,7 +91,8 @@ async_worker_fn(void *arg)
 
 		if (!w->failed && submitted < w->nops) {
 			err = opends_async_read(w->fh, w->bufs[slot], w->block,
-			                     (off_t)off, 0, &w->futures[slot]);
+			                        (off_t)off, 0,
+			                        &w->futures[slot]);
 			if (err.err != OPENDS_SUCCESS) {
 				fprintf(stderr, "resubmit: %s\n",
 				        opends_op_status_error(err.err));

@@ -41,7 +41,7 @@ struct aisio_homi {
  * `flags` is passed to open(2); read tests use O_RDONLY, write tests use
  * O_RDWR (optionally O_CREAT|O_TRUNC for a fresh file). Extents are resolved
  * per I/O (not at registration), so a freshly created file just works: the
- * re-index the first opends_write performs makes its blocks resolvable.
+ * re-index the first opends_sync_write performs makes its blocks resolvable.
  */
 static inline int
 aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)

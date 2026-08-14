@@ -1,6 +1,6 @@
 # OpenDS
 
-Open source accelerator direct storage. Vendor-neutral, drop-in replacement for
+Open source accelerator direct storage. Vendor-neutral API modeled on
 NVIDIA's cuFile (GDS), powered by aisio for high-throughput PCIe P2P DMA from
 NVMe straight into GPU memory.
 
@@ -55,6 +55,20 @@ _Commit `7a61a12` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU
 
 ## opends API
 
+The API follows cuFile's structure and parameter conventions, but the I/O
+families are named by what they do rather than by what cuFile calls them:
+
+| opends family     | cuFile equivalent                    |
+|-------------------|--------------------------------------|
+| `opends_sync_*`   | `cuFileRead`/`cuFileWrite`           |
+| `opends_stream_*` | `cuFileReadAsync`/`cuFileWriteAsync` |
+| `opends_batch_*`  | `cuFileBatchIO*`                     |
+| `opends_async_*`  | none                                 |
+
+Mind the false friend when porting: cuFile's "Async" calls are stream-ordered
+I/O and map to `opends_stream_*`. The `opends_async_*` family is per-operation
+submit/await and has no cuFile counterpart.
+
 ### Threading and context
 
 I/O submission and registration (handles, buffers, streams) are thread-safe once
@@ -100,7 +114,7 @@ int main(void)
     cudaMalloc(&buf, size);
     opends_buf_register(buf, size, 0);
 
-    ssize_t nread = opends_read(fh, buf, size, 0, 0);
+    ssize_t nread = opends_sync_read(fh, buf, size, 0, 0);
     printf("read %zd bytes\n", nread);
 
     opends_buf_deregister(buf);
@@ -115,20 +129,21 @@ int main(void)
 
 ### Buffer offset
 
-The last parameter to `opends_read` is a byte offset into the destination
+The last parameter to `opends_sync_read` is a byte offset into the destination
 buffer. It mirrors cuFile's signature: rather than doing arithmetic on a device
 pointer from host code, pass the registered base pointer plus an offset and let
 the backend apply it within the mapping it owns.
 
 ```c
 /* Read two 4 KiB blocks into different regions of a device buffer. */
-opends_read(fh, dev_buf, 4096, 0,    0);     /* -> dev_buf[0..4095]    */
-opends_read(fh, dev_buf, 4096, 4096, 4096);  /* -> dev_buf[4096..8191] */
+opends_sync_read(fh, dev_buf, 4096, 0,    0);     /* -> dev_buf[0..4095]    */
+opends_sync_read(fh, dev_buf, 4096, 4096, 4096);  /* -> dev_buf[4096..8191] */
 ```
 
 ### Async I/O
 
-`opends_async_*` is async without streams (not part of the cuFile surface).
+`opends_async_*` is per-operation async without streams (no cuFile
+counterpart).
 `opends_async_read` and `opends_async_write` are the synchronous calls with
 completion reaping deferred: submit returns immediately after initializing
 the caller-provided future, and `opends_async_await` blocks until that
@@ -164,7 +179,7 @@ if (err.err != OPENDS_SUCCESS) {
     fprintf(stderr, "%s\n", opends_op_status_error(err.err));
 }
 
-ssize_t n = opends_read(fh, buf, size, offset, 0);
+ssize_t n = opends_sync_read(fh, buf, size, offset, 0);
 if (n < 0) {
     fprintf(stderr, "read: %s\n",
             opends_op_status_error((opends_op_error_t)-n));
@@ -320,7 +335,7 @@ last one: a hex mask whose CPUs the aisio IO workers are pinned to round-robin
 (`0x0` or unset leaves placement to the scheduler). Outside the sweep,
 `OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` declares that every read is LBA-aligned:
 reads whose span ends off an LBA boundary fail with `OPENDS_INVALID_VALUE`,
-and the async path stops enqueueing the per-read bounce kernel.
+and the stream path stops enqueueing the per-read bounce kernel.
 `OPENDS_AISIO_IDLE_SPIN_US` sets how long an idle IO worker keeps yielding
 after its last activity before falling back to a 100 us nap (default 200,
 `0` naps immediately); ops arriving within the window skip the nap latency.

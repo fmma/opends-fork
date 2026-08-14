@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * test_sync_read.h - Backend-agnostic unit tests for synchronous
- * opends_read.
+ * opends_sync_read.
  *
  * Include from a backend-specific source file that provides main()
  * and initializes a struct test_env with buffer access callbacks.
@@ -62,9 +62,10 @@ verify_read(struct test_env *env, void *buf, size_t alloc_size, size_t size,
 {
 	env->buf_zero(buf, alloc_size);
 
-	ssize_t n = opends_read(env->fh, buf, size, file_offset, buf_offset);
+	ssize_t n =
+	        opends_sync_read(env->fh, buf, size, file_offset, buf_offset);
 	if (n < 0) {
-		fprintf(stderr, "  %s: opends_read: %s\n", label,
+		fprintf(stderr, "  %s: opends_sync_read: %s\n", label,
 		        opends_op_status_error((opends_op_error_t)(-n)));
 		return 1;
 	}
@@ -213,7 +214,7 @@ test_read_at_eof(struct test_env *env)
 		return 1;
 
 	env->buf_zero(buf, PAGE);
-	ssize_t n = opends_read(env->fh, buf, PAGE, (off_t)FILE_SIZE, 0);
+	ssize_t n = opends_sync_read(env->fh, buf, PAGE, (off_t)FILE_SIZE, 0);
 	if (n < 0) {
 		fprintf(stderr, "  at_eof: %s\n",
 		        opends_op_status_error((opends_op_error_t)(-n)));
@@ -238,8 +239,8 @@ test_read_beyond_eof(struct test_env *env)
 		return 1;
 
 	env->buf_zero(buf, PAGE);
-	ssize_t n =
-	        opends_read(env->fh, buf, PAGE, (off_t)(FILE_SIZE + PAGE), 0);
+	ssize_t n = opends_sync_read(env->fh, buf, PAGE,
+	                             (off_t)(FILE_SIZE + PAGE), 0);
 	if (n < 0) {
 		fprintf(stderr, "  beyond_eof: %s\n",
 		        opends_op_status_error((opends_op_error_t)(-n)));
@@ -262,7 +263,7 @@ test_read_zero_size(struct test_env *env)
 	if (!buf)
 		return 1;
 
-	ssize_t n = opends_read(env->fh, buf, 0, 0, 0);
+	ssize_t n = opends_sync_read(env->fh, buf, 0, 0, 0);
 
 	env->buf_release(buf);
 	if (n != 0) {
@@ -302,7 +303,7 @@ test_read_buf_offset_boundaries(struct test_env *env)
 
 	env->buf_zero(buf, alloc);
 
-	ssize_t n = opends_read(env->fh, buf, PAGE, 0, boff);
+	ssize_t n = opends_sync_read(env->fh, buf, PAGE, 0, boff);
 	if (n != (ssize_t)PAGE) {
 		fprintf(stderr, "  buf_offset_bounds: got %zd bytes\n", n);
 		env->buf_release(buf);
@@ -379,7 +380,7 @@ test_read_overlapping_regions(struct test_env *env)
 	}
 
 	env->buf_zero(buf, size);
-	ssize_t n1 = opends_read(env->fh, buf, size, 0, 0);
+	ssize_t n1 = opends_sync_read(env->fh, buf, size, 0, 0);
 	if (n1 != (ssize_t)size) {
 		fprintf(stderr, "  overlap: read A got %zd\n", n1);
 		free(host_a);
@@ -390,7 +391,7 @@ test_read_overlapping_regions(struct test_env *env)
 	env->buf_to_host(host_a, buf, size);
 
 	env->buf_zero(buf, size);
-	ssize_t n2 = opends_read(env->fh, buf, size, PAGE, 0);
+	ssize_t n2 = opends_sync_read(env->fh, buf, size, PAGE, 0);
 	if (n2 != (ssize_t)size) {
 		fprintf(stderr, "  overlap: read B got %zd\n", n2);
 		free(host_a);
@@ -431,11 +432,11 @@ test_read_repeated(struct test_env *env)
 	}
 
 	env->buf_zero(buf, PAGE);
-	ssize_t n1 = opends_read(env->fh, buf, PAGE, 0, 0);
+	ssize_t n1 = opends_sync_read(env->fh, buf, PAGE, 0, 0);
 	env->buf_to_host(host_a, buf, PAGE);
 
 	env->buf_zero(buf, PAGE);
-	ssize_t n2 = opends_read(env->fh, buf, PAGE, 0, 0);
+	ssize_t n2 = opends_sync_read(env->fh, buf, PAGE, 0, 0);
 	env->buf_to_host(host_b, buf, PAGE);
 
 	int rc = 0;

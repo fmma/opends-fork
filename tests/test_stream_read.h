@@ -37,7 +37,7 @@
  */
 static int
 stream_test_stream_sync_timeout(CUstream stream, double timeout_s,
-                               const char *label)
+                                const char *label)
 {
 	struct timespec t0, now;
 	clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -95,8 +95,8 @@ stream_expected_bytes(char *dst, off_t offset, size_t size)
 
 static int
 verify_stream_read(struct stream_test_env *env, void *buf, size_t alloc_size,
-                  size_t size, off_t file_offset, off_t buf_offset,
-                  const char *label)
+                   size_t size, off_t file_offset, off_t buf_offset,
+                   const char *label)
 {
 	env->buf_zero(buf, alloc_size);
 
@@ -106,7 +106,7 @@ verify_stream_read(struct stream_test_env *env, void *buf, size_t alloc_size,
 	ssize_t bytes_read = 0;
 
 	opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff, &boff,
-	                                       &bytes_read, env->stream);
+	                                        &bytes_read, env->stream);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  %s: opends_stream_read: %s\n", label,
 		        opends_op_status_error(err.err));
@@ -191,7 +191,7 @@ stream_test_at_offset(struct stream_test_env *env)
 	if (!buf)
 		return 1;
 	int rc = verify_stream_read(env, buf, PAGE, PAGE, 2 * PAGE, 0,
-	                           "at_offset");
+	                            "at_offset");
 	env->buf_release(buf);
 	return rc;
 }
@@ -203,7 +203,7 @@ stream_test_full_file(struct stream_test_env *env)
 	if (!buf)
 		return 1;
 	int rc = verify_stream_read(env, buf, FILE_SIZE, FILE_SIZE, 0, 0,
-	                           "full_file");
+	                            "full_file");
 	env->buf_release(buf);
 	return rc;
 }
@@ -251,8 +251,8 @@ stream_test_buf_offset(struct stream_test_env *env)
 	void *buf = env->buf_acquire(alloc);
 	if (!buf)
 		return 1;
-	int rc =
-	        verify_stream_read(env, buf, alloc, PAGE, 0, PAGE, "buf_offset");
+	int rc = verify_stream_read(env, buf, alloc, PAGE, 0, PAGE,
+	                            "buf_offset");
 	env->buf_release(buf);
 	return rc;
 }
@@ -284,7 +284,7 @@ stream_test_offset_size_sweep(struct stream_test_env *env)
 		snprintf(label, sizeof(label), "sweep[off=%ld,sz=%zu]",
 		         (long)cases[i].offset, cases[i].size);
 		rc = verify_stream_read(env, buf, max_size, cases[i].size,
-		                       cases[i].offset, 0, label);
+		                        cases[i].offset, 0, label);
 		if (rc)
 			break;
 	}
@@ -320,11 +320,11 @@ stream_test_stream_ordering(struct stream_test_env *env)
 
 	opends_error_t err;
 	err = opends_stream_read(env->fh, buf_a, &sz_a, &off_a, &boff, &br_a,
-	                        env->stream);
+	                         env->stream);
 	if (err.err != OPENDS_SUCCESS)
 		goto fail;
 	err = opends_stream_read(env->fh, buf_b, &sz_b, &off_b, &boff, &br_b,
-	                        env->stream);
+	                         env->stream);
 	if (err.err != OPENDS_SUCCESS)
 		goto fail;
 
@@ -515,7 +515,7 @@ stream_test_concurrent_short_reads(struct stream_test_env *env)
 		char label[64];
 		snprintf(label, sizeof(label), "concurrent_short[%d]", i);
 		if (stream_test_stream_sync_timeout(env->extra_streams[i], 20.0,
-		                                   label) != 0)
+		                                    label) != 0)
 			goto out_free_bufs;
 	}
 
@@ -687,7 +687,7 @@ stream_test_deferred_eval(struct stream_test_env *env)
 	}
 
 	opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff, &boff,
-	                                       &br, env->stream);
+	                                        &br, env->stream);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  deferred_eval: submit: %s\n",
 		        opends_op_status_error(err.err));
@@ -891,8 +891,8 @@ stream_test_stream_consumer(struct stream_test_env *env)
 		off_t foff = (off_t)((i % FILE_PAGES) * PAGE);
 		off_t boff = 0;
 		ssize_t br = 0;
-		opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff,
-		                                       &boff, &br, env->stream);
+		opends_error_t err = opends_stream_read(
+		        env->fh, buf, &sz, &foff, &boff, &br, env->stream);
 		if (err.err != OPENDS_SUCCESS) {
 			fprintf(stderr, "  stream_consumer[%d]: submit: %s\n",
 			        i, opends_op_status_error(err.err));
@@ -962,7 +962,7 @@ stream_test_unaligned_rejected(struct stream_test_env *env)
 	ssize_t bytes_read = 0;
 
 	opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff, &boff,
-	                                       &bytes_read, env->stream);
+	                                        &bytes_read, env->stream);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  unaligned_rejected: submit: %s\n",
 		        opends_op_status_error(err.err));
@@ -970,7 +970,7 @@ stream_test_unaligned_rejected(struct stream_test_env *env)
 	}
 
 	if (stream_test_stream_sync_timeout(env->stream, 20.0,
-	                                   "unaligned_rejected") != 0)
+	                                    "unaligned_rejected") != 0)
 		goto out;
 
 	if (bytes_read != -(ssize_t)OPENDS_INVALID_VALUE) {
@@ -982,7 +982,7 @@ stream_test_unaligned_rejected(struct stream_test_env *env)
 	}
 
 	rc = verify_stream_read(env, buf, PAGE, PAGE, 0, 0,
-	                       "unaligned_rejected/aligned_after");
+	                        "unaligned_rejected/aligned_after");
 out:
 	env->buf_release(buf);
 	return rc;
@@ -1019,7 +1019,7 @@ static const struct stream_test_entry stream_read_tests[] = {
 };
 /* clang-format on */
 
-#define NSTREAM_READ_TESTS                                                      \
+#define NSTREAM_READ_TESTS                                                     \
 	(sizeof(stream_read_tests) / sizeof(stream_read_tests[0]))
 
 static int
