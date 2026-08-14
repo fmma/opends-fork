@@ -121,6 +121,10 @@ test_batch_io(opends_handle_t fh, char *wbuf, char *rbuf)
 
 	fill_pattern(wbuf, BUF_SIZE, 0x42);
 
+	/* Operations in a batch are unordered, so the write and the
+	 * read-back go in separate submits with a get_status between
+	 * them. Each get_status must deliver its completion exactly
+	 * once. */
 	opends_io_params_t params[2] = {
 	        {
 	                .mode = OPENDS_BATCH,
@@ -138,30 +142,28 @@ test_batch_io(opends_handle_t fh, char *wbuf, char *rbuf)
 	        },
 	};
 
-	if (check(opends_batch_submit(batch, 2, params, 0), "batch_submit")) {
-		opends_batch_destroy(batch);
-		return 1;
-	}
+	for (unsigned i = 0; i < 2; i++) {
+		if (check(opends_batch_submit(batch, 1, &params[i], 0),
+		          "batch_submit")) {
+			opends_batch_destroy(batch);
+			return 1;
+		}
 
-	opends_io_events_t events[2];
-	unsigned nr_events = 2;
-	if (check(opends_batch_get_status(batch, 2, &nr_events, events, NULL),
-	          "batch_get_status")) {
-		opends_batch_destroy(batch);
-		return 1;
-	}
+		opends_io_events_t events[2];
+		unsigned nr_events = 2;
+		if (check(opends_batch_get_status(batch, 1, &nr_events, events,
+		                                  NULL),
+		          "batch_get_status")) {
+			opends_batch_destroy(batch);
+			return 1;
+		}
 
-	if (nr_events != 2) {
-		fprintf(stderr, "batch events: %u, expected 2\n", nr_events);
-		opends_batch_destroy(batch);
-		return 1;
-	}
-
-	for (unsigned i = 0; i < nr_events; i++) {
-		if (events[i].status != OPENDS_COMPLETE ||
-		    events[i].ret != BUF_SIZE) {
-			fprintf(stderr, "batch event %u: status=%d ret=%zu\n",
-			        i, events[i].status, events[i].ret);
+		if (nr_events != 1 || events[0].cookie != params[i].cookie ||
+		    events[0].status != OPENDS_COMPLETE ||
+		    events[0].ret != BUF_SIZE) {
+			fprintf(stderr,
+			        "batch event %u: nr=%u status=%d ret=%zu\n", i,
+			        nr_events, events[0].status, events[0].ret);
 			opends_batch_destroy(batch);
 			return 1;
 		}

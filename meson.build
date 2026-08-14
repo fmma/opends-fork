@@ -16,6 +16,7 @@ install_headers(public_headers)
 libopends_ref = shared_library('opends_ref',
   'src/opends_common.c',
   'src/opends_ref.c',
+  'src/opends_batch_async.c',
   include_directories : opends_inc,
   install : true,
 )
@@ -114,6 +115,7 @@ if aisio_enabled
   libopends_aisio = shared_library('opends_aisio',
     'src/opends_common.c',
     'src/opends_aisio.c',
+    'src/opends_batch_async.c',
     accel_src,
     accel_kernel_src,
     include_directories : aisio_inc_dirs,

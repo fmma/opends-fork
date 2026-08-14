@@ -13,7 +13,8 @@
  * Writes go through the kernel-mounted filesystem: the source is staged to a
  * host buffer and pwritten via the fd, so XFS over qublk allocates blocks and
  * writes the data; the file's extents are then re-resolved for later P2P reads.
- * Batch paths report OPENDS_ASYNC_NOT_SUPPORTED for now.
+ * The batch family comes from the shared batch-on-async implementation in
+ * opends_batch_async.c.
  */
 
 #define _GNU_SOURCE
@@ -1737,51 +1738,3 @@ opends_stream_deregister(opends_stream_t stream)
 	return opends_ok();
 }
 
-/* ------------------------------------------------------------------ */
-/*  Batch I/O (not implemented)                                       */
-/* ------------------------------------------------------------------ */
-
-opends_error_t
-opends_batch_setup(opends_batch_handle_t *batch_idp, unsigned nr)
-{
-	(void)batch_idp;
-	(void)nr;
-	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
-}
-
-opends_error_t
-opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
-                    opends_io_params_t *iocbp, unsigned int flags)
-{
-	(void)batch_idp;
-	(void)nr;
-	(void)iocbp;
-	(void)flags;
-	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
-}
-
-opends_error_t
-opends_batch_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
-                        unsigned *nr, opends_io_events_t *iocbp,
-                        struct timespec *timeout)
-{
-	(void)batch_idp;
-	(void)min_nr;
-	(void)nr;
-	(void)iocbp;
-	(void)timeout;
-	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
-}
-
-opends_error_t
-opends_batch_cancel(opends_batch_handle_t batch_idp)
-{
-	(void)batch_idp;
-	return opends_err(OPENDS_ASYNC_NOT_SUPPORTED);
-}
-
-void
-opends_batch_destroy(opends_batch_handle_t batch_idp)
-{
-	(void)batch_idp;
-}
