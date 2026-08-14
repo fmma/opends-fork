@@ -249,9 +249,13 @@ opends_error_t opends_stream_deregister(opends_stream_t stream);
 
 /*
  * Batch I/O. Submit multiple operations in a single call and poll for
- * completion, useful for overlapping I/O with computation. The reference
- * backend executes operations synchronously on submit and marks them
- * complete immediately.
+ * completion, useful for overlapping I/O with computation. Operations
+ * in a batch are independent and complete in any order; ordering
+ * between two operations requires separate submits with a get_status
+ * in between. opends_batch_get_status reports each completion exactly
+ * once: it returns once at least min_nr undelivered completions are
+ * available or the timeout expires (NULL waits without limit), and
+ * delivers up to *nr of them.
  */
 typedef enum opends_opcode {
 	OPENDS_READ = 0,
