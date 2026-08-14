@@ -18,9 +18,6 @@
  * genuinely asynchronous per-operation I/O and has no cuFile
  * counterpart.
  *
- * The reference backend (libopends_ref) uses POSIX pread/pwrite on
- * host buffers and has no external dependencies.
- *
  * Deviations from cuFile:
  *
  *   - Linux only. File handles are plain file descriptors; the
@@ -170,32 +167,27 @@ void opends_free(void *buf);
  * Register an externally allocated buffer for use with opends_sync_read
  * and opends_sync_write. The caller retains ownership of the allocation;
  * deregister before freeing. flags is forwarded to the backend (e.g.
- * cuFileBufRegister flags for gds); the ref and aisio backends ignore
- * it.
+ * cuFileBufRegister flags for gds).
  */
 opends_error_t opends_buf_register(const void *buf_base, size_t size,
                                    int flags);
 opends_error_t opends_buf_deregister(const void *buf_base);
 
 /*
- * Asynchronous I/O. No cuFile counterpart; cuFile's "Async" calls are
- * the stream-ordered API below.
+ * Asynchronous I/O. The primitive per-operation form:
+ * opends_async_read and opends_async_write return without waiting for
+ * completion, which the backend delivers through the caller-provided
+ * future, and opends_async_await blocks until the operation completes
+ * and returns its byte count (or a negated opends_op_error_t on
+ * failure).
  *
- * opends_async_read and opends_async_write are the synchronous calls with
- * completion reaping deferred: submit returns immediately after
- * initializing the caller-provided future, and opends_async_await blocks
- * until that operation completes and returns its byte count (or a
- * negated opends_op_error_t on failure).
- *
- * The caller owns the future storage; stack allocation is fine. The
- * backend writes the completion through it, so it must stay valid at
- * the same address from submit until awaited; do not copy or move a
- * future with its operation in flight. Awaiting an already completed
- * future again returns the same result; the storage may be reused for
- * a new submit after that. Operations may complete in any order;
- * awaiting in submission order is not required. Submit and await are
- * thread-safe. Submission resources are bounded internally; submit
- * applies backpressure rather than failing.
+ * The caller owns the future storage. The backend writes the
+ * completion through it, so it must stay valid at the same address
+ * from the read or write call until awaited. Awaiting an already
+ * completed future again returns the same result. Operations may
+ * complete and be awaited in any order. All three calls are
+ * thread-safe. In-flight operations are bounded internally, so the
+ * read and write calls apply backpressure rather than failing.
  */
 typedef struct opends_async_future {
 	unsigned done;  /* nonzero once the operation has completed */
@@ -228,13 +220,7 @@ ssize_t opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
  * associated with a stream (e.g. a CUDA stream) and complete in stream
  * order. The size, offset, and byte count parameters are pointers so
  * the values can be read at stream execution time rather than
- * submission time. The reference backend reads them immediately.
- *
- * Backend limits (aisio): at most 8192 streams may be registered at once,
- * and at most 1024 stream ops may be in flight across all streams. Exceeding
- * the stream limit returns OPENDS_INTERNAL_ERROR from opends_stream_register;
- * the in-flight limit applies back-pressure rather than failing
- * (opends_stream_read spins until a slot frees).
+ * submission time.
  */
 typedef void *opends_stream_t;
 
