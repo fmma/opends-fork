@@ -1,8 +1,8 @@
 /*
- * test_mt_read.h - Backend-agnostic multithreaded opends_read test.
+ * test_mt_read.h - Backend-agnostic multithreaded opends_sync_read test.
  *
  * Include from a backend-specific source file that provides main().
- * N threads start behind a barrier and hammer opends_read on a shared
+ * N threads start behind a barrier and hammer opends_sync_read on a shared
  * handle, each with its own buffer, verifying every read against the
  * in-memory pattern from read_pattern.h. Each thread walks the case
  * table from a different starting index so concurrent reads cover
@@ -85,7 +85,7 @@ mt_read_thread_main(void *arg)
 		off_t off = mt_read_cases[ci].offset;
 		size_t size = mt_read_cases[ci].size;
 
-		ssize_t n = opends_read(env->fh, buf, size, off, 0);
+		ssize_t n = opends_sync_read(env->fh, buf, size, off, 0);
 		if (n != (ssize_t)size) {
 			fprintf(stderr,
 			        "  thread %d iter %d: read(off=%ld, size=%zu) "

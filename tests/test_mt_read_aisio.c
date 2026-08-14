@@ -29,7 +29,7 @@ main(int argc, char **argv)
 		return 1;
 
 	fprintf(stderr,
-	        "opends_read multithreaded test (aisio backend, HOMI)\n");
+	        "opends_sync_read multithreaded test (aisio backend, HOMI)\n");
 
 	struct mt_read_env env = {
 	        .fh = a.fh,

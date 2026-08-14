@@ -88,10 +88,10 @@ buf_register = _decl(
 buf_deregister = _decl("opends_buf_deregister", DsError, [c_void_p])
 
 read = _decl(
-    "opends_read", c_ssize_t, [c_void_p, c_void_p, c_size_t, c_long, c_long]
+    "opends_sync_read", c_ssize_t, [c_void_p, c_void_p, c_size_t, c_long, c_long]
 )
 write = _decl(
-    "opends_write", c_ssize_t, [c_void_p, c_void_p, c_size_t, c_long, c_long]
+    "opends_sync_write", c_ssize_t, [c_void_p, c_void_p, c_size_t, c_long, c_long]
 )
 
 op_status_error = _decl("opends_op_status_error", c_char_p, [c_int])

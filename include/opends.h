@@ -2,9 +2,21 @@
 /*
  * opends.h - Accelerator Direct Storage File I/O Interface
  *
- * Vendor-neutral API for direct storage access, structurally compatible
- * with NVIDIA's cuFile API. Applications written against cuFile can be
- * ported by renaming symbols.
+ * Vendor-neutral API for direct storage access, structurally modeled
+ * on NVIDIA's cuFile API. Symbol names diverge from cuFile on purpose:
+ * each I/O family is prefixed by what it does rather than by what
+ * cuFile calls it. Parameter conventions follow cuFile, so porting is
+ * a mechanical rename by this table:
+ *
+ *   cuFileRead/Write           -> opends_sync_read/write
+ *   cuFileReadAsync/WriteAsync -> opends_stream_read/write
+ *   cuFileBatchIO*             -> opends_batch_*
+ *   (no cuFile counterpart)    -> opends_async_read/write/await
+ *
+ * Mind the false friend: cuFile's "Async" calls are stream-ordered
+ * I/O and map to opends_stream_*. The opends_async_* family is
+ * genuinely asynchronous per-operation I/O and has no cuFile
+ * counterpart.
  *
  * The reference backend (libopends_ref) uses POSIX pread/pwrite on
  * host buffers and has no external dependencies.
@@ -140,14 +152,14 @@ opends_error_t opends_driver_set_max_direct_io_size(size_t max_direct_io_size);
 
 /*
  * File handle registration. Each file descriptor must be registered
- * before it can be used with opends_read/write. The file must be
+ * before it can be used with opends_sync_read/write. The file must be
  * opened with O_DIRECT. Linux only.
  */
 opends_error_t opends_handle_register(opends_handle_t *fh, int fd);
 void opends_handle_deregister(opends_handle_t fh);
 
 /*
- * Buffer allocation. Buffers used with opends_read/write must be
+ * Buffer allocation. Buffers used with opends_sync_read/write must be
  * either allocated through opends_alloc or registered with
  * opends_buf_register so the backend can set up DMA mappings.
  */
@@ -155,8 +167,8 @@ void *opends_alloc(size_t size);
 void opends_free(void *buf);
 
 /*
- * Register an externally allocated buffer for use with opends_read
- * and opends_write. The caller retains ownership of the allocation;
+ * Register an externally allocated buffer for use with opends_sync_read
+ * and opends_sync_write. The caller retains ownership of the allocation;
  * deregister before freeing. flags is forwarded to the backend (e.g.
  * cuFileBufRegister flags for gds); the ref and aisio backends ignore
  * it.
@@ -169,12 +181,13 @@ opends_error_t opends_buf_deregister(const void *buf_base);
  * Synchronous I/O. Returns byte count on success or a negated
  * opends_op_error_t on failure. The buf_offset parameter writes
  * into the buffer at an offset, useful for scatter reads into a
- * single allocation.
+ * single allocation. Equivalent to opends_async_read/write followed
+ * by opends_async_await on backends that implement the async API.
  */
-ssize_t opends_read(opends_handle_t fh, void *buf_base, size_t size,
-                    off_t file_offset, off_t buf_offset);
-ssize_t opends_write(opends_handle_t fh, const void *buf_base, size_t size,
-                     off_t file_offset, off_t buf_offset);
+ssize_t opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
+                         off_t file_offset, off_t buf_offset);
+ssize_t opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
+                          off_t file_offset, off_t buf_offset);
 
 /*
  * Batch I/O. Submit multiple operations in a single call and poll for
@@ -224,28 +237,28 @@ typedef struct opends_io_events {
 
 typedef void *opends_batch_handle_t;
 
-opends_error_t opends_batch_io_setup(opends_batch_handle_t *batch_idp,
-                                     unsigned nr);
-opends_error_t opends_batch_io_submit(opends_batch_handle_t batch_idp,
-                                      unsigned nr, opends_io_params_t *iocbp,
-                                      unsigned int flags);
+opends_error_t opends_batch_setup(opends_batch_handle_t *batch_idp,
+                                  unsigned nr);
+opends_error_t opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
+                                   opends_io_params_t *iocbp,
+                                   unsigned int flags);
 /* Poll for at least min_nr completions, returning up to *nr events. */
-opends_error_t opends_batch_io_get_status(opends_batch_handle_t batch_idp,
-                                          unsigned min_nr, unsigned *nr,
-                                          opends_io_events_t *iocbp,
-                                          struct timespec *timeout);
-opends_error_t opends_batch_io_cancel(opends_batch_handle_t batch_idp);
-void opends_batch_io_destroy(opends_batch_handle_t batch_idp);
+opends_error_t opends_batch_get_status(opends_batch_handle_t batch_idp,
+                                       unsigned min_nr, unsigned *nr,
+                                       opends_io_events_t *iocbp,
+                                       struct timespec *timeout);
+opends_error_t opends_batch_cancel(opends_batch_handle_t batch_idp);
+void opends_batch_destroy(opends_batch_handle_t batch_idp);
 
 /*
- * Stream-based async I/O. Operations are associated with a stream (e.g. a
- * CUDA stream) and complete asynchronously. The size, offset, and byte
- * count parameters are pointers so the values can be read at stream
- * execution time rather than submission time. The reference backend reads
- * them immediately.
+ * Stream-ordered I/O (cuFileReadAsync/WriteAsync). Operations are
+ * associated with a stream (e.g. a CUDA stream) and complete in stream
+ * order. The size, offset, and byte count parameters are pointers so
+ * the values can be read at stream execution time rather than
+ * submission time. The reference backend reads them immediately.
  *
  * Backend limits (aisio): at most 8192 streams may be registered at once,
- * and at most 1024 async ops may be in flight across all streams. Exceeding
+ * and at most 1024 stream ops may be in flight across all streams. Exceeding
  * the stream limit returns OPENDS_INTERNAL_ERROR from opends_stream_register;
  * the in-flight limit applies back-pressure rather than failing
  * (opends_stream_read spins until a slot frees).
@@ -265,7 +278,8 @@ opends_error_t opends_stream_register(opends_stream_t stream, unsigned flags);
 opends_error_t opends_stream_deregister(opends_stream_t stream);
 
 /*
- * Async I/O. Not part of the cuFile surface.
+ * Asynchronous I/O. No cuFile counterpart; cuFile's "Async" calls are
+ * the stream-ordered API above.
  *
  * opends_async_read and opends_async_write are the synchronous calls with
  * completion reaping deferred: submit returns immediately after

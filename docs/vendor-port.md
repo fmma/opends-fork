@@ -19,7 +19,7 @@ the table: allocation is delegated to xNVMe (`xnvme_buf_alloc`).
 Most of the surface is mechanical. Two things are not, and both are worth
 validating on real hardware before trusting a port:
 
-- Async ordering. `launch_host_func` must run a host callback in stream
+- Stream ordering. `launch_host_func` must run a host callback in stream
   order and hold the stream until it returns, and the runtime must retire it
   host-side rather than through the device's command processor. A primitive
   the device has to schedule serialises behind foreign GPU work and costs

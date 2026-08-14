@@ -15,7 +15,7 @@
 static ssize_t
 sync_submit_write(struct write_homi_env *e, void *gpu, size_t size, off_t foff)
 {
-	return opends_write(e->fh, gpu, size, foff, 0);
+	return opends_sync_write(e->fh, gpu, size, foff, 0);
 }
 
 int
@@ -31,7 +31,7 @@ main(int argc, char **argv)
 	if (aisio_homi_setup_flags(path, O_RDWR | O_CREAT | O_TRUNC, &a) < 0)
 		return 1;
 
-	fprintf(stderr, "opends_write tests (aisio backend, HOMI)\n");
+	fprintf(stderr, "opends_sync_write tests (aisio backend, HOMI)\n");
 
 	struct write_homi_env env = {
 	        .fh = a.fh,

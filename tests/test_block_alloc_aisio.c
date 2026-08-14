@@ -40,7 +40,7 @@ main(int argc, char **argv)
 		return 1;
 
 	fprintf(stderr,
-	        "opends_write block-alloc test (aisio backend, HOMI)\n");
+	        "opends_sync_write block-alloc test (aisio backend, HOMI)\n");
 
 	int failed = 0;
 	void *gpu = opends_alloc(blk);
@@ -56,7 +56,7 @@ main(int argc, char **argv)
 		exp[i] = (unsigned char)((i + 0x33) & 0xff);
 	cuda_buf_from_host(gpu, exp, blk);
 
-	ssize_t w = opends_write(a.fh, gpu, blk, 0, 0);
+	ssize_t w = opends_sync_write(a.fh, gpu, blk, 0, 0);
 	if (w != (ssize_t)blk) {
 		fprintf(stderr, "  block-alloc write: %zd\n", w);
 		failed++;
@@ -71,7 +71,7 @@ main(int argc, char **argv)
 	}
 
 	cuda_buf_zero(gpu, blk);
-	ssize_t r = opends_read(a.fh, gpu, blk, 0, 0);
+	ssize_t r = opends_sync_read(a.fh, gpu, blk, 0, 0);
 	cuda_buf_to_host(host, gpu, blk);
 	if (r != (ssize_t)blk || memcmp(host, exp, blk)) {
 		fprintf(stderr, "  block-alloc verify failed (r=%zd)\n", r);

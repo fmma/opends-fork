@@ -221,16 +221,16 @@ opends_buf_deregister(const void *buf_base)
 /* ------------------------------------------------------------------ */
 
 ssize_t
-opends_read(opends_handle_t fh, void *buf_base, size_t size, off_t file_offset,
-            off_t buf_offset)
+opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
+                 off_t file_offset, off_t buf_offset)
 {
 	struct gds_handle *h = fh;
 	return cuFileRead(h->cufh, buf_base, size, file_offset, buf_offset);
 }
 
 ssize_t
-opends_write(opends_handle_t fh, const void *buf_base, size_t size,
-             off_t file_offset, off_t buf_offset)
+opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
+                  off_t file_offset, off_t buf_offset)
 {
 	struct gds_handle *h = fh;
 	return cuFileWrite(h->cufh, buf_base, size, file_offset, buf_offset);
@@ -241,7 +241,7 @@ opends_write(opends_handle_t fh, const void *buf_base, size_t size,
 /* ------------------------------------------------------------------ */
 
 opends_error_t
-opends_batch_io_setup(opends_batch_handle_t *batch_idp, unsigned nr)
+opends_batch_setup(opends_batch_handle_t *batch_idp, unsigned nr)
 {
 	if (!batch_idp || nr == 0)
 		return opends_err(OPENDS_INVALID_VALUE);
@@ -254,8 +254,8 @@ opends_batch_io_setup(opends_batch_handle_t *batch_idp, unsigned nr)
 }
 
 opends_error_t
-opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
-                       opends_io_params_t *iocbp, unsigned int flags)
+opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
+                    opends_io_params_t *iocbp, unsigned int flags)
 {
 	if (!batch_idp || !iocbp)
 		return opends_err(OPENDS_INVALID_VALUE);
@@ -288,9 +288,9 @@ opends_batch_io_submit(opends_batch_handle_t batch_idp, unsigned nr,
 }
 
 opends_error_t
-opends_batch_io_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
-                           unsigned *nr, opends_io_events_t *iocbp,
-                           struct timespec *timeout)
+opends_batch_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
+                        unsigned *nr, opends_io_events_t *iocbp,
+                        struct timespec *timeout)
 {
 	if (!batch_idp || !nr || !iocbp)
 		return opends_err(OPENDS_INVALID_VALUE);
@@ -319,7 +319,7 @@ opends_batch_io_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
 }
 
 opends_error_t
-opends_batch_io_cancel(opends_batch_handle_t batch_idp)
+opends_batch_cancel(opends_batch_handle_t batch_idp)
 {
 	if (!batch_idp)
 		return opends_err(OPENDS_INVALID_VALUE);
@@ -330,7 +330,7 @@ opends_batch_io_cancel(opends_batch_handle_t batch_idp)
 }
 
 void
-opends_batch_io_destroy(opends_batch_handle_t batch_idp)
+opends_batch_destroy(opends_batch_handle_t batch_idp)
 {
 	if (!batch_idp)
 		return;
@@ -338,7 +338,7 @@ opends_batch_io_destroy(opends_batch_handle_t batch_idp)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Async (stream) I/O                                                 */
+/*  Stream-ordered I/O                                                 */
 /* ------------------------------------------------------------------ */
 
 opends_error_t
@@ -388,7 +388,7 @@ opends_stream_deregister(opends_stream_t stream)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Async I/O (not implemented)                                */
+/*  Async I/O (not implemented)                                        */
 /* ------------------------------------------------------------------ */
 
 /* cuFile has no stream-free async primitive to map these onto. */

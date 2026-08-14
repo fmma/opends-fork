@@ -65,7 +65,7 @@ run_write_homi_tests(struct write_homi_env *e)
 
 	/* 2. P2P read-back of the just-written, fsync'd data. */
 	cuda_buf_zero(gpu, FILE_SIZE);
-	ssize_t r = opends_read(e->fh, gpu, FILE_SIZE, 0, 0);
+	ssize_t r = opends_sync_read(e->fh, gpu, FILE_SIZE, 0, 0);
 	cuda_buf_to_host(host, gpu, FILE_SIZE);
 	if (r != (ssize_t)FILE_SIZE || memcmp(host, exp, FILE_SIZE)) {
 		fprintf(stderr, "[%s] alloc verify failed (r=%zd)\n",
@@ -91,7 +91,7 @@ run_write_homi_tests(struct write_homi_env *e)
 	for (size_t i = WRITE_PARTIAL_LEN; i < PAGE; i++)
 		exp[i] = write_pattern_byte(i);
 	cuda_buf_zero(gpu, PAGE);
-	r = opends_read(e->fh, gpu, PAGE, 0, 0);
+	r = opends_sync_read(e->fh, gpu, PAGE, 0, 0);
 	cuda_buf_to_host(host, gpu, PAGE);
 	if (r != (ssize_t)PAGE || memcmp(host, exp, PAGE)) {
 		fprintf(stderr, "[%s] overwrite tail-preserve verify failed\n",
