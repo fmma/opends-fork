@@ -13,8 +13,8 @@
  * Writes go through the kernel-mounted filesystem: the source is staged to a
  * host buffer and pwritten via the fd, so XFS over qublk allocates blocks and
  * writes the data; the file's extents are then re-resolved for later P2P reads.
- * The batch family comes from the shared batch-on-async implementation in
- * opends_batch_async.c.
+ * The sync and batch families come from the shared implementations on
+ * the async API in opends_sync_async.c and opends_batch_async.c.
  */
 
 #define _GNU_SOURCE
@@ -1509,46 +1509,6 @@ opends_async_await(opends_async_future_t *future)
 		sched_yield();
 
 	return future->result;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Synchronous I/O                                                   */
-/* ------------------------------------------------------------------ */
-
-static ssize_t
-submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
-               void *buf_base, size_t size, off_t file_offset, off_t buf_offset)
-{
-	opends_async_future_t future;
-
-	opends_error_t err = submit_async_op(d, is_write, fh, buf_base, size,
-	                                     file_offset, buf_offset, &future);
-	if (err.err != OPENDS_SUCCESS)
-		return -(ssize_t)err.err;
-
-	ssize_t n = opends_async_await(&future);
-	if (n < 0)
-		fprintf(stderr,
-		        "opends_sync_%s(size=%zu, off=%ld) failed: rc=%zd\n",
-		        is_write ? "write" : "read", size, (long)file_offset,
-		        n);
-	return n;
-}
-
-ssize_t
-opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
-                 off_t file_offset, off_t buf_offset)
-{
-	return submit_sync_op(drv, false, fh, buf_base, size, file_offset,
-	                      buf_offset);
-}
-
-ssize_t
-opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
-                  off_t file_offset, off_t buf_offset)
-{
-	return submit_sync_op(drv, true, fh, (void *)buf_base, size,
-	                      file_offset, buf_offset);
 }
 
 /* ------------------------------------------------------------------ */

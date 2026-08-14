@@ -172,13 +172,16 @@ ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
 	if (!fh || !buf_base || !future)
 		return opends_err(OPENDS_INVALID_VALUE);
 
+	struct ref_handle *h = fh;
 	ssize_t result;
 	if (is_write)
-		result = opends_sync_write(fh, buf_base, size, file_offset,
-		                           buf_offset);
+		result = pwrite(h->fd, (const char *)buf_base + buf_offset,
+		                size, file_offset);
 	else
-		result = opends_sync_read(fh, buf_base, size, file_offset,
-		                          buf_offset);
+		result = pread(h->fd, (char *)buf_base + buf_offset, size,
+		               file_offset);
+	if (result < 0)
+		result = -(ssize_t)OPENDS_INTERNAL_ERROR;
 
 	future->result = result;
 	__atomic_store_n(&future->done, 1, __ATOMIC_RELEASE);
@@ -213,30 +216,6 @@ opends_async_await(opends_async_future_t *future)
 		sched_yield();
 
 	return future->result;
-}
-
-ssize_t
-opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
-                 off_t file_offset, off_t buf_offset)
-{
-	struct ref_handle *h = fh;
-	ssize_t ret =
-	        pread(h->fd, (char *)buf_base + buf_offset, size, file_offset);
-	if (ret < 0)
-		return -(ssize_t)OPENDS_INTERNAL_ERROR;
-	return ret;
-}
-
-ssize_t
-opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
-                  off_t file_offset, off_t buf_offset)
-{
-	struct ref_handle *h = fh;
-	ssize_t ret = pwrite(h->fd, (const char *)buf_base + buf_offset, size,
-	                     file_offset);
-	if (ret < 0)
-		return -(ssize_t)OPENDS_INTERNAL_ERROR;
-	return ret;
 }
 
 opends_error_t
