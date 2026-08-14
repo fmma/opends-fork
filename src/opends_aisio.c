@@ -1506,6 +1506,75 @@ opends_buf_deregister(const void *buf_base)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Async I/O                                                         */
+/* ------------------------------------------------------------------ */
+
+static opends_error_t
+submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
+                void *buf_base, size_t size, off_t file_offset,
+                off_t buf_offset, opends_async_future_t *future)
+{
+	if (!d)
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
+	if (!fh || !buf_base || !future)
+		return opends_err(OPENDS_INVALID_VALUE);
+	if (!d->workers_ready)
+		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
+
+	future->done = 0;
+	future->result = 0;
+
+	struct io_worker *w;
+	uint32_t head;
+
+	pthread_mutex_lock(&d->submit_lock);
+	struct file_op *op = claim_slot_locked(d, &w, &head);
+	op->mode = FILE_OP_ASYNC;
+	op->is_write = is_write;
+	op->h = (struct registered_file *)fh;
+	op->buf_base = buf_base;
+	op->u.async.size = size;
+	op->u.async.file_offset = file_offset;
+	op->u.async.buf_offset = buf_offset;
+	op->u.async.future = future;
+	__atomic_store_n(&op->state, FILE_OP_PENDING, __ATOMIC_RELEASE);
+	__atomic_store_n(&w->queue_head, head + 1, __ATOMIC_RELEASE);
+	pthread_mutex_unlock(&d->submit_lock);
+
+	return opends_ok();
+}
+
+opends_error_t
+opends_async_read(opends_handle_t fh, void *buf_base, size_t size,
+                  off_t file_offset, off_t buf_offset,
+                  opends_async_future_t *future)
+{
+	return submit_async_op(drv, false, fh, buf_base, size, file_offset,
+	                       buf_offset, future);
+}
+
+opends_error_t
+opends_async_write(opends_handle_t fh, const void *buf_base, size_t size,
+                   off_t file_offset, off_t buf_offset,
+                   opends_async_future_t *future)
+{
+	return submit_async_op(drv, true, fh, (void *)buf_base, size,
+	                       file_offset, buf_offset, future);
+}
+
+ssize_t
+opends_async_await(opends_async_future_t *future)
+{
+	if (!future)
+		return -(ssize_t)OPENDS_INVALID_VALUE;
+
+	while (!__atomic_load_n(&future->done, __ATOMIC_ACQUIRE))
+		sched_yield();
+
+	return future->result;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Synchronous I/O                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -1541,7 +1610,8 @@ submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
 
 	ssize_t n = op->u.sync.result;
 	if (n < 0)
-		fprintf(stderr, "opends_%s(size=%zu, off=%ld) failed: rc=%zd\n",
+		fprintf(stderr,
+		        "opends_sync_%s(size=%zu, off=%ld) failed: rc=%zd\n",
 		        is_write ? "write" : "read", size, (long)file_offset,
 		        n);
 	return n;
@@ -1748,75 +1818,6 @@ opends_stream_deregister(opends_stream_t stream)
 {
 	(void)stream;
 	return opends_ok();
-}
-
-/* ------------------------------------------------------------------ */
-/*  Async I/O                                                         */
-/* ------------------------------------------------------------------ */
-
-static opends_error_t
-submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
-                void *buf_base, size_t size, off_t file_offset,
-                off_t buf_offset, opends_async_future_t *future)
-{
-	if (!d)
-		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
-	if (!fh || !buf_base || !future)
-		return opends_err(OPENDS_INVALID_VALUE);
-	if (!d->workers_ready)
-		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
-
-	future->done = 0;
-	future->result = 0;
-
-	struct io_worker *w;
-	uint32_t head;
-
-	pthread_mutex_lock(&d->submit_lock);
-	struct file_op *op = claim_slot_locked(d, &w, &head);
-	op->mode = FILE_OP_ASYNC;
-	op->is_write = is_write;
-	op->h = (struct registered_file *)fh;
-	op->buf_base = buf_base;
-	op->u.async.size = size;
-	op->u.async.file_offset = file_offset;
-	op->u.async.buf_offset = buf_offset;
-	op->u.async.future = future;
-	__atomic_store_n(&op->state, FILE_OP_PENDING, __ATOMIC_RELEASE);
-	__atomic_store_n(&w->queue_head, head + 1, __ATOMIC_RELEASE);
-	pthread_mutex_unlock(&d->submit_lock);
-
-	return opends_ok();
-}
-
-opends_error_t
-opends_async_read(opends_handle_t fh, void *buf_base, size_t size,
-                  off_t file_offset, off_t buf_offset,
-                  opends_async_future_t *future)
-{
-	return submit_async_op(drv, false, fh, buf_base, size, file_offset,
-	                       buf_offset, future);
-}
-
-opends_error_t
-opends_async_write(opends_handle_t fh, const void *buf_base, size_t size,
-                   off_t file_offset, off_t buf_offset,
-                   opends_async_future_t *future)
-{
-	return submit_async_op(drv, true, fh, (void *)buf_base, size,
-	                       file_offset, buf_offset, future);
-}
-
-ssize_t
-opends_async_await(opends_async_future_t *future)
-{
-	if (!future)
-		return -(ssize_t)OPENDS_INVALID_VALUE;
-
-	while (!__atomic_load_n(&future->done, __ATOMIC_ACQUIRE))
-		sched_yield();
-
-	return future->result;
 }
 
 /* ------------------------------------------------------------------ */
