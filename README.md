@@ -38,24 +38,20 @@ The aisio backend reads its configuration from environment variables at
 
 ## Performance
 
-Headline read throughput across the four reference datasets, cold-cache, N=1.
-The table below is maintained by hand. Regenerate the numbers with
-`scripts/bench/run.py` and `scripts/bench/report.py`, then copy in the figures of
-interest; the full per-leg data lives on the orphan `artefacts` branch (see
-"Benchmarking with filperf").
-
-_Commit `c4553df` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU `NVIDIA RTX 2000 Ada Generation`)._
+_Commit `7a61a12` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU
+`NVIDIA RTX 2000 Ada Generation`). `OPENDS_AISIO_IO_THREADS=2` and
+`OPENDS_AISIO_QUEUE_DEPTH=8`._
 
 | Dataset       | mode  | gds (MiB/s) | opends (MiB/s) |
-|---------------|-------|--------------|--------------|
-| filesize8gib  | sync  |         6967 |         7100 |
-| filesize8gib  | async |         2426 |         6974 |
-| tiktokish     | sync  |         3899 |         4880 |
-| tiktokish     | async |         2515 |         5285 |
-| imagenetish   | sync  |          335 |          351 |
-| imagenetish   | async |          868 |         2783 |
-| lmcacheish    | sync  |         5317 |         6025 |
-| lmcacheish    | async |         4961 |         4960 |
+|---------------|-------|-------------|----------------|
+| filesize8gib  | sync  |        6983 |           7064 |
+| filesize8gib  | async |        2219 |           7039 |
+| tiktokish     | sync  |        3840 |           5143 |
+| tiktokish     | async |        2486 |           5385 |
+| imagenetish   | sync  |         335 |            579 |
+| imagenetish   | async |         681 |           2749 |
+| lmcacheish    | sync  |        5512 |           6140 |
+| lmcacheish    | async |        4989 |           5369 |
 
 ## opends API
 
