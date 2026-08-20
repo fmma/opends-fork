@@ -7,8 +7,9 @@
  * Phase 1 pipelines a window of in-flight futures: each await frees a
  * slot that is refilled with the next case, so many operations overlap
  * on the backend. Each completion is verified against the in-memory
- * pattern. The case table includes sub-block sizes to cover per-op tail
- * staging with concurrent operations.
+ * pattern. The case table includes sub-block sizes and offsets that start
+ * mid-LBA, so concurrent operations exercise per-op staging at both ends
+ * of a span.
  *
  * Phase 2 submits a full window in one burst and awaits the futures in
  * reverse submission order: await order must not matter.
@@ -50,6 +51,11 @@ static const struct {
         {0, 700},
         {2 * PAGE, PAGE + 300},
         {0, FILE_SIZE / 2},
+        {4, 700},
+        {PAGE + 4, 2 * PAGE},
+        {1024 + 64, 5000},
+        {2 * PAGE + 516, 300},
+        {PAGE - 1, 2},
 };
 
 #define ASYNC_READ_NCASES                                                      \
