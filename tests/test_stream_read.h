@@ -988,6 +988,54 @@ out:
 	return rc;
 }
 
+/*
+ * The stream path carries one bounce copy per stream, so it stages a
+ * sub-LBA tail but not an unaligned start. The rejection must report
+ * OPENDS_INVALID_VALUE through bytes_read, release the stream, and leave
+ * an aligned read on that stream working.
+ */
+static int
+stream_test_unaligned_head_rejected(struct stream_test_env *env)
+{
+	void *buf = env->buf_acquire(PAGE);
+	if (!buf)
+		return 1;
+
+	int rc = 1;
+	env->buf_zero(buf, PAGE);
+
+	size_t sz = PAGE;
+	off_t foff = 4;
+	off_t boff = 0;
+	ssize_t bytes_read = 0;
+
+	opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff, &boff,
+	                                        &bytes_read, env->stream);
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  unaligned_head_rejected: submit: %s\n",
+		        opends_op_status_error(err.err));
+		goto out;
+	}
+
+	if (stream_test_stream_sync_timeout(env->stream, 20.0,
+	                                    "unaligned_head_rejected") != 0)
+		goto out;
+
+	if (bytes_read != -(ssize_t)OPENDS_INVALID_VALUE) {
+		fprintf(stderr,
+		        "  unaligned_head_rejected: bytes_read = %zd, expected "
+		        "%zd\n",
+		        bytes_read, -(ssize_t)OPENDS_INVALID_VALUE);
+		goto out;
+	}
+
+	rc = verify_stream_read(env, buf, PAGE, PAGE, 0, 0,
+	                        "unaligned_head_rejected/aligned_after");
+out:
+	env->buf_release(buf);
+	return rc;
+}
+
 /* --- Test runner ------------------------------------------------ */
 
 struct stream_test_entry {
@@ -1014,6 +1062,7 @@ static const struct stream_test_entry stream_read_tests[] = {
 	{"concurrent_streams",      stream_test_concurrent_streams},
 	{"concurrent_short_reads",  stream_test_concurrent_short_reads, true},
 	{"unaligned_rejected",      stream_test_unaligned_rejected, false, true},
+	{"unaligned_head_rejected", stream_test_unaligned_head_rejected},
 	{"burst_single_stream",     stream_test_burst_single_stream},
 	{"multi_stream_burst",      stream_test_multi_stream_burst},
 };
