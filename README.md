@@ -43,7 +43,7 @@ the open.
   once. `busy` never yields or naps: the worker polls flat out and holds a CPU
   until the driver closes.
 - `OPENDS_AISIO_ASSUME_ALIGNED_ONLY`: `1` declares that every read is
-  LBA-aligned. Reads that end off an LBA boundary fail with
+  LBA-aligned. Reads that start or end off an LBA boundary fail with
   `OPENDS_INVALID_VALUE`, and the stream path stops enqueueing the bounce
   kernel.
 
@@ -97,10 +97,18 @@ equivalent.
 
 ### Basic read
 
-Read offsets must be LBA-aligned and the file opened with `O_DIRECT`. The size
-need not be: the aisio backend reads a sub-LBA tail through a bounce buffer and
-copies it into place. A read starting at an unaligned offset returns
-`OPENDS_INVALID_VALUE`.
+The file must be opened with `O_DIRECT`. Neither the offset nor the size has to
+be LBA-aligned: the aisio backend reads the partial LBA at each end of the
+request through a bounce buffer and copies it into place.
+
+Two cases still return `OPENDS_INVALID_VALUE`. The stream API
+(`opends_stream_read`) has one bounce slot per stream, so it takes a sub-LBA
+tail but not an unaligned offset. And an unaligned offset shifts the
+destination of every whole LBA that follows it, which an NVMe PRP offset can
+express only at dword granularity, so a read whose offset is not a multiple of
+4 is rejected once it extends a whole LBA or more past that first partial one.
+A shorter read at the same offset moves entirely through bounce slots and is
+accepted.
 
 ```c
 #include <opends.h>
