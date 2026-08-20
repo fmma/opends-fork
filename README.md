@@ -43,7 +43,7 @@ the open.
   once. `busy` never yields or naps: the worker polls flat out and holds a CPU
   until the driver closes.
 - `OPENDS_AISIO_ASSUME_ALIGNED_ONLY`: `1` declares that every read is
-  LBA-aligned. Reads that end off an LBA boundary fail with
+  LBA-aligned. Reads that start or end off an LBA boundary fail with
   `OPENDS_INVALID_VALUE`, and the stream path stops enqueueing the bounce
   kernel.
 
