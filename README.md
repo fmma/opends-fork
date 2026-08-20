@@ -89,10 +89,18 @@ equivalent.
 
 ### Basic read
 
-Read offsets must be LBA-aligned and the file opened with `O_DIRECT`. The size
-need not be: the aisio backend reads a sub-LBA tail through a bounce buffer and
-copies it into place. A read starting at an unaligned offset returns
-`OPENDS_INVALID_VALUE`.
+The file must be opened with `O_DIRECT`. Neither the offset nor the size has to
+be LBA-aligned: the aisio backend reads the partial LBA at each end of the
+request through a bounce buffer and copies it into place.
+
+Two cases still return `OPENDS_INVALID_VALUE`. The stream API
+(`opends_stream_read`) has one bounce slot per stream, so it takes a sub-LBA
+tail but not an unaligned offset. And an unaligned offset shifts the
+destination of every whole LBA that follows it, which an NVMe PRP offset can
+express only at dword granularity, so a read whose offset is not a multiple of
+4 is rejected once it extends a whole LBA or more past that first partial one.
+A shorter read at the same offset moves entirely through bounce slots and is
+accepted.
 
 ```c
 #include <opends.h>
@@ -344,8 +352,9 @@ gives them their own section. The aisio knobs travel as environment variables
 mask whose CPUs the aisio IO workers are pinned to round-robin (`0x0` or unset
 leaves placement to the scheduler). Outside the sweep,
 `OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` declares that every read is LBA-aligned:
-reads whose span ends off an LBA boundary fail with `OPENDS_INVALID_VALUE`, and
-the stream path stops enqueueing the per-read bounce kernel.
+reads whose span starts or ends off an LBA boundary fail with
+`OPENDS_INVALID_VALUE`, and the stream path stops enqueueing the per-read
+bounce kernel.
 `OPENDS_AISIO_IDLE_SPIN_US` sets how long an idle IO worker keeps yielding
 after its last activity before falling back to a 100 us nap (default 200, `0`
 naps immediately); ops arriving within the window skip the nap latency.

@@ -56,7 +56,8 @@
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
-#define NVME_PRP_PAGE 4096
+#define NVME_PRP_OFFSET_ALIGN 4
+#define BOUNCE_SLOTS 2
 #define DEFAULT_QUEUE_DEPTH 512
 #define MAX_QUEUE_DEPTH 4096
 #define DEFAULT_IDLE_SPIN_US 200
@@ -114,6 +115,12 @@ struct file_op_async {
 	opends_async_future_t *future;
 };
 
+struct bounce_slot {
+	void *dst;
+	void *src;
+	size_t nbytes;
+};
+
 struct file_op {
 	enum file_op_mode mode;
 	bool is_write;
@@ -124,9 +131,9 @@ struct file_op {
 	int bounces_outstanding;
 	size_t bytes_acc;
 	int err;
-	void *tail_dst;
-	size_t tail_nbytes;
-	void *tail_bounce;
+	struct bounce_slot bounces[BOUNCE_SLOTS];
+	int n_bounces;
+	void *bounce_buf;
 	union {
 		struct file_op_stream stream;
 		struct file_op_async async;
@@ -270,7 +277,7 @@ stream_bounce_alloc(struct opends_stream *s, struct driver *d)
 
 	/* One slot suffices: at most one bounce per op, and the per-stream gate
 	 * serialises ops. */
-	void *buf = buf_alloc_locked(d, NVME_PRP_PAGE);
+	void *buf = buf_alloc_locked(d, d->lba_size);
 	if (!buf) {
 		ds_accel->host_free(desc_host);
 		return -1;
@@ -514,108 +521,105 @@ bounce_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 }
 
 static int
-submit_stream_tail(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
-                   uint64_t cur_slba, size_t nbytes)
-{
-	struct driver *d = w->drv;
-	struct opends_stream *s = op->u.stream.opends_stream;
-	void *bounce_src = s->bounce_buf;
-
-	uint64_t nlbas = (nbytes + (d->lba_size - 1)) >> d->lba_shift;
-	uint16_t nlb = (uint16_t)(nlbas - 1);
-
-	for (;;) {
-		struct xnvme_cmd_ctx *ctx;
-		for (;;) {
-			ctx = xnvme_queue_get_cmd_ctx(w->queue);
-			if (ctx)
-				break;
-			xnvme_queue_poke(w->queue, 0);
-		}
-		xnvme_cmd_ctx_set_cb(ctx, bounce_cb, op);
-
-		int srv = xnvme_nvm_read(ctx, d->nsid, cur_slba, nlb,
-		                         bounce_src, NULL);
-		if (srv == -EBUSY) {
-			xnvme_queue_put_cmd_ctx(w->queue, ctx);
-			xnvme_queue_poke(w->queue, 0);
-			continue;
-		}
-		if (srv < 0) {
-			xnvme_queue_put_cmd_ctx(w->queue, ctx);
-			op->err = OPENDS_DEVICE_DRIVER_ERROR;
-			return -1;
-		}
-		break;
-	}
-
-	op->tail_dst = abs_dst;
-	op->tail_nbytes = nbytes;
-	s->bounce_desc_host->dst = (uint64_t)(uintptr_t)op->tail_dst;
-	s->bounce_desc_host->src = (uint64_t)(uintptr_t)bounce_src;
-
-	op->bounces_outstanding++;
-	op->bytes_acc += nbytes;
-	return 0;
-}
-
-static int
-submit_tail_read(struct io_worker *w, struct file_op *op, void *bounce_buf,
-                 uint8_t *abs_dst, uint64_t cur_slba, size_t nbytes)
+submit_bounce_read(struct io_worker *w, struct file_op *op, void *bounce_buf,
+                   uint8_t *abs_dst, uint64_t slba, size_t src_off,
+                   size_t nbytes)
 {
 	struct driver *d = w->drv;
 
-	uint64_t nlbas = (nbytes + (d->lba_size - 1)) >> d->lba_shift;
-	uint16_t nlb = (uint16_t)(nlbas - 1);
-
-	for (;;) {
-		struct xnvme_cmd_ctx *ctx;
-		for (;;) {
-			ctx = xnvme_queue_get_cmd_ctx(w->queue);
-			if (ctx)
-				break;
-			xnvme_queue_poke(w->queue, 0);
-		}
-		xnvme_cmd_ctx_set_cb(ctx, bounce_cb, op);
-
-		int srv = xnvme_nvm_read(ctx, d->nsid, cur_slba, nlb, bounce_buf,
-		                         NULL);
-		if (srv == -EBUSY) {
-			xnvme_queue_put_cmd_ctx(w->queue, ctx);
-			xnvme_queue_poke(w->queue, 0);
-			continue;
-		}
-		if (srv < 0) {
-			xnvme_queue_put_cmd_ctx(w->queue, ctx);
-			op->err = OPENDS_DEVICE_DRIVER_ERROR;
-			return -1;
-		}
-		break;
-	}
-
-	op->tail_dst = abs_dst;
-	op->tail_nbytes = nbytes;
-	op->bounces_outstanding++;
-	op->bytes_acc += nbytes;
-	return 0;
-}
-
-/* Async ops overlap on one worker, so each stages its sub-LBA tail through
- * its own buffer. The bounce is cached on the ring slot for the worker's
- * lifetime and released at teardown, keeping the allocator out of the
- * completion path. */
-static int
-submit_async_tail(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
-                  uint64_t cur_slba, size_t nbytes)
-{
-	if (!op->tail_bounce)
-		op->tail_bounce = buf_alloc_locked(w->drv, NVME_PRP_PAGE);
-	if (!op->tail_bounce) {
+	if (op->n_bounces >= BOUNCE_SLOTS || src_off + nbytes > d->lba_size) {
 		op->err = OPENDS_INTERNAL_ERROR;
 		return -1;
 	}
-	return submit_tail_read(w, op, op->tail_bounce, abs_dst, cur_slba,
-	                        nbytes);
+
+	int slot = op->n_bounces;
+	uint8_t *bounce = (uint8_t *)bounce_buf + (size_t)slot * d->lba_size;
+	uint16_t nlb = 0;
+
+	for (;;) {
+		struct xnvme_cmd_ctx *ctx;
+		for (;;) {
+			ctx = xnvme_queue_get_cmd_ctx(w->queue);
+			if (ctx)
+				break;
+			xnvme_queue_poke(w->queue, 0);
+		}
+		xnvme_cmd_ctx_set_cb(ctx, bounce_cb, op);
+
+		int srv = xnvme_nvm_read(ctx, d->nsid, slba, nlb, bounce, NULL);
+		if (srv == -EBUSY) {
+			xnvme_queue_put_cmd_ctx(w->queue, ctx);
+			xnvme_queue_poke(w->queue, 0);
+			continue;
+		}
+		if (srv < 0) {
+			xnvme_queue_put_cmd_ctx(w->queue, ctx);
+			op->err = OPENDS_DEVICE_DRIVER_ERROR;
+			return -1;
+		}
+		break;
+	}
+
+	op->bounces[slot].dst = abs_dst;
+	op->bounces[slot].src = bounce + src_off;
+	op->bounces[slot].nbytes = nbytes;
+	op->n_bounces = slot + 1;
+
+	op->bounces_outstanding++;
+	op->bytes_acc += nbytes;
+	return 0;
+}
+
+static int
+submit_stream_bounce(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
+                     uint64_t cur_slba, size_t nbytes)
+{
+	struct opends_stream *s = op->u.stream.opends_stream;
+
+	if (op->n_bounces) {
+		op->err = OPENDS_INTERNAL_ERROR;
+		return -1;
+	}
+	if (submit_bounce_read(w, op, s->bounce_buf, abs_dst, cur_slba, 0,
+	                       nbytes) < 0)
+		return -1;
+
+	s->bounce_desc_host->dst = (uint64_t)(uintptr_t)abs_dst;
+	s->bounce_desc_host->src = (uint64_t)(uintptr_t)s->bounce_buf;
+	return 0;
+}
+
+static int
+submit_host_bounce(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
+                   uint64_t slba, size_t src_off, size_t nbytes)
+{
+	if (!op->bounce_buf)
+		op->bounce_buf = buf_alloc_locked(
+		        w->drv, BOUNCE_SLOTS * (size_t)w->drv->lba_size);
+	if (!op->bounce_buf) {
+		op->err = OPENDS_INTERNAL_ERROR;
+		return -1;
+	}
+	return submit_bounce_read(w, op, op->bounce_buf, abs_dst, slba, src_off,
+	                          nbytes);
+}
+
+static int
+submit_partial(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
+               uint64_t slba, size_t src_off, size_t nbytes)
+{
+	if (w->drv->assume_aligned_only) {
+		op->err = OPENDS_INVALID_VALUE;
+		return -1;
+	}
+	if (op->mode == FILE_OP_STREAM) {
+		if (src_off) {
+			op->err = OPENDS_INVALID_VALUE;
+			return -1;
+		}
+		return submit_stream_bounce(w, op, abs_dst, slba, nbytes);
+	}
+	return submit_host_bounce(w, op, abs_dst, slba, src_off, nbytes);
 }
 
 static void
@@ -674,14 +678,29 @@ start_read_op(struct io_worker *w, struct file_op *op)
 			continue;
 
 		uint64_t off_in_ext = span_start - ext_start;
-		if (off_in_ext & lba_mask) {
-			op->err = OPENDS_INVALID_VALUE;
-			goto out;
-		}
 		size_t buf_off = span_start - req_start;
 		uint8_t *abs_dst = dst_base + buf_off;
 		uint64_t cur_slba = e->slba + (off_in_ext >> lba_shift);
 		size_t remaining = span_end - span_start;
+
+		size_t head_off = off_in_ext & lba_mask;
+		if (head_off) {
+			size_t head_bytes = d->lba_size - head_off;
+
+			if (head_bytes > remaining)
+				head_bytes = remaining;
+			if (remaining - head_bytes >= d->lba_size &&
+			    (head_bytes & (NVME_PRP_OFFSET_ALIGN - 1))) {
+				op->err = OPENDS_INVALID_VALUE;
+				goto out;
+			}
+			if (submit_partial(w, op, abs_dst, cur_slba, head_off,
+			                   head_bytes) < 0)
+				goto out;
+			cur_slba++;
+			abs_dst += head_bytes;
+			remaining -= head_bytes;
+		}
 
 		size_t tail_bytes = remaining & lba_mask;
 		uint64_t middle_lbas = (remaining - tail_bytes) >> lba_shift;
@@ -700,18 +719,8 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		}
 
 		if (tail_bytes) {
-			if (d->assume_aligned_only) {
-				op->err = OPENDS_INVALID_VALUE;
-				goto out;
-			}
-			int trc;
-			if (op->mode == FILE_OP_STREAM)
-				trc = submit_stream_tail(w, op, abs_dst,
-				                         cur_slba, tail_bytes);
-			else
-				trc = submit_async_tail(w, op, abs_dst,
-				                        cur_slba, tail_bytes);
-			if (trc < 0)
+			if (submit_partial(w, op, abs_dst, cur_slba, 0,
+			                   tail_bytes) < 0)
 				goto out;
 		}
 	}
@@ -739,14 +748,28 @@ park_gate_cb(void *arg)
 		;
 }
 
+static int
+run_bounce_copies(struct file_op *op)
+{
+	for (int i = 0; i < op->n_bounces; i++) {
+		if (ds_accel->copy(op->bounces[i].dst, op->bounces[i].src,
+		                   op->bounces[i].nbytes) != 0)
+			return -1;
+	}
+	return 0;
+}
+
 static void
 complete_read_op(struct file_op *op)
 {
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
-	uint32_t tail_bytes = op->err ? 0 : (uint32_t)op->tail_nbytes;
 
 	if (op->mode == FILE_OP_STREAM) {
 		struct opends_stream *s = op->u.stream.opends_stream;
+		uint32_t tail_bytes = (op->err || !op->n_bounces)
+		                              ? 0
+		                              : (uint32_t)op->bounces[0].nbytes;
+
 		*op->u.stream.bytes_read_p = n;
 		s->bounce_desc_host->n_bytes = tail_bytes;
 		release_gate(s, op->u.stream.seq);
@@ -754,12 +777,9 @@ complete_read_op(struct file_op *op)
 		return;
 	}
 
-	if (tail_bytes) {
-		int rc = ds_accel->copy(op->tail_dst, op->tail_bounce,
-		                        op->tail_nbytes);
-		if (rc != 0)
-			n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
-	}
+	if (!op->err && run_bounce_copies(op) < 0)
+		n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+
 	async_future_complete(op->u.async.future, n);
 	__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
 }
@@ -808,7 +828,7 @@ dispatch_pending(struct io_worker *w, struct file_op *op)
 	op->bounces_outstanding = 0;
 	op->bytes_acc = 0;
 	op->err = 0;
-	op->tail_nbytes = 0;
+	op->n_bounces = 0;
 	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
 	start_read_op(w, op);
 }
@@ -1021,9 +1041,9 @@ workers_teardown(struct driver *d)
 		struct io_worker *w = &d->workers[i];
 		for (uint32_t s = 0; s < FILE_OP_QUEUE_SIZE; s++) {
 			struct file_op *op = &w->file_op_queue[s];
-			if (op->tail_bounce) {
-				xnvme_buf_free(d->xdev, op->tail_bounce);
-				op->tail_bounce = NULL;
+			if (op->bounce_buf) {
+				xnvme_buf_free(d->xdev, op->bounce_buf);
+				op->bounce_buf = NULL;
 			}
 		}
 		if (w->queue) {
