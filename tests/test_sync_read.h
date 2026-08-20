@@ -497,6 +497,106 @@ test_read_offset_size_sweep(struct test_env *env)
 	return rc;
 }
 
+/*
+ * Sweep reads that start mid-LBA. The backend has to stage the leading
+ * partial LBA through a bounce buffer, so the cases cover a head alone,
+ * a head plus whole LBAs, a head plus a trailing partial LBA, and a head
+ * that runs past EOF. A dword-offset head is what a PRP offset permits
+ * once whole LBAs follow it, so the offsets that are not multiples of 4
+ * stay short enough to reach no whole LBA. The 512 and 4096 variants make
+ * the cases meaningful whichever LBA size the device reports.
+ */
+static int
+test_read_unaligned_head(struct test_env *env)
+{
+	static const struct {
+		off_t offset;
+		size_t size;
+	} cases[] = {
+	        {4, 8},
+	        {4, 500},
+	        {100, 412},
+	        {512 + 4, 508},
+	        {512 + 4, 600},
+	        {4, 4092},
+	        {4, 8192},
+	        {4096 + 4, 12288},
+	        {1024 + 64, 5000},
+	        {8192 + 12, 20},
+	        {(off_t)FILE_SIZE - 100, 200},
+	        {1, 400},
+	        {511, 2},
+	        {4095, 4},
+	};
+
+	size_t max_size = 0;
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		if (cases[i].size > max_size)
+			max_size = cases[i].size;
+	}
+
+	void *buf = env->buf_acquire(max_size);
+	if (!buf)
+		return 1;
+
+	int rc = 0;
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		char label[64];
+		snprintf(label, sizeof(label), "head[off=%ld,sz=%zu]",
+		         (long)cases[i].offset, cases[i].size);
+		rc = verify_read(env, buf, max_size, cases[i].size,
+		                 cases[i].offset, 0, label);
+		if (rc)
+			break;
+	}
+
+	env->buf_release(buf);
+	return rc;
+}
+
+/* An unaligned head landing at a non-zero buf_offset: both ends of the
+ * copy are then offset, which is the case most likely to be got wrong.
+ * The second case is sized so whole LBAs follow the head on a 4096-byte
+ * device too, putting a direct DMA at a destination that is neither page
+ * nor LBA aligned. */
+static int
+test_read_unaligned_head_buf_offset(struct test_env *env)
+{
+	static const struct {
+		off_t offset;
+		size_t size;
+	} cases[] = {
+	        {1024 + 4, 5000},
+	        {PAGE + 4, 3 * PAGE},
+	};
+	const off_t boff = 64;
+
+	size_t max_size = 0;
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		if (cases[i].size > max_size)
+			max_size = cases[i].size;
+	}
+	size_t alloc = max_size + (size_t)boff;
+
+	void *buf = env->buf_acquire(alloc);
+	if (!buf)
+		return 1;
+
+	int rc = 0;
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		char label[64];
+		snprintf(label, sizeof(label), "head_boff[off=%ld,sz=%zu]",
+		         (long)cases[i].offset, cases[i].size);
+		rc = verify_read(env, buf, alloc, cases[i].size,
+		                 cases[i].offset, boff, label);
+		if (rc)
+			break;
+	}
+
+	env->buf_release(buf);
+	return rc;
+}
+
 /* --- Test runner ------------------------------------------------ */
 
 struct test_entry {
@@ -522,6 +622,8 @@ static const struct test_entry sync_read_tests[] = {
 	{"overlapping_regions", test_read_overlapping_regions},
 	{"repeated",            test_read_repeated},
 	{"offset_size_sweep",   test_read_offset_size_sweep},
+	{"unaligned_head",      test_read_unaligned_head},
+	{"unaligned_head_boff", test_read_unaligned_head_buf_offset},
 };
 /* clang-format on */
 
