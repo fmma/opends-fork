@@ -9,7 +9,7 @@ ref = "opends-0.1.0"
 
 [fil.repository]
 remote = "https://github.com/fmma/fil"
-ref = "opends-0.1.0"
+ref = "opends-0.1.2"
 
 [homi.repository]
 remote = "https://github.com/fmma/homi"
