@@ -8,24 +8,17 @@
 # below are the ones that carry information: the best (io_threads,
 # queue_depth) for every dataset and mode, their neighbors on both axes, the
 # low-concurrency corner, the default knobs, and one leg per knob combination.
-# 15 legs, about 35 minutes.
+# 15 legs, about 40 minutes.
 #
 # Cost is per (dataset, mode) run: about 12 s of fixed cost plus the read
 # itself. Only imagenetish is expensive, 200-380 s for a sync read alone, so it
-# is named at two points only. Every other dataset is under 6 s and rides along
-# for free.
+# is named at two points only. Every other dataset is under 8 s and rides along
+# for free. A full sweep shares these leg names, so give one of the two its own
+# --out.
 #
-# Run it with:
-#   scripts/bench/run.py --batches tiktokish=200
-#
-# --batches widens tiktokish, whose window is 0.03 s at the default batch
-# count. That is too short to rank configurations: its full-sweep numbers
-# scatter over 5100-5615 MiB/s with no structure. Widening costs about 2
-# minutes and makes the dataset able to show a regression at all. A full sweep
-# shares these leg names, so give one of the two its own --out.
-#
-# MiB/s figures in the notes are from the 7a61a12 sweep. Refresh them, and the
-# choice of points, whenever the surface moves.
+# MiB/s figures in the notes are from the 7a61a12 sweep, which read tiktokish
+# on a 0.03 s window; that dataset now runs 200 batches, so its numbers move.
+# Refresh the figures, and the choice of points, whenever the surface moves.
 
 # The tail-fixup path at the library default idle spin, which is what a caller
 # gets without setting anything.
@@ -52,7 +45,7 @@ why = "Depth neighbor of that peak, where lmcacheish async has already fallen to
 io_threads = 1
 queue_depth = 16
 datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
-why = "tiktokish sync peak at 5544."
+why = "Mid-depth sample at one worker. tiktokish sync topped out here in the 7a61a12 sweep, on a window too short to rank anything; confirm against the wider one."
 
 [[point]]
 io_threads = 1
@@ -80,7 +73,7 @@ why = "imagenetish async peak at 2764. Also samples imagenetish sync off t1, whe
 io_threads = 8
 queue_depth = 32
 datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
-why = "tiktokish async peak at 5615, and the high-thread corner."
+why = "The high-thread corner. tiktokish async topped out here in the 7a61a12 sweep, on the same too-short window."
 
 # The assume_aligned_only path. Only filesize8gib and lmcacheish have
 # LBA-multiple files; the other two fail by construction. The path is worth

@@ -316,7 +316,7 @@ python scripts/bench/artefacts.py --push
 `run.py` runs every suite into `cijoe-output-bench/<suite>/`. The gds suite has
 no knobs, so its sweep is the singleton: one run of the whole suite. The opends
 suite runs the point list in `scripts/bench/sweep.toml`, the parts of the grid
-that carry information: 15 legs, about 35 minutes. The HOMI/qublk stack comes
+that carry information: 15 legs, about 40 minutes. The HOMI/qublk stack comes
 up once, and each point runs into
 `cijoe-output-bench/opends/t<t>_q<q>[_aligned][_spin<v>][_busy]/`.
 `--sweep-config FILE` swaps in another list.
@@ -360,15 +360,8 @@ knobs, and one leg per knob combination, so `assume_aligned_only` and
 `idle_spin_us` stay covered without sweeping them. A point may narrow
 `datasets` and `mode`, which is what keeps it short: a run costs roughly 12 s
 per (dataset, mode) pair plus the read itself, and imagenetish is the only
-dataset that reads for minutes, so it is named at two points only.
-
-```bash
-python scripts/bench/run.py --batches tiktokish=200
-```
-
-`--batches` widens tiktokish, whose window is 0.03 s at the default batch
-count, too short to rank configurations. Re-derive the points from a full sweep
-whenever the surface moves.
+dataset that reads for minutes, so it is named at two points only. Re-derive
+the points from a full sweep whenever the surface moves.
 
 Every leg appends a structured record to
 `<out>/**/artifacts/history.jsonl`: config (backend, dataset, mode,

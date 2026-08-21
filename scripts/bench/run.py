@@ -5,7 +5,7 @@
 Every suite sweeps its own knob grid into cijoe-output-bench/<suite>/.
 gds has no knobs: its sweep is the singleton, one run of the whole suite.
 opends runs the point list in scripts/bench/sweep.toml, the parts of the grid
-that carry information, about 35 minutes. --full-sweep runs the whole
+that carry information, about 40 minutes. --full-sweep runs the whole
 io_threads x queue_depth x assume_aligned_only x idle_spin cross product
 instead, 80 legs and about 6 hours on the default axes. Narrowing an axis
 (--io-threads, --queue-depth, --assume-aligned-only, --idle-spin) sweeps the
