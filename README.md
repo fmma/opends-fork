@@ -313,36 +313,62 @@ python scripts/bench/report.py --spec-mbs 7450
 python scripts/bench/artefacts.py --push
 ```
 
-`run.py` sweeps every suite over its own knob grid into
-`cijoe-output-bench/<suite>/`. The gds suite has no knobs, so its sweep is the
-singleton: one run of the whole suite. The opends suite sweeps io_threads x
-queue_depth x assume_aligned_only x idle_spin: the HOMI/qublk stack comes up
-once, and each grid point runs into
-`cijoe-output-bench/opends/t<t>_q<q>[_aligned][_spin<v>][_busy]/`;
-the grid comes from `--io-threads` (default 1,2,4,8), `--queue-depth` (default
-1..512), `--assume-aligned-only` (default 0,1) and `--idle-spin` (default
-'default': the library default with the env unset; an integer is microseconds
-and 0 naps immediately, so 'default,0' is an on/off comparison of the idle-spin
-window). `--busy-spin` applies `OPENDS_AISIO_BUSY_SPIN=1` to every leg of the
-invocation. Restrict with `--suite`, `--mode`, and `--dataset`. An aligned leg rejects any read with a sub-LBA
-tail, so datasets whose files are not LBA-multiples fail by construction;
-those legs are recorded with an empty result, the sweep continues to the
-datasets that do qualify, and `report.py` gives them their own section. The
-aisio knobs travel as environment variables (`OPENDS_AISIO_IO_THREADS`,
-`OPENDS_AISIO_QUEUE_DEPTH`, `OPENDS_AISIO_CPU_MASK`,
-`OPENDS_AISIO_IDLE_SPIN_US`, `OPENDS_AISIO_BUSY_SPIN`). `--cpu-mask` sets the
-last one: a hex mask whose CPUs the aisio IO workers are pinned to round-robin
-(`0x0` or unset leaves placement to the scheduler). Outside the sweep,
+`run.py` runs every suite into `cijoe-output-bench/<suite>/`. The gds suite has
+no knobs, so its sweep is the singleton: one run of the whole suite. The opends
+suite runs the point list in `scripts/bench/sweep.toml`, the parts of the grid
+that carry information: 15 legs, about 35 minutes. The HOMI/qublk stack comes
+up once, and each point runs into
+`cijoe-output-bench/opends/t<t>_q<q>[_aligned][_spin<v>][_busy]/`.
+`--sweep-config FILE` swaps in another list.
+
+`--full-sweep` measures the whole io_threads x queue_depth x
+assume_aligned_only x idle_spin cross product instead, 80 legs and about 6
+hours on the default axes. The axes are `--io-threads` (default 1,2,4,8),
+`--queue-depth` (default 1..512), `--assume-aligned-only` (default 0,1) and
+`--idle-spin` (default 'default': the library default with the env unset; an
+integer is microseconds and 0 naps immediately, so 'default,0' is an on/off
+comparison of the idle-spin window, 160 legs and about 13 hours). Narrowing an
+axis sweeps the cross product too, so `--full-sweep` is only needed to sweep
+every axis in full. A full sweep shares its leg names with a point list, so
+give one of the two its own `--out`.
+
+`--busy-spin` applies `OPENDS_AISIO_BUSY_SPIN=1` to every leg of the
+invocation. Restrict with `--suite`, `--mode`, and `--dataset`. An aligned leg
+rejects any read with a sub-LBA tail, so datasets whose files are not
+LBA-multiples fail by construction; those legs are recorded with an empty
+result, the sweep continues to the datasets that do qualify, and `report.py`
+gives them their own section. The aisio knobs travel as environment variables
+(`OPENDS_AISIO_IO_THREADS`, `OPENDS_AISIO_QUEUE_DEPTH`,
+`OPENDS_AISIO_CPU_MASK`, `OPENDS_AISIO_IDLE_SPIN_US`,
+`OPENDS_AISIO_BUSY_SPIN`). `--cpu-mask` sets `OPENDS_AISIO_CPU_MASK`: a hex
+mask whose CPUs the aisio IO workers are pinned to round-robin (`0x0` or unset
+leaves placement to the scheduler). Outside the sweep,
 `OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` declares that every read is LBA-aligned:
-reads whose span ends off an LBA boundary fail with `OPENDS_INVALID_VALUE`,
-and the stream path stops enqueueing the per-read bounce kernel.
+reads whose span ends off an LBA boundary fail with `OPENDS_INVALID_VALUE`, and
+the stream path stops enqueueing the per-read bounce kernel.
 `OPENDS_AISIO_IDLE_SPIN_US` sets how long an idle IO worker keeps yielding
-after its last activity before falling back to a 100 us nap (default 200,
-`0` naps immediately); ops arriving within the window skip the nap latency.
+after its last activity before falling back to a 100 us nap (default 200, `0`
+naps immediately); ops arriving within the window skip the nap latency.
 `OPENDS_AISIO_BUSY_SPIN=1` makes the IO workers poll flat out, never yielding
-the CPU or napping (`OPENDS_AISIO_IDLE_SPIN_US` becomes moot). Each worker
-then occupies a full core for the driver's lifetime; pair it with
+the CPU or napping (`OPENDS_AISIO_IDLE_SPIN_US` becomes moot). Each worker then
+occupies a full core for the driver's lifetime; pair it with
 `OPENDS_AISIO_CPU_MASK` so the spinning workers sit on dedicated cores.
+
+The point list holds the best (io_threads, queue_depth) for every dataset and
+mode, their neighbors on both axes, the low-concurrency corner, the default
+knobs, and one leg per knob combination, so `assume_aligned_only` and
+`idle_spin_us` stay covered without sweeping them. A point may narrow
+`datasets` and `mode`, which is what keeps it short: a run costs roughly 12 s
+per (dataset, mode) pair plus the read itself, and imagenetish is the only
+dataset that reads for minutes, so it is named at two points only.
+
+```bash
+python scripts/bench/run.py --batches tiktokish=200
+```
+
+`--batches` widens tiktokish, whose window is 0.03 s at the default batch
+count, too short to rank configurations. Re-derive the points from a full sweep
+whenever the surface moves.
 
 Every leg appends a structured record to
 `<out>/**/artifacts/history.jsonl`: config (backend, dataset, mode,

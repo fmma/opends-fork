@@ -4,10 +4,16 @@
 
 Every suite sweeps its own knob grid into cijoe-output-bench/<suite>/.
 gds has no knobs: its sweep is the singleton, one run of the whole suite.
-opends sweeps io_threads x queue_depth x assume_aligned_only x idle_spin
-(--io-threads, --queue-depth, --assume-aligned-only, --idle-spin): the
-HOMI/qublk stack comes up once, each grid point runs the bench steps into
-opends/t<t>_q<q>[_aligned][_spin<v>][_busy]/ with the aisio knobs passed
+opends runs the point list in scripts/bench/sweep.toml, the parts of the grid
+that carry information, about 35 minutes. --full-sweep runs the whole
+io_threads x queue_depth x assume_aligned_only x idle_spin cross product
+instead, 80 legs and about 6 hours on the default axes. Narrowing an axis
+(--io-threads, --queue-depth, --assume-aligned-only, --idle-spin) sweeps the
+cross product too, over the axes as given. --sweep-config swaps in another
+list.
+
+Either way the HOMI/qublk stack comes up once, each point runs the bench steps
+into opends/t<t>_q<q>[_aligned][_spin<v>][_busy]/ with the aisio knobs passed
 through the environment, and the stack is torn down. --busy-spin applies
 OPENDS_AISIO_BUSY_SPIN=1 to the whole invocation. Both suites set the CPU
 governor for the run and restore it in teardown. Restrict with --suite,
@@ -25,6 +31,7 @@ scripts/bench/setup_dataset.py must have populated lmcacheish (both one-time).
 import argparse
 import os
 import sys
+import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -37,6 +44,13 @@ SUITES = {
 }
 
 DATASETS = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
+
+DEFAULT_POINTS = Path(__file__).resolve().parent / "sweep.toml"
+
+GRID_AXES = {"io_threads": [1, 2, 4, 8],
+             "queue_depth": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+             "assume_aligned_only": [0, 1],
+             "idle_spin": [None]}
 
 GDS_SETUP = ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"]
 
@@ -79,9 +93,50 @@ def _run_gds(args, datasets):
                   out=f"{args.out}/gds/_teardown")
 
 
-def _run_opends(args, datasets):
+def _grid_points(args):
+    """The full cross product, in sweep order."""
+    axis = {k: getattr(args, k) or v for k, v in GRID_AXES.items()}
+    for s in axis["idle_spin"]:
+        for a in axis["assume_aligned_only"]:
+            for t in axis["io_threads"]:
+                for q in axis["queue_depth"]:
+                    yield {"io_threads": t, "queue_depth": q,
+                           "assume_aligned_only": a, "idle_spin_us": s}
+
+
+POINT_KEYS = {"io_threads", "queue_depth", "datasets", "mode",
+              "assume_aligned_only", "idle_spin_us", "name", "why"}
+
+
+def _file_points(path, fail):
+    """Read a point list, e.g. scripts/bench/sweep.toml."""
+    try:
+        with open(path, "rb") as f:
+            doc = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        fail(f"{path}: {exc}")
+    points = doc.get("point")
+    if not points:
+        fail(f"{path}: no [[point]] entries")
+    for i, p in enumerate(points, 1):
+        where = f"{path}: point {i}"
+        unknown = set(p) - POINT_KEYS
+        if unknown:
+            fail(f"{where} has unknown keys {', '.join(sorted(unknown))}")
+        for key in ("io_threads", "queue_depth"):
+            if not isinstance(p.get(key), int):
+                fail(f"{where} needs an integer {key}")
+        unknown = set(p.get("datasets") or ()) - set(DATASETS)
+        if unknown:
+            fail(f"{where} names unknown datasets "
+                 f"{', '.join(sorted(unknown))}")
+        if p.get("mode", "both") not in ("sync", "async", "both"):
+            fail(f"{where} has an unknown mode {p['mode']!r}")
+    return points
+
+
+def _run_opends(args, datasets, points):
     suite = SUITES["opends"]
-    steps = _bench_steps("opends", args.mode, datasets)
     out = f"{args.out}/opends"
     if args.busy_spin:
         os.environ["OPENDS_AISIO_BUSY_SPIN"] = "1"
@@ -90,30 +145,31 @@ def _run_opends(args, datasets):
     if not args.skip_setup:
         run_cijoe(suite, "cpu_governor", "homi_stack_up", out=f"{out}/_setup")
     try:
-        for s in args.idle_spin:
+        for p in points:
+            t, q = p["io_threads"], p["queue_depth"]
+            a = int(p.get("assume_aligned_only", 0))
+            s = p.get("idle_spin_us")
             if s is None:
                 os.environ.pop("OPENDS_AISIO_IDLE_SPIN_US", None)
             else:
                 os.environ["OPENDS_AISIO_IDLE_SPIN_US"] = str(s)
-            for a in args.assume_aligned_only:
-                for t in args.io_threads:
-                    for q in args.queue_depth:
-                        os.environ["OPENDS_AISIO_IO_THREADS"] = str(t)
-                        os.environ["OPENDS_AISIO_QUEUE_DEPTH"] = str(q)
-                        os.environ["OPENDS_AISIO_ASSUME_ALIGNED_ONLY"] = str(a)
-                        leg = (f"t{t}_q{q}" + ("_aligned" if a else "")
-                               + (f"_spin{s}" if s is not None else "")
-                               + ("_busy" if args.busy_spin else ""))
-                        print(f"\n=== opends io_threads={t} queue_depth={q} "
-                              f"assume_aligned_only={a}"
-                              + (f" idle_spin_us={s}" if s is not None else "")
-                              + (" busy_spin=1" if args.busy_spin else "")
-                              + f": {', '.join(steps)} ===", flush=True)
-                        rc = run_cijoe(suite, "meta", *steps,
-                                       out=f"{out}/{leg}", check=False)
-                        if rc:
-                            print(f"leg {leg} failed (rc={rc}); continuing",
-                                  flush=True)
+            os.environ["OPENDS_AISIO_IO_THREADS"] = str(t)
+            os.environ["OPENDS_AISIO_QUEUE_DEPTH"] = str(q)
+            os.environ["OPENDS_AISIO_ASSUME_ALIGNED_ONLY"] = str(a)
+            leg = p.get("name") or (f"t{t}_q{q}" + ("_aligned" if a else "")
+                                    + (f"_spin{s}" if s is not None else "")
+                                    + ("_busy" if args.busy_spin else ""))
+            steps = _bench_steps("opends", p.get("mode", args.mode),
+                                 p.get("datasets") or datasets)
+            print(f"\n=== opends io_threads={t} queue_depth={q} "
+                  f"assume_aligned_only={a}"
+                  + (f" idle_spin_us={s}" if s is not None else "")
+                  + (" busy_spin=1" if args.busy_spin else "")
+                  + f": {', '.join(steps)} ===", flush=True)
+            rc = run_cijoe(suite, "meta", *steps, out=f"{out}/{leg}",
+                           check=False)
+            if rc:
+                print(f"leg {leg} failed (rc={rc}); continuing", flush=True)
     finally:
         if not args.keep_stack:
             run_cijoe(suite, "homi_stack_down", "cpu_governor_restore",
@@ -141,25 +197,41 @@ parser.add_argument("--cpu-mask", metavar="MASK",
                          "via OPENDS_AISIO_CPU_MASK; opends suite only.")
 parser.add_argument("--out", default="cijoe-output-bench",
                     help="Output dir root; each suite writes under "
-                         "<out>/<suite>/. Default cijoe-output-bench. Use a "
-                         "distinct dir to add legs without overwriting prior "
-                         "ones (cijoe wipes a reused leg dir).")
+                         "<out>/<suite>/. Default cijoe-output-bench. A full "
+                         "sweep and a point list share their leg names, so "
+                         "give one of the two a distinct dir to keep both "
+                         "(cijoe wipes a reused leg dir).")
 
-grid = parser.add_argument_group("opends sweep grid")
-grid.add_argument("--io-threads", type=_int_list, default=[1, 2, 4, 8],
-                  help="Comma-separated IO-thread counts. Default 1,2,4,8.")
+grid = parser.add_argument_group("opends sweep points")
+which = grid.add_mutually_exclusive_group()
+which.add_argument("--full-sweep", action="store_true",
+                   help="Sweep the whole io_threads x queue_depth x "
+                        "assume_aligned_only x idle_spin cross product "
+                        "instead of the point list: 80 legs and about 6 "
+                        "hours on the default axes, 160 legs and 13 hours "
+                        "with --idle-spin default,0. Narrowing an axis below "
+                        "implies this mode, so the flag is only needed to "
+                        "sweep every axis in full.")
+which.add_argument("--sweep-config", metavar="FILE",
+                   help="Run the points listed in FILE (TOML) instead of the "
+                        "default list, scripts/bench/sweep.toml. A point "
+                        "names io_threads and queue_depth, and may narrow "
+                        "datasets and mode, so a costly dataset runs only "
+                        "where its own optimum is.")
+grid.add_argument("--io-threads", type=_int_list,
+                  help="Comma-separated IO-thread counts, which sweeps the "
+                       "cross product over them. Default 1,2,4,8.")
 grid.add_argument("--queue-depth", type=_int_list,
-                  default=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
                   help="Comma-separated NVMe queue depths. Default 1..512 "
                        "(>512 may exceed the device MQES and fail).")
-grid.add_argument("--assume-aligned-only", type=_int_list, default=[0, 1],
+grid.add_argument("--assume-aligned-only", type=_int_list,
                   metavar="LIST",
                   help="Comma-separated OPENDS_AISIO_ASSUME_ALIGNED_ONLY "
                        "values. Default 0,1 (both), which doubles the grid; "
                        "pass 0 for the tail-fixup sweep alone. An aligned leg "
                        "writes to t<t>_q<q>_aligned/, so 0-legs keep their "
                        "paths.")
-grid.add_argument("--idle-spin", type=_spin_list, default=[None],
+grid.add_argument("--idle-spin", type=_spin_list,
                   metavar="LIST",
                   help="Comma-separated OPENDS_AISIO_IDLE_SPIN_US values in "
                        "microseconds; the token 'default' keeps the library "
@@ -189,9 +261,19 @@ if args.batches:
 if args.cpu_mask:
     os.environ["OPENDS_AISIO_CPU_MASK"] = args.cpu_mask
 
+axes = [f"--{k.replace('_', '-')}" for k in GRID_AXES
+        if getattr(args, k) is not None]
+if axes and args.sweep_config:
+    parser.error(f"{', '.join(axes)} narrows a cross product, which "
+                 f"--sweep-config {args.sweep_config} replaces")
+
+points = (list(_grid_points(args)) if args.full_sweep or axes
+          else _file_points(args.sweep_config or DEFAULT_POINTS,
+                            parser.error))
+
 for name in args.suite or list(SUITES):
     if name == "gds":
         _run_gds(args, datasets)
     else:
-        _run_opends(args, datasets)
+        _run_opends(args, datasets, points)
 ok("run_bench")

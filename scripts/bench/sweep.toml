@@ -1,0 +1,134 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# The sweep points worth re-measuring often. run.py runs this list unless
+# --full-sweep, an axis flag, or --sweep-config says otherwise.
+#
+# A full sweep is 80 legs and about 6 hours, or 160 legs and 13 hours with
+# --idle-spin default,0, too long to run after an ordinary change. The points
+# below are the ones that carry information: the best (io_threads,
+# queue_depth) for every dataset and mode, their neighbors on both axes, the
+# low-concurrency corner, the default knobs, and one leg per knob combination.
+# 15 legs, about 35 minutes.
+#
+# Cost is per (dataset, mode) run: about 12 s of fixed cost plus the read
+# itself. Only imagenetish is expensive, 200-380 s for a sync read alone, so it
+# is named at two points only. Every other dataset is under 6 s and rides along
+# for free.
+#
+# Run it with:
+#   scripts/bench/run.py --batches tiktokish=200
+#
+# --batches widens tiktokish, whose window is 0.03 s at the default batch
+# count. That is too short to rank configurations: its full-sweep numbers
+# scatter over 5100-5615 MiB/s with no structure. Widening costs about 2
+# minutes and makes the dataset able to show a regression at all. A full sweep
+# shares these leg names, so give one of the two its own --out.
+#
+# MiB/s figures in the notes are from the 7a61a12 sweep. Refresh them, and the
+# choice of points, whenever the surface moves.
+
+# The tail-fixup path at the library default idle spin, which is what a caller
+# gets without setting anything.
+
+[[point]]
+io_threads = 1
+queue_depth = 1
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+why = "Low-concurrency corner. Every dataset gives up 20-25% here, so the size of that gap tracks per-op cost."
+
+[[point]]
+io_threads = 1
+queue_depth = 2
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+why = "lmcacheish async peaks here at 6080 and is the only point within 3% of it."
+
+[[point]]
+io_threads = 1
+queue_depth = 4
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+why = "Depth neighbor of that peak, where lmcacheish async has already fallen to 5271."
+
+[[point]]
+io_threads = 1
+queue_depth = 16
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+why = "tiktokish sync peak at 5544."
+
+[[point]]
+io_threads = 1
+queue_depth = 512
+why = "The default knobs, so this is the leg the README table reports. Also imagenetish sync at its peak, 662, and its cheapest read of the set at 200 s."
+
+[[point]]
+io_threads = 2
+queue_depth = 4
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+why = "filesize8gib sync peak at 7103."
+
+[[point]]
+io_threads = 2
+queue_depth = 512
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+why = "filesize8gib async peak at 7092, and the thread neighbor of the default knobs."
+
+[[point]]
+io_threads = 4
+queue_depth = 32
+why = "imagenetish async peak at 2764. Also samples imagenetish sync off t1, where it keeps only two thirds of its throughput."
+
+[[point]]
+io_threads = 8
+queue_depth = 32
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+why = "tiktokish async peak at 5615, and the high-thread corner."
+
+# The assume_aligned_only path. Only filesize8gib and lmcacheish have
+# LBA-multiple files; the other two fail by construction. The path is worth
+# three legs because it does not just add throughput, it changes the shape of
+# the surface.
+
+[[point]]
+io_threads = 1
+queue_depth = 2
+assume_aligned_only = 1
+datasets = ["filesize8gib", "lmcacheish"]
+why = "lmcacheish async reaches 6418 here, its best anywhere. Aligned also flattens the surface: it holds 6380 at the depths where tail fixup falls to 4890."
+
+[[point]]
+io_threads = 1
+queue_depth = 512
+assume_aligned_only = 1
+datasets = ["filesize8gib", "lmcacheish"]
+why = "The default knobs on the aligned path. filesize8gib sync peaks here at 7100."
+
+[[point]]
+io_threads = 4
+queue_depth = 32
+assume_aligned_only = 1
+datasets = ["filesize8gib", "lmcacheish"]
+why = "Aligned away from t1, where lmcacheish async still holds 6381. Catches a regression that needs several workers to show."
+
+# Idle spin off, the pre-idle-spin behavior. It costs throughput only at one
+# worker, so one leg per side of that boundary is enough.
+
+[[point]]
+io_threads = 1
+queue_depth = 512
+idle_spin_us = 0
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+why = "Napping at once instead of spinning costs lmcacheish sync 6% (6385 -> 5988) and tiktokish sync 7%. The full sweep shows imagenetish sync losing 1.9x here, 662 -> 351, but that single read costs 6 minutes, so it stays out."
+
+[[point]]
+io_threads = 2
+queue_depth = 512
+idle_spin_us = 0
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+why = "Control for the leg above. A second worker already hides the completion latency, so the nap is free from t2 up (lmcacheish sync 6151 against 6156)."
+
+[[point]]
+io_threads = 1
+queue_depth = 512
+assume_aligned_only = 1
+idle_spin_us = 0
+datasets = ["filesize8gib", "lmcacheish"]
+why = "Both knobs at once. Guessed from the single-knob legs, since the 7a61a12 sweep had not reached this corner: expect the aligned figures with the t1 sync loss, so lmcacheish sync near 5990."
