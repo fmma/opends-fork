@@ -363,6 +363,9 @@ per (dataset, mode) pair plus the read itself, and imagenetish is the only
 dataset that reads for minutes, so it is named at two points only. Re-derive
 the points from a full sweep whenever the surface moves.
 
+A leg that cijoe reports as failed does not stop the sweep, so the rest still
+get measured, but `run.py` exits non-zero and names the ones that failed.
+
 Every leg appends a structured record to
 `<out>/**/artifacts/history.jsonl`: config (backend, dataset, mode,
 io_threads, queue_depth, cpu_mask, idle_spin_us, busy_spin), result
