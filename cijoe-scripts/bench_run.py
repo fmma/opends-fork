@@ -19,8 +19,7 @@ from pathlib import Path
 
 NOFILE = 1048576
 
-# fil 0.1.0 still names the stream-ordered family --async
-MODE_FLAG = {"sync": None, "stream": "--async"}
+MODE_FLAG = {"sync": None, "stream": "--stream"}
 
 SUMMARY_FIELDS = {
     "Total time": "total_time_s",
