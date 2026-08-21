@@ -3,12 +3,11 @@
 # The sweep points worth re-measuring often. run.py runs this list unless
 # --full-sweep, an axis flag, or --sweep-config says otherwise.
 #
-# A full sweep is 80 legs and about 6 hours, or 160 legs and 13 hours with
-# --idle-spin default,0, too long to run after an ordinary change. The points
-# below are the ones that carry information: the best (io_threads,
-# queue_depth) for every dataset and mode, their neighbors on both axes, the
-# low-concurrency corner, the default knobs, and one leg per knob combination.
-# 15 legs, about 40 minutes.
+# A full sweep is 160 legs and about 13 hours, too long to run after an
+# ordinary change. The points below are the ones that carry information: the
+# best (io_threads, queue_depth) for every dataset and mode, their neighbors
+# on both axes, the low-concurrency corner, the default knobs, and one leg per
+# knob combination. 15 legs, about 40 minutes.
 #
 # Cost is per (dataset, mode) run: about 12 s of fixed cost plus the read
 # itself. Only imagenetish is expensive, 200-380 s for a sync read alone, so it

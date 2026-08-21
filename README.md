@@ -322,15 +322,15 @@ up once, and each point runs into
 `--sweep-config FILE` swaps in another list.
 
 `--full-sweep` measures the whole io_threads x queue_depth x
-assume_aligned_only x idle_spin cross product instead, 80 legs and about 6
-hours on the default axes. The axes are `--io-threads` (default 1,2,4,8),
-`--queue-depth` (default 1..512), `--assume-aligned-only` (default 0,1) and
-`--idle-spin` (default 'default': the library default with the env unset; an
-integer is microseconds and 0 naps immediately, so 'default,0' is an on/off
-comparison of the idle-spin window, 160 legs and about 13 hours). Narrowing an
-axis sweeps the cross product too, so `--full-sweep` is only needed to sweep
-every axis in full. A full sweep shares its leg names with a point list, so
-give one of the two its own `--out`.
+assume_aligned_only x idle_spin cross product instead, 160 legs and about 13
+hours. The axes are `--io-threads` (default 1,2,4,8), `--queue-depth` (default
+1..512), `--assume-aligned-only` (default 0,1) and `--idle-spin` (default
+'default,0': the library default with the env unset, and 0, which naps
+immediately, an on/off comparison of the idle-spin window). Narrowing an axis
+sweeps the cross product too, so `--full-sweep` is only needed to sweep every
+axis in full, and `--idle-spin default` halves it back to 80 legs and about 6
+hours. A full sweep shares its leg names with a point list, so give one of the
+two its own `--out`.
 
 `--busy-spin` applies `OPENDS_AISIO_BUSY_SPIN=1` to every leg of the
 invocation. Restrict with `--suite`, `--mode`, and `--dataset`. An aligned leg

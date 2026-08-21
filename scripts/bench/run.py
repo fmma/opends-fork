@@ -7,10 +7,9 @@ gds has no knobs: its sweep is the singleton, one run of the whole suite.
 opends runs the point list in scripts/bench/sweep.toml, the parts of the grid
 that carry information, about 40 minutes. --full-sweep runs the whole
 io_threads x queue_depth x assume_aligned_only x idle_spin cross product
-instead, 80 legs and about 6 hours on the default axes. Narrowing an axis
-(--io-threads, --queue-depth, --assume-aligned-only, --idle-spin) sweeps the
-cross product too, over the axes as given. --sweep-config swaps in another
-list.
+instead, 160 legs and about 13 hours. Narrowing an axis (--io-threads,
+--queue-depth, --assume-aligned-only, --idle-spin) sweeps the cross product
+too, over the axes as given. --sweep-config swaps in another list.
 
 Either way the HOMI/qublk stack comes up once, each point runs the bench steps
 into opends/t<t>_q<q>[_aligned][_spin<v>][_busy]/ with the aisio knobs passed
@@ -50,7 +49,7 @@ DEFAULT_POINTS = Path(__file__).resolve().parent / "sweep.toml"
 GRID_AXES = {"io_threads": [1, 2, 4, 8],
              "queue_depth": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
              "assume_aligned_only": [0, 1],
-             "idle_spin": [None]}
+             "idle_spin": [None, 0]}
 
 GDS_SETUP = ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"]
 
@@ -211,11 +210,10 @@ which = grid.add_mutually_exclusive_group()
 which.add_argument("--full-sweep", action="store_true",
                    help="Sweep the whole io_threads x queue_depth x "
                         "assume_aligned_only x idle_spin cross product "
-                        "instead of the point list: 80 legs and about 6 "
-                        "hours on the default axes, 160 legs and 13 hours "
-                        "with --idle-spin default,0. Narrowing an axis below "
-                        "implies this mode, so the flag is only needed to "
-                        "sweep every axis in full.")
+                        "instead of the point list: 160 legs and about 13 "
+                        "hours. Narrowing an axis below implies this mode, so "
+                        "the flag is only needed to sweep every axis in "
+                        "full.")
 which.add_argument("--sweep-config", metavar="FILE",
                    help="Run the points listed in FILE (TOML) instead of the "
                         "default list, scripts/bench/sweep.toml. A point "
@@ -240,10 +238,11 @@ grid.add_argument("--idle-spin", type=_spin_list,
                   help="Comma-separated OPENDS_AISIO_IDLE_SPIN_US values in "
                        "microseconds; the token 'default' keeps the library "
                        "default (env unset), 0 naps immediately (the "
-                       "pre-idle-spin behavior). E.g. 'default,0' doubles the "
-                       "grid into an on/off comparison. An explicit value "
-                       "writes to t<t>_q<q>_spin<v>/, so default legs keep "
-                       "their paths. Default: 'default'.")
+                       "pre-idle-spin behavior). Default 'default,0' (both), "
+                       "which doubles the grid; pass 'default' for the "
+                       "shipped window alone. An explicit value writes to "
+                       "t<t>_q<q>_spin<v>/, so default legs keep their "
+                       "paths.")
 grid.add_argument("--busy-spin", action="store_true",
                   help="Set OPENDS_AISIO_BUSY_SPIN=1 for every leg of this "
                        "invocation (workers poll flat out; pair with "
