@@ -1045,7 +1045,12 @@ env_int(const char *name, int def, int lo, int hi, int *out)
 		*out = def;
 		return 0;
 	}
-	long n = strtol(v, NULL, 10);
+	char *end;
+	long n = strtol(v, &end, 10);
+	if (end == v || *end) {
+		fprintf(stderr, "aisio: %s=%s is not a number\n", name, v);
+		return -EINVAL;
+	}
 	if (n < lo || n > hi) {
 		fprintf(stderr, "aisio: %s=%s out of range [%d, %d]\n", name, v,
 		        lo, hi);

@@ -25,7 +25,8 @@ NVMe straight into GPU memory.
 ## aisio configuration
 
 The aisio backend reads its configuration from environment variables at
-`opends_driver_open`. Out-of-range values fail the open.
+`opends_driver_open`. Values that are out of range, or not a number, fail
+the open.
 
 - `OPENDS_HOMI_DEV` (required): The NVMe device the HOMI daemon owns (PCI BDF).
 - `OPENDS_HOMI_SOCKET`: HOMI daemon socket. Default `/run/homi/homi.sock`.
