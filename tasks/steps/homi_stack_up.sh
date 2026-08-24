@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: BSD-3-Clause
-# Bring up the HOMI/qublk stack so the aisio backend can attach qpairs and read
-# files on a mounted filesystem. Hands the NVMe controller to userspace (HOMI),
+# Bring up the HOMI/qublk stack so the aisio backend can join it and read files
+# on a mounted filesystem. Hands the NVMe controller to userspace (HOMI),
 # exposes it as a ublk block device (qublk), and mounts the existing XFS over it
 # at MOUNT. The same XFS is what the ref/gds phases mounted via the kernel
 # driver, so any file written there (e.g. the sync-read pattern) is still
@@ -42,6 +42,7 @@ cat > "$CONF" <<EOF
 log_level = 2
 devices = [ "$BDF" ]
 ipc_socket = "$SOCK"
+shm_id = 1
 
 [xal]
 backend = $XAL_BACKEND_FIEMAP
@@ -49,7 +50,7 @@ watchmode = $XAL_WATCHMODE_DIRTY_DETECTION
 file_lookupmode = $XAL_FILE_LOOKUPMODE_TRAVERSE
 mountpoint = "$MOUNT"
 EOF
-rm -f "$SOCK" /run/homi/*.desc /dev/shm/homid_dev*
+rm -f "$SOCK" /dev/shm/homid_dev*
 
 echo "starting homid"
 # Diagnostic: let the daemons dump a core on crash (paired with a file
@@ -65,8 +66,8 @@ for _ in $(seq 1 20); do
 	sleep 0.2
 done
 # Wait for the listening socket, bailing if homid dies. homid binds the socket
-# only after owning the controller and indexing xal (a few seconds), so the
-# socket's appearance means it is ready to serve qpair-attach and xal requests.
+# only after bringing the controller up as the group primary, so the socket's
+# appearance is also what tells a client the group is safe to join.
 for _ in $(seq 1 120); do
 	[ -S "$SOCK" ] && break
 	if ! pgrep -x homid > /dev/null; then

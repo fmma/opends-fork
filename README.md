@@ -16,11 +16,13 @@ NVMe straight into GPU memory.
 - **aisio** (`libopends_aisio`): PCIe P2P DMA between NVMe and GPU memory via
   [xNVMe](https://xnvme.io)'s `upcie-cuda` backend (no filesystem or kernel
   `nvme` driver in the read data path). Based on
-  [aisio](https://github.com/xnvme/aisio). A HOMI daemon owns the userspace NVMe
-  controller, serves an I/O qpair per file, and resolves each file's device
-  extents on demand (`homic_get_extents`, FIEMAP over the qublk-exported block
-  device). Reads and writes are supported. Requires xNVMe, the CUDA toolkit, and
-  the HOMI/qublk stack.
+  [aisio](https://github.com/xnvme/aisio). A HOMI daemon is the primary of an
+  xNVMe multi-process group and holds the userspace NVMe controller up; the
+  driver joins that group as a secondary and allocates its own I/O queues. The
+  daemon also resolves each file's device extents on demand
+  (`homic_get_extents`, FIEMAP over the qublk-exported block device). Reads and
+  writes are supported. Requires xNVMe, the CUDA toolkit, and the HOMI/qublk
+  stack.
 
 ## aisio configuration
 
@@ -31,7 +33,7 @@ the open.
 - `OPENDS_HOMI_DEV` (required): The NVMe device the HOMI daemon owns (PCI BDF).
 - `OPENDS_HOMI_SOCKET`: HOMI daemon socket. Default `/run/homi/homi.sock`.
 - `OPENDS_AISIO_IO_THREADS`: Number of internal IO worker threads. Default 2.
-  Driver open attaches one NVMe qpair per worker.
+  Driver open creates one NVMe queue per worker.
 - `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 8.
 - `OPENDS_AISIO_CPU_MASK`: Hex mask of CPUs for the workers (e.g. `0xf0`).
   Each worker gets a one-CPU affinity via `pthread_attr_setaffinity_np(3)`:
@@ -46,6 +48,13 @@ the open.
   LBA-aligned. Reads that start or end off an LBA boundary fail with
   `OPENDS_INVALID_VALUE`, and the stream path stops enqueueing the bounce
   kernel.
+- `OPENDS_AISIO_SHM_ID`: xNVMe multi-process group to join. Default 1, which is
+  also the HOMI daemon's default, so both sides agree unless both are changed.
+- `OPENDS_AISIO_HOST_HEAP_MB`: Host DMA heap for this process, holding its own
+  queue rings and PRP lists. Default 256. The heap comes out of the hugepages
+  every process in the group shares, so xNVMe's 1 GiB default is too large.
+- `OPENDS_AISIO_DEVICE_HEAP_MB`: GPU device heap for this process. Default 0,
+  which leaves it at the xNVMe default.
 
 ## Performance
 

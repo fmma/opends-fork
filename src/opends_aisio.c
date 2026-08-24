@@ -3,9 +3,10 @@
  * opends_aisio.c - aisio backend for raw-NVMe direct storage.
  *
  * Reads go straight from an NVMe device into GPU memory via xNVMe's upcie-cuda
- * backend (PCIe P2P DMA). HOMI owns the device: it hands out the I/O qpair the
- * reads are driven over. A registered file's extents come from
- * homic_get_extents.
+ * backend (PCIe P2P DMA). The HOMI daemon is the primary of an xNVMe
+ * multi-process group and holds the controller up; this driver joins the same
+ * group as a secondary and allocates its own I/O queues. A registered file's
+ * extents come from homic_get_extents.
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before opends_driver_open runs.
@@ -38,6 +39,7 @@
 #include <unistd.h>
 
 #include <homic.h>
+#include <homi_proto.h>
 #include <libxnvme.h>
 
 #define ENV_HOMI_SOCKET "OPENDS_HOMI_SOCKET"
@@ -47,6 +49,9 @@
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
 #define ENV_ASSUME_ALIGNED_ONLY "OPENDS_AISIO_ASSUME_ALIGNED_ONLY"
 #define ENV_IDLE_SPIN "OPENDS_AISIO_IDLE_SPIN"
+#define ENV_SHM_ID "OPENDS_AISIO_SHM_ID"
+#define ENV_HOST_HEAP_MB "OPENDS_AISIO_HOST_HEAP_MB"
+#define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
 #define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
 #define DEFAULT_IO_THREADS 2
 #define MAX_IO_THREADS 15
@@ -57,6 +62,13 @@
 #define BOUNCE_SLOTS 2
 #define DEFAULT_QUEUE_DEPTH 8
 #define MAX_QUEUE_DEPTH 4096
+
+/* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, one set
+ * per I/O thread. 256 MiB covers the largest configuration the knobs allow
+ * (MAX_IO_THREADS queues at MAX_QUEUE_DEPTH). xNVMe would otherwise default to
+ * 1 GiB, which does not multiply across the processes sharing the hugepages. */
+#define DEFAULT_HOST_HEAP_MB 256
+#define MAX_HEAP_MB (64 * 1024)
 #define DEFAULT_IDLE_SPIN_US 200
 #define MAX_IDLE_SPIN_US 1000000
 #define MAX_STREAMS 8192
@@ -156,8 +168,10 @@ struct io_worker {
 };
 
 struct driver {
-	char dev_uri[64];      ///< NVMe device (BDF) the HOMI daemon owns
-	char *attach_descpath; ///< HOMI-served qpair attach descriptor file
+	char dev_uri[64]; ///< NVMe device (BDF) the HOMI daemon owns
+	uint32_t shm_id;  ///< Multi-process group the HOMI daemon is primary of
+	size_t host_heap_nbytes;
+	size_t device_heap_nbytes;
 	struct xnvme_dev *xdev;
 	uint32_t nsid;
 	uint32_t lba_size;
@@ -297,14 +311,15 @@ stream_bounce_free(struct opends_stream *s, struct driver *d)
 #define ESTALE_BACKOFF_US 50000
 
 static int
-resolve_extents(int fd, struct ds_extent **out, uint32_t *out_n)
+resolve_extents(struct driver *d, int fd, struct ds_extent **out,
+                uint32_t *out_n)
 {
 	struct homic_extent *hx = NULL;
 	uint32_t n = 0;
 	int rc = -ESTALE;
 
 	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
-		rc = homic_get_extents(fd, &hx, &n);
+		rc = homic_get_extents(d->dev_uri, fd, &hx, &n);
 		if (rc != -ESTALE)
 			break;
 		usleep(ESTALE_BACKOFF_US);
@@ -379,28 +394,25 @@ out:
 static int
 open_device(struct driver *d)
 {
-	int nqpairs = 1 + d->n_io_threads;
-	int rc = homic_attach_qpair(d->dev_uri, nqpairs, &d->attach_descpath);
-	if (rc < 0) {
-		fprintf(stderr,
-		        "aisio open_device: homic_attach_qpair(%s) rc=%d\n",
-		        d->dev_uri, rc);
-		if (rc == -ENOMEM || rc == -EINVAL)
-			fprintf(stderr,
-			        "aisio: HOMI refused %d qpairs "
-			        "(1 producer + %d IO threads); lower %s\n",
-			        nqpairs, d->n_io_threads, ENV_IO_THREADS);
-		return rc;
-	}
-
-	setenv("XNVME_UPCIE_ATTACH", d->attach_descpath, 1);
+	/* Joins the group the HOMI daemon is primary of, which the connection
+	 * made before this proves is running. Whoever opens first wins the role
+	 * election, so a shm_id the daemon does not serve would silently make
+	 * this process the controller owner; both sides default to
+	 * HOMI_DEFAULT_SHM_ID so they agree unless both are overridden. */
 	struct xnvme_opts opts = xnvme_opts_default();
 	opts.be = ds_accel->xnvme_be;
+	opts.shm_id = d->shm_id;
+	opts.host_heap_size = d->host_heap_nbytes;
+	opts.device_heap_size = d->device_heap_nbytes;
 
 	d->xdev = xnvme_dev_open(d->dev_uri, &opts);
-	unsetenv("XNVME_UPCIE_ATTACH");
-	if (!d->xdev)
+	if (!d->xdev) {
+		fprintf(stderr,
+		        "aisio open_device: xnvme_dev_open(%s, be=%s, "
+		        "shm_id=%u) failed\n",
+		        d->dev_uri, opts.be, d->shm_id);
 		return -EIO;
+	}
 
 	const struct xnvme_geo *geo = xnvme_dev_get_geo(d->xdev);
 	d->nsid = xnvme_dev_get_nsid(d->xdev);
@@ -646,7 +658,7 @@ start_read_op(struct io_worker *w, struct file_op *op)
 
 	struct ds_extent *extents;
 	uint32_t extent_count;
-	int frc = resolve_extents(op->h->fd, &extents, &extent_count);
+	int frc = resolve_extents(d, op->h->fd, &extents, &extent_count);
 	if (frc < 0) {
 		op->err = OPENDS_FS_SETUP_ERROR;
 		return;
@@ -1118,6 +1130,21 @@ read_env_config(struct driver *d)
 	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
 	d->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
 
+	if (env_int(ENV_SHM_ID, HOMI_DEFAULT_SHM_ID, 0, INT_MAX, &n) < 0)
+		return -EINVAL;
+	d->shm_id = (uint32_t)n;
+
+	if (env_int(ENV_HOST_HEAP_MB, DEFAULT_HOST_HEAP_MB, 1, MAX_HEAP_MB,
+	            &n) < 0)
+		return -EINVAL;
+	d->host_heap_nbytes = (size_t)n << 20;
+
+	/* 0 leaves the device heap at the xNVMe default; GPU memory is not the
+	 * scarce resource the host hugepages are. */
+	if (env_int(ENV_DEVICE_HEAP_MB, 0, 0, MAX_HEAP_MB, &n) < 0)
+		return -EINVAL;
+	d->device_heap_nbytes = (size_t)n << 20;
+
 	/* The tail mode picks the async gate mechanism, and the vendor ops it
 	 * drives are required only for that mode (see ds_accel.h). A partial
 	 * port may leave the other mode's ops NULL; fail open instead of
@@ -1216,7 +1243,6 @@ opends_driver_open(void)
 	int orc = open_device(d);
 	if (orc < 0) {
 		homic_disconnect();
-		free(d->attach_descpath);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
@@ -1228,9 +1254,7 @@ opends_driver_open(void)
 	if (arc != 0) {
 		fprintf(stderr, "aisio: workers_setup failed\n");
 		xnvme_dev_close(d->xdev);
-		homic_detach_qpair();
 		homic_disconnect();
-		free(d->attach_descpath);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
@@ -1262,9 +1286,7 @@ opends_driver_close(void)
 	if (drv->xdev)
 		xnvme_dev_close(drv->xdev);
 
-	homic_detach_qpair();
 	homic_disconnect();
-	free(drv->attach_descpath);
 
 	pthread_mutex_destroy(&drv->alloc_lock);
 	pthread_mutex_destroy(&drv->submit_lock);

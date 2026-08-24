@@ -23,7 +23,11 @@ sleep 2
 pkill -KILL -x qublk 2>/dev/null || true
 pkill -KILL -x homid 2>/dev/null || true
 
-rm -f /run/homi/*.desc /dev/shm/homid_dev*
+rm -f /dev/shm/homid_dev*
+
+# A killed primary leaves its multi-process segments behind, and the next
+# daemon would join the dead group rather than electing itself primary.
+rm -f /dev/shm/xnvme-upcie* /tmp/xnvme-upcie-flock-*
 
 # Reload ublk_drv to drop stale device ids a killed qublk may have left behind.
 rmmod ublk_drv 2>/dev/null || true

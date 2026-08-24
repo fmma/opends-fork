@@ -38,5 +38,6 @@ for _ in 1 2 3; do
 	sleep 1
 done
 
-rm -f /run/homi/ublk_dev /run/homi/*.desc /dev/shm/homid_dev*
+rm -f /run/homi/ublk_dev /dev/shm/homid_dev*
+rm -f /dev/shm/xnvme-upcie* /tmp/xnvme-upcie-flock-*
 echo "HOMI stack down: $BDF rebound to nvme"

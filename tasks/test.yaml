@@ -11,9 +11,10 @@ doc: |
   aisio phase then brings up the HOMI/qublk stack (homi_stack_up): it
   hands the controller to userspace, exposes it as a ublk block device,
   and remounts the same XFS over it, so the sync-read pattern written
-  during prep is still present. The aisio tests attach I/O qpairs from
-  HOMI and read that pattern file. homi_stack_down tears the stack down
-  and rebinds nvme so iterative runs leave the target usable.
+  during prep is still present. The aisio tests join HOMI's
+  multi-process group and read that pattern file. homi_stack_down tears
+  the stack down and rebinds nvme so iterative runs leave the target
+  usable.
 
   Prerequisites:
     - setup_opends.yaml has been run (sync_and_build.py does this).
