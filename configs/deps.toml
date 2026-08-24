@@ -1,20 +1,18 @@
 # SPDX-License-Identifier: BSD-3-Clause
+
+# Merge of xnvme/xnvme#750 (homi multi-process server) and #755 (qublk ublk
+# server), plus two patches the pairing needs: a qublk --shm_id option so it
+# joins the homi group, and a per-client buffer-alloc cap that fits qublk's
+# queue depth. Branch proto-750-755; move to upstream once both PRs land.
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
-ref = "opends-0.1.1"
+ref = "fd347442473f45feccc86743738c3230f1d6ac46"
 
+# xnvme/xal main with xal-server (xnvme/xal#47) merged.
 [xal.repository]
-remote = "https://github.com/fmma/xal"
-ref = "opends-0.1.0"
+remote = "https://github.com/xnvme/xal"
+ref = "0785db883a81f80a0be4e8edce13bb57cb667278"
 
 [fil.repository]
 remote = "https://github.com/fmma/fil"
-ref = "opends-0.1.2"
-
-[homi.repository]
-remote = "https://github.com/fmma/homi"
-ref = "opends-0.1.0"
-
-[qublk.repository]
-remote = "https://github.com/fmma/qublk"
-ref = "opends-0.1.0"
+ref = "opends-0.2.1"
