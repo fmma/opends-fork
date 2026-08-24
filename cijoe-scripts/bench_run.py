@@ -7,8 +7,8 @@ block) written to artifacts/<backend>_<data_dir>_<mode>.log.
 Each bench run runs filperf under `prlimit --nofile`. nofile is
 required for opends and harmless elsewhere. gds runs get a cold-cache `drop_caches`; opends
 reads files on the HOMI/qublk mount via DMA into GPU memory, so the
-kernel page cache is irrelevant and the device's BDF/socket are
-passed through OPENDS_HOMI_DEV/OPENDS_HOMI_SOCKET.
+kernel page cache is irrelevant and the device BDF and index shm name
+are passed through OPENDS_HOMI_DEV/OPENDS_XAL_SHM.
 """
 
 import json
@@ -20,6 +20,10 @@ from pathlib import Path
 NOFILE = 1048576
 
 MODE_FLAG = {"sync": None, "stream": "--stream", "async": "--async"}
+
+# The suite, the artifacts and the report say "gds"; fil calls the cuFile
+# backend "cufile".
+FILPERF_BACKEND = {"gds": "cufile"}
 
 SUMMARY_FIELDS = {
     "Total time": "total_time_s",
@@ -147,20 +151,20 @@ def main(args, cijoe):
             return err
         target = state.output().strip().splitlines()[-1]
     elif args.backend == "opends":
-        # HOMI owns the controller; qublk re-exports it as a ublk block device
+        # homi owns the controller; qublk re-exports it as a ublk block device
         # that fil walks with xal for enumeration, exactly like gds walks the
-        # kernel-bound NVMe. The aisio backend attaches a qpair from HOMI per
-        # file (via OPENDS_HOMI_DEV/SOCKET), so the device read path bypasses
+        # kernel-bound NVMe. The aisio backend joins the homi group and reads
+        # extents from the xal-server index, so the device read path bypasses
         # the ublk target.
         err, state = cijoe.run("cat /run/homi/ublk_dev")
         if err:
             return err
         target = state.output().strip().splitlines()[-1]
-        sock = "/run/homi/homi.sock"
+        shm = "/xal_dev0"
         if not mnt:
             mnt = cijoe.getconf("test.mount_point")
         env = (
-            f"OPENDS_HOMI_DEV='{bdf}' OPENDS_HOMI_SOCKET='{sock}' "
+            f"OPENDS_HOMI_DEV='{bdf}' OPENDS_XAL_SHM='{shm}' "
             f"OPENDS_HOMI_MNT='{mnt}' "
         )
         if io_threads:
@@ -179,7 +183,7 @@ def main(args, cijoe):
     filperf = [
         f"{env}prlimit --nofile={NOFILE}:{NOFILE} --",
         f"filperf '{target}'",
-        f"--backend {args.backend}",
+        f"--backend {FILPERF_BACKEND.get(args.backend, args.backend)}",
         f"--data-dir {args.data_dir}",
         f"--batches {args.batches} --batch-size {args.batch_size}",
         "--summary",
