@@ -33,9 +33,20 @@ the open.
 - `OPENDS_AISIO_IO_THREADS`: Number of internal IO worker threads. Default 1.
   Driver open attaches one NVMe qpair per worker.
 - `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 512.
-- `OPENDS_AISIO_CPU_MASK`: CPU affinity mask for the workers (e.g. `0xf0`).
-  Worker i is pinned to the i-th set bit, round-robin. Unset or `0` leaves
-  workers unpinned.
+- `OPENDS_AISIO_CPU_MASK`: Hex mask of CPUs for the workers (e.g. `0xf0`).
+  Each worker gets a one-CPU affinity via `pthread_attr_setaffinity_np(3)`:
+  worker i takes set bit i mod popcount, so a mask with fewer bits than
+  `OPENDS_AISIO_IO_THREADS` pins more than one worker to a CPU. Unset or `0`
+  leaves placement to the scheduler.
+- `OPENDS_AISIO_IDLE_SPIN_US`: How long an idle IO worker keeps yielding
+  after its last activity before it naps. Default 200. `0` naps at once.
+- `OPENDS_AISIO_BUSY_SPIN`: `1` makes the workers poll flat out, so they
+  never yield or nap and `OPENDS_AISIO_IDLE_SPIN_US` does not apply. Each
+  worker holds a CPU until the driver closes.
+- `OPENDS_AISIO_ASSUME_ALIGNED_ONLY`: `1` declares that every read is
+  LBA-aligned. Reads that end off an LBA boundary fail with
+  `OPENDS_INVALID_VALUE`, and the async path stops enqueueing the bounce
+  kernel.
 
 ## Performance
 
@@ -303,7 +314,9 @@ after its last activity before falling back to a 100 us nap (default 200,
 `OPENDS_AISIO_BUSY_SPIN=1` makes the IO workers poll flat out, never yielding
 the CPU or napping (`OPENDS_AISIO_IDLE_SPIN_US` becomes moot). Each worker
 then occupies a full core for the driver's lifetime; pair it with
-`OPENDS_AISIO_CPU_MASK` so the spinning workers sit on dedicated cores.
+`OPENDS_AISIO_CPU_MASK` so the spinning workers sit on dedicated cores. Set
+at least `--io-threads` bits in the mask, or two spinning workers share a CPU
+and fight over it (see aisio configuration).
 
 Every leg appends a structured record to
 `<out>/**/artifacts/history.jsonl`: config (backend, dataset, mode,
