@@ -1,0 +1,297 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# The configs run.py measures by default. See README.md.
+
+[[config]]
+io_threads = 1
+queue_depth = 1
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 2
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 4
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 16
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 512
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 1
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 4
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 8
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 16
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 512
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 4
+queue_depth = 1
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 4
+queue_depth = 8
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 4
+queue_depth = 32
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 8
+queue_depth = 1
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 8
+queue_depth = 32
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 2
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["imagenetish"]
+mode = ["async"]
+name = "t1_q2_imagenetish"
+
+[[config]]
+io_threads = 1
+queue_depth = 4
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["imagenetish"]
+mode = ["async"]
+name = "t1_q4_imagenetish"
+
+[[config]]
+io_threads = 1
+queue_depth = 8
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["imagenetish"]
+mode = ["async"]
+name = "t1_q8_imagenetish"
+
+[[config]]
+io_threads = 2
+queue_depth = 1
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["imagenetish"]
+mode = ["async"]
+name = "t2_q1_imagenetish"
+
+[[config]]
+io_threads = 4
+queue_depth = 1
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["imagenetish"]
+mode = ["async"]
+name = "t4_q1_imagenetish"
+
+[[config]]
+io_threads = 8
+queue_depth = 1
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["imagenetish"]
+mode = ["async"]
+name = "t8_q1_imagenetish"
+
+[[config]]
+io_threads = 1
+queue_depth = 1
+assume_aligned_only = 1
+idle_spin = 200
+datasets = ["filesize8gib", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 2
+assume_aligned_only = 1
+idle_spin = 200
+datasets = ["filesize8gib", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 512
+assume_aligned_only = 1
+idle_spin = 200
+datasets = ["filesize8gib", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 8
+assume_aligned_only = 1
+idle_spin = 200
+datasets = ["filesize8gib", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 4
+queue_depth = 32
+assume_aligned_only = 1
+idle_spin = 200
+datasets = ["filesize8gib", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 8
+queue_depth = 32
+assume_aligned_only = 1
+idle_spin = 200
+datasets = ["filesize8gib", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 1
+assume_aligned_only = 0
+idle_spin = 0
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 4
+assume_aligned_only = 0
+idle_spin = 0
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 1
+assume_aligned_only = 0
+idle_spin = 0
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 8
+assume_aligned_only = 0
+idle_spin = 0
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 512
+assume_aligned_only = 0
+idle_spin = 0
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 1
+assume_aligned_only = 1
+idle_spin = 0
+datasets = ["filesize8gib", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 1
+assume_aligned_only = 0
+idle_spin = "busy"
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 4
+assume_aligned_only = 0
+idle_spin = "busy"
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 8
+assume_aligned_only = 0
+idle_spin = "busy"
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "async"]

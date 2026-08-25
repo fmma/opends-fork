@@ -266,84 +266,24 @@ memory. The stack is then torn down and nvme rebound.
 
 Throughput benchmarks use `filperf` from [fil](https://github.com/xnvme/fil)
 against four reference datasets (`filesize8gib`, `tiktokish`, `imagenetish`,
-`lmcacheish`). Two suites: `tasks/bench_gds.yaml` and `tasks/bench_opends.yaml`.
-Datasets are populated once, not per bench run. The first three come from the
-aisio project's `tasks/setup_dataset.yaml` during target provisioning.
-`lmcacheish` is OpenDS's own dataset: populate it with
-`scripts/bench/setup_dataset.py`.
+`lmcacheish`). The first three come from the aisio project's
+`tasks/setup_dataset.yaml` during target provisioning; `lmcacheish` is OpenDS's
+own, populated by `scripts/bench/setup_dataset.py`. Both are one-time, not per
+bench run.
 
-Prerequisites: `scripts/setup_deps.py`, `scripts/build.py`, and
-`scripts/bench/setup_dataset.py` have run on the target, and the aisio-provisioned
-datasets are in place.
-
-Full benchmark run and reporting:
+With `scripts/setup_deps.py`, `scripts/build.py` and
+`scripts/bench/setup_dataset.py` run on the target:
 
 ```sh
-python scripts/bench/run.py
-python scripts/bench/report.py --spec-mbs 7450
+python scripts/bench/run.py          # --full-sweep measures the whole grid
+python scripts/bench/report.py
 python scripts/bench/artefacts.py --push
 ```
 
-`run.py` sweeps every suite over its own knob grid into
-`cijoe-output-bench/<suite>/`. The gds suite has no knobs, so its sweep is the
-singleton: one run of the whole suite. The opends suite sweeps io_threads x
-queue_depth x assume_aligned_only x idle_spin: the HOMI/qublk stack comes up
-once, and each grid point runs into
-`cijoe-output-bench/opends/t<t>_q<q>[_aligned][_spin<v>][_busy]/`;
-the grid comes from `--io-threads` (default 1,2,4,8), `--queue-depth` (default
-1..512), `--assume-aligned-only` (default 0,1) and `--idle-spin` (default
-'default': the library default with the env unset; an integer is microseconds
-and 0 naps immediately, so 'default,0' is an on/off comparison of the idle-spin
-window). `--busy-spin` applies `OPENDS_AISIO_IDLE_SPIN=busy` to every leg of
-the invocation. Restrict with `--suite`, `--mode`, and `--dataset`. An aligned leg rejects any read with a sub-LBA
-tail, so datasets whose files are not LBA-multiples fail by construction;
-those legs are recorded with an empty result, the sweep continues to the
-datasets that do qualify, and `report.py` gives them their own section. The
-aisio knobs travel as environment variables (`OPENDS_AISIO_IO_THREADS`,
-`OPENDS_AISIO_QUEUE_DEPTH`, `OPENDS_AISIO_CPU_MASK`,
-`OPENDS_AISIO_IDLE_SPIN`). `--cpu-mask` sets `OPENDS_AISIO_CPU_MASK`: a hex
-mask whose CPUs the aisio IO workers are pinned to round-robin
-(`0x0` or unset leaves placement to the scheduler). Outside the sweep,
-`OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` declares that every read is LBA-aligned:
-reads whose span ends off an LBA boundary fail with `OPENDS_INVALID_VALUE`,
-and the async path stops enqueueing the per-read bounce kernel.
-`OPENDS_AISIO_IDLE_SPIN` sets how long an idle IO worker keeps yielding
-after its last activity before falling back to a 100 us nap (default 200,
-`0` naps immediately); ops arriving within the window skip the nap latency.
-`OPENDS_AISIO_IDLE_SPIN=busy` makes the IO workers poll flat out, never
-yielding the CPU or napping. Each worker then occupies a full core for the
-driver's lifetime; pair it with
-`OPENDS_AISIO_CPU_MASK` so the spinning workers sit on dedicated cores. Set
-at least `--io-threads` bits in the mask, or two spinning workers share a CPU
-and fight over it (see aisio configuration).
+`run.py` measures the configs in `scripts/bench/sweep.toml`. `report.py` turns
+the records into `report.md`, `sweep.csv` and `report.png`, and `artefacts.py`
+publishes those to the orphan `artefacts` branch. Each script's `--help` covers
+its own flags.
 
-Every leg appends a structured record to
-`<out>/**/artifacts/history.jsonl`: config (backend, dataset, mode,
-io_threads, queue_depth, cpu_mask, idle_spin_us, busy_spin), result
-(MiB/s, IOPS, timings), and
-environment (commit, host, kernel, NVMe, GPU, from `meta.json`), next to the
-verbatim `filperf` stdout (`<backend>_<dataset>[_async].log`). Each `filperf`
-run drops page caches first, so numbers are cold-cache, N=1.
-
-`report.py` reads every `history.jsonl` under its `--in` dirs (repeatable,
-default `cijoe-output-bench`) and writes `report.md`, `sweep.csv` (all records,
-flat), and `report.png` to the first `--in` dir (or `--out`). `report.md`
-holds one MiB/s pivot matrix over (io_threads x queue_depth) per opends
-(dataset, mode) and, when gds legs are present, a GDS-vs-OpenDS comparison
-table per (queue_depth, io_threads) point with per-(dataset, mode) speedups.
-`--spec-mbs` draws the device's spec sequential-read line in the plot (7450
-for the reference target's Samsung 990 PRO).
-
-`artefacts.py` publishes the reports and records to the orphan `artefacts`
-branch (no shared history with the code) through a throwaway worktree, plain
-fast-forward pushes only; `--push` sends the branch to origin. Layout:
-
-```
-README.md                  Generated snapshot index.
-latest/                    Newest snapshot's report.md/report.png/sweep.csv,
-                           overwritten each publish.
-snapshots/<date>-<sha>/    One immutable snapshot per publish: the report
-                           files plus history.jsonl (every leg, concatenated).
-```
-
-The perf table above is edited by hand from these reports.
+The perf table above is edited by hand from these reports. Every `filperf` run
+drops page caches first, so the numbers are cold-cache, N=1.
