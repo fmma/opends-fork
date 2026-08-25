@@ -67,7 +67,7 @@ steps:
     with:
       backend: gds
       data-dir: tiktokish
-      batches: 1
+      batches: 200
       batch-size: 26
       mnt: "{{ config.test.mount_point }}"
 
@@ -76,7 +76,7 @@ steps:
     with:
       backend: gds
       data-dir: tiktokish
-      batches: 1
+      batches: 200
       batch-size: 26
       mode: async
       mnt: "{{ config.test.mount_point }}"
