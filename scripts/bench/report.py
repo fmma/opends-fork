@@ -5,9 +5,9 @@
 Reads every history.jsonl under the input dirs (one record per leg, written by
 cijoe-scripts/bench_run.py) and, per opends (dataset, mode), renders a MiB/s
 matrix over (io_threads x queue_depth). Legs run with
-OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1, a non-default OPENDS_AISIO_IDLE_SPIN_US,
-or OPENDS_AISIO_BUSY_SPIN=1 get their own sections rather than sharing
-those cells, and stay out of the plot. When gds legs are present among the
+OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1 or a non-default OPENDS_AISIO_IDLE_SPIN
+get their own sections rather than sharing those cells, and stay out of the
+plot. When gds legs are present among the
 records, also renders a GDS-vs-OpenDS table per (queue_depth, io_threads)
 point. Writes report.md and sweep.csv (all backends) to the output dir, plus
 report.png unless --no-plot (needs matplotlib).

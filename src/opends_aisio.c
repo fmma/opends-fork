@@ -47,8 +47,7 @@
 #define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
 #define ENV_ASSUME_ALIGNED_ONLY "OPENDS_AISIO_ASSUME_ALIGNED_ONLY"
-#define ENV_IDLE_SPIN_US "OPENDS_AISIO_IDLE_SPIN_US"
-#define ENV_BUSY_SPIN "OPENDS_AISIO_BUSY_SPIN"
+#define ENV_IDLE_SPIN "OPENDS_AISIO_IDLE_SPIN"
 #define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
 #define DEFAULT_IO_THREADS 1
 #define MAX_IO_THREADS 15
@@ -1075,19 +1074,26 @@ read_env_config(struct driver *d)
 		return -EINVAL;
 	d->queue_depth = (uint32_t)n;
 
-	if (env_int(ENV_IDLE_SPIN_US, DEFAULT_IDLE_SPIN_US, 0, MAX_IDLE_SPIN_US,
-	            &n) < 0)
-		return -EINVAL;
-	d->idle_spin_us = (uint32_t)n;
+	const char *spin = getenv(ENV_IDLE_SPIN);
+	d->busy_spin = spin && !strcmp(spin, "busy");
+	if (d->busy_spin) {
+		d->idle_spin_us = DEFAULT_IDLE_SPIN_US;
+	} else {
+		if (env_int(ENV_IDLE_SPIN, DEFAULT_IDLE_SPIN_US, 0,
+		            MAX_IDLE_SPIN_US, &n) < 0) {
+			fprintf(stderr,
+			        "aisio: %s takes microseconds, or \"busy\"\n",
+			        ENV_IDLE_SPIN);
+			return -EINVAL;
+		}
+		d->idle_spin_us = (uint32_t)n;
+	}
 
 	const char *mask = getenv(ENV_CPU_MASK);
 	d->cpu_mask = mask && mask[0] ? strtoull(mask, NULL, 0) : 0;
 
 	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
 	d->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
-
-	const char *spin = getenv(ENV_BUSY_SPIN);
-	d->busy_spin = spin && spin[0] && spin[0] != '0';
 
 	/* The tail mode picks the async gate mechanism, and the vendor ops it
 	 * drives are required only for that mode (see ds_accel.h). A partial

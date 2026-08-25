@@ -128,13 +128,13 @@ def main(args, cijoe):
     cpu_mask = os.environ.get("OPENDS_AISIO_CPU_MASK")
     aligned = os.environ.get("OPENDS_AISIO_ASSUME_ALIGNED_ONLY")
     assume_aligned_only = bool(aligned and aligned != "0")
-    idle_spin = os.environ.get("OPENDS_AISIO_IDLE_SPIN_US")
-    busy = os.environ.get("OPENDS_AISIO_BUSY_SPIN")
-    busy_spin = bool(busy and busy != "0")
+    spin = os.environ.get("OPENDS_AISIO_IDLE_SPIN")
+    busy_spin = spin == "busy"
+    idle_spin = None if busy_spin else spin
     knobs = (f" io_threads={io_threads} queue_depth={queue_depth}"
              f" cpu_mask={cpu_mask}"
              f" assume_aligned_only={int(assume_aligned_only)}"
-             f" idle_spin_us={idle_spin} busy_spin={int(busy_spin)}"
+             f" idle_spin={spin}"
              if args.backend == "opends" else "")
     print(f"--- {args.backend} {args.data_dir} {args.mode} "
           f"(batches={args.batches} batch_size={args.batch_size}{knobs}) ---",
@@ -173,10 +173,8 @@ def main(args, cijoe):
             env += f"OPENDS_AISIO_CPU_MASK='{cpu_mask}' "
         if assume_aligned_only:
             env += "OPENDS_AISIO_ASSUME_ALIGNED_ONLY='1' "
-        if idle_spin is not None:
-            env += f"OPENDS_AISIO_IDLE_SPIN_US='{idle_spin}' "
-        if busy_spin:
-            env += "OPENDS_AISIO_BUSY_SPIN='1' "
+        if spin:
+            env += f"OPENDS_AISIO_IDLE_SPIN='{spin}' "
     else:
         target = bdf
 
