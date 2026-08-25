@@ -63,7 +63,7 @@ steps:
     with:
       backend: opends
       data-dir: tiktokish
-      batches: 1
+      batches: 200
       batch-size: 26
 
   - name: opends_tiktokish_async
@@ -71,7 +71,7 @@ steps:
     with:
       backend: opends
       data-dir: tiktokish
-      batches: 1
+      batches: 200
       batch-size: 26
       mode: async
 
