@@ -23,6 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from _helpers import ROOT, iter_history, ok
 
+SHIPPED_KNOBS = {"assume_aligned_only": 0, "idle_spin_us": 200,
+                 "busy_spin": 0}
+
 # Ordinal blue ramp endpoints (light -> dark = fewest -> most threads),
 # validated for the light surface. Chrome tokens from the reference
 # palette.
@@ -66,16 +69,14 @@ def _collect(in_dirs):
                      "mib_s": res.get("mib_s"), "iops": res.get("iops"),
                      "error": rec.get("error")})
         if cfg.get("backend") == "opends":
-            # A leg run with a non-default knob is a different contract, not
-            # another cell in the sweep matrix: keep it out of the default
-            # grid (and the plot). Aligned-only legs keep their own section;
-            # any other knob combination gets a section labeled by its knobs.
-            parts = (["aligned"] if aa else []) \
-                + ([f"idle_spin_us={spin}"] if spin is not None else []) \
-                + (["busy_spin"] if busy else [])
+            knobs = {"assume_aligned_only": int(bool(aa)),
+                     "idle_spin_us": spin,
+                     "busy_spin": int(bool(busy))}
+            parts = [f"{k}={v}" for k, v in knobs.items()
+                     if v is not None and v != SHIPPED_KNOBS[k]]
             if not parts:
                 dst = grids
-            elif parts == ["aligned"]:
+            elif parts == ["assume_aligned_only=1"]:
                 dst = aligned
             else:
                 dst = variants.setdefault(", ".join(parts), {})
