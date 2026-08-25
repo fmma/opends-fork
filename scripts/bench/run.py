@@ -29,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from _helpers import ok, run_cijoe
+from _helpers import fail, ok, run_cijoe
 
 SUITES = {
     "gds": "tasks/bench_gds.yaml",
@@ -80,6 +80,8 @@ def _run_gds(args, datasets):
 
 
 def _run_opends(args, datasets):
+    """Run the grid; returns the legs cijoe reported a failure for."""
+    failed = []
     suite = SUITES["opends"]
     steps = _bench_steps("opends", args.mode, datasets)
     out = f"{args.out}/opends"
@@ -114,10 +116,12 @@ def _run_opends(args, datasets):
                         if rc:
                             print(f"leg {leg} failed (rc={rc}); continuing",
                                   flush=True)
+                            failed.append(leg)
     finally:
         if not args.keep_stack:
             run_cijoe(suite, "homi_stack_down", "cpu_governor_restore",
                       out=f"{out}/_teardown")
+    return failed
 
 
 parser = argparse.ArgumentParser(
@@ -189,9 +193,14 @@ if args.batches:
 if args.cpu_mask:
     os.environ["OPENDS_AISIO_CPU_MASK"] = args.cpu_mask
 
+failed = []
 for name in args.suite or list(SUITES):
     if name == "gds":
         _run_gds(args, datasets)
     else:
-        _run_opends(args, datasets)
+        failed += _run_opends(args, datasets)
+
+if failed:
+    fail(f"run_bench: {len(failed)} legs failed: {', '.join(failed)}")
+    sys.exit(1)
 ok("run_bench")
