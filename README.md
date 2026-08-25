@@ -38,11 +38,10 @@ the open.
   worker i takes set bit i mod popcount, so a mask with fewer bits than
   `OPENDS_AISIO_IO_THREADS` pins more than one worker to a CPU. Unset or `0`
   leaves placement to the scheduler.
-- `OPENDS_AISIO_IDLE_SPIN_US`: How long an idle IO worker keeps yielding
-  after its last activity before it naps. Default 200. `0` naps at once.
-- `OPENDS_AISIO_BUSY_SPIN`: `1` makes the workers poll flat out, so they
-  never yield or nap and `OPENDS_AISIO_IDLE_SPIN_US` does not apply. Each
-  worker holds a CPU until the driver closes.
+- `OPENDS_AISIO_IDLE_SPIN`: How long an idle IO worker keeps yielding after
+  its last activity before it naps, in microseconds. Default 200. `0` naps at
+  once. `busy` never yields or naps: the worker polls flat out and holds a CPU
+  until the driver closes.
 - `OPENDS_AISIO_ASSUME_ALIGNED_ONLY`: `1` declares that every read is
   LBA-aligned. Reads that end off an LBA boundary fail with
   `OPENDS_INVALID_VALUE`, and the async path stops enqueueing the bounce
@@ -295,25 +294,25 @@ the grid comes from `--io-threads` (default 1,2,4,8), `--queue-depth` (default
 1..512), `--assume-aligned-only` (default 0,1) and `--idle-spin` (default
 'default': the library default with the env unset; an integer is microseconds
 and 0 naps immediately, so 'default,0' is an on/off comparison of the idle-spin
-window). `--busy-spin` applies `OPENDS_AISIO_BUSY_SPIN=1` to every leg of the
-invocation. Restrict with `--suite`, `--mode`, and `--dataset`. An aligned leg rejects any read with a sub-LBA
+window). `--busy-spin` applies `OPENDS_AISIO_IDLE_SPIN=busy` to every leg of
+the invocation. Restrict with `--suite`, `--mode`, and `--dataset`. An aligned leg rejects any read with a sub-LBA
 tail, so datasets whose files are not LBA-multiples fail by construction;
 those legs are recorded with an empty result, the sweep continues to the
 datasets that do qualify, and `report.py` gives them their own section. The
 aisio knobs travel as environment variables (`OPENDS_AISIO_IO_THREADS`,
 `OPENDS_AISIO_QUEUE_DEPTH`, `OPENDS_AISIO_CPU_MASK`,
-`OPENDS_AISIO_IDLE_SPIN_US`, `OPENDS_AISIO_BUSY_SPIN`). `--cpu-mask` sets the
-last one: a hex mask whose CPUs the aisio IO workers are pinned to round-robin
+`OPENDS_AISIO_IDLE_SPIN`). `--cpu-mask` sets `OPENDS_AISIO_CPU_MASK`: a hex
+mask whose CPUs the aisio IO workers are pinned to round-robin
 (`0x0` or unset leaves placement to the scheduler). Outside the sweep,
 `OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` declares that every read is LBA-aligned:
 reads whose span ends off an LBA boundary fail with `OPENDS_INVALID_VALUE`,
 and the async path stops enqueueing the per-read bounce kernel.
-`OPENDS_AISIO_IDLE_SPIN_US` sets how long an idle IO worker keeps yielding
+`OPENDS_AISIO_IDLE_SPIN` sets how long an idle IO worker keeps yielding
 after its last activity before falling back to a 100 us nap (default 200,
 `0` naps immediately); ops arriving within the window skip the nap latency.
-`OPENDS_AISIO_BUSY_SPIN=1` makes the IO workers poll flat out, never yielding
-the CPU or napping (`OPENDS_AISIO_IDLE_SPIN_US` becomes moot). Each worker
-then occupies a full core for the driver's lifetime; pair it with
+`OPENDS_AISIO_IDLE_SPIN=busy` makes the IO workers poll flat out, never
+yielding the CPU or napping. Each worker then occupies a full core for the
+driver's lifetime; pair it with
 `OPENDS_AISIO_CPU_MASK` so the spinning workers sit on dedicated cores. Set
 at least `--io-threads` bits in the mask, or two spinning workers share a CPU
 and fight over it (see aisio configuration).

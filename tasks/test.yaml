@@ -117,7 +117,7 @@ steps:
     run: |
       OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
-        OPENDS_AISIO_BUSY_SPIN=1 \
+        OPENDS_AISIO_IDLE_SPIN=busy \
         '{{ config.test.build_dir }}/test_async_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
