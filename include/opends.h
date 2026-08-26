@@ -212,8 +212,7 @@ ssize_t opends_async_await(opends_async_future_t *future);
  * Synchronous I/O. Returns byte count on success or a negated
  * opends_op_error_t on failure. The buf_offset parameter writes
  * into the buffer at an offset, useful for scatter reads into a
- * single allocation. Equivalent to opends_async_read/write followed
- * by opends_async_await on backends that implement the async API.
+ * single allocation.
  */
 ssize_t opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
                          off_t file_offset, off_t buf_offset);
