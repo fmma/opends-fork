@@ -52,7 +52,7 @@ GRID_AXES = {"io_threads": [1, 2, 4, 8],
 
 # The aisio defaults. A knob the flags leave out sweeps this one value, so
 # --io-threads 2 is one leg, not a plane.
-KNOB_DEFAULTS = {"io_threads": 1, "queue_depth": 512,
+KNOB_DEFAULTS = {"io_threads": 2, "queue_depth": 8,
                  "assume_aligned_only": 0, "idle_spin": 200}
 
 GDS_SETUP = ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"]
@@ -259,12 +259,12 @@ grid.add_argument("--io-threads", type=_int_list, metavar="LIST",
                   help="Comma-separated OPENDS_AISIO_IO_THREADS values to "
                        "sweep instead of the config list. Any knob flag "
                        "switches to that mode, where the knobs left out sit "
-                       "at their aisio default, 1 here. Datasets and mode "
+                       "at their aisio default, 2 here. Datasets and mode "
                        "come from --dataset/--mode, and each leg writes to "
                        "the dir its knobs name, as a list entry would.")
 grid.add_argument("--queue-depth", type=_int_list, metavar="LIST",
                   help="Comma-separated OPENDS_AISIO_QUEUE_DEPTH values. "
-                       "Default 512; over 512 may exceed the device MQES and "
+                       "Default 8; over 512 may exceed the device MQES and "
                        "fail.")
 grid.add_argument("--assume-aligned-only", type=_int_list, metavar="LIST",
                   help="Comma-separated OPENDS_AISIO_ASSUME_ALIGNED_ONLY "
