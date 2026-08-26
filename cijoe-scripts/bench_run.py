@@ -21,6 +21,10 @@ NOFILE = 1048576
 
 MODE_FLAG = {"sync": None, "stream": "--stream", "async": "--async"}
 
+# The suite, the artifacts and the report say "gds"; fil calls the cuFile
+# backend "cufile".
+FILPERF_BACKEND = {"gds": "cufile"}
+
 SUMMARY_FIELDS = {
     "Total time": "total_time_s",
     "Prep time": "prep_time_s",
@@ -179,7 +183,7 @@ def main(args, cijoe):
     filperf = [
         f"{env}prlimit --nofile={NOFILE}:{NOFILE} --",
         f"filperf '{target}'",
-        f"--backend {args.backend}",
+        f"--backend {FILPERF_BACKEND.get(args.backend, args.backend)}",
         f"--data-dir {args.data_dir}",
         f"--batches {args.batches} --batch-size {args.batch_size}",
         "--summary",
