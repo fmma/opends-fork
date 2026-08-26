@@ -19,7 +19,7 @@ from pathlib import Path
 
 NOFILE = 1048576
 
-MODE_FLAG = {"sync": None, "stream": "--stream"}
+MODE_FLAG = {"sync": None, "stream": "--stream", "async": "--async"}
 
 SUMMARY_FIELDS = {
     "Total time": "total_time_s",
