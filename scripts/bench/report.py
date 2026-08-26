@@ -38,6 +38,8 @@ INK_MUTED = "#898781"
 GRIDLINE = "#e1e0d9"
 BASELINE = "#c3c2b7"
 
+MODE_ROWS = ("async", "stream", "sync")
+
 
 def _records(in_dirs):
     for _, hist in iter_history(in_dirs):
@@ -177,16 +179,18 @@ def _plot(grids, threads, depths, dst, spec_mbs=None):
     top = 1.07 * max(peak, spec or 0) or 1000
 
     workloads = sorted({wl for wl, _ in grids})
-    modes = ["stream", "sync"]
+    seen = {mode for _, mode in grids}
+    modes = [m for m in MODE_ROWS if m in seen] or ["sync"]
 
+    height = 2.9 * len(modes)
     fig, axes = plt.subplots(
         len(modes), len(workloads),
-        figsize=(13, 5.8), dpi=160,
+        figsize=(13, height), dpi=160,
         sharex=True, sharey=True, squeeze=False,
         facecolor=SURFACE,
     )
-    fig.subplots_adjust(left=0.075, right=0.985, top=0.82, bottom=0.11,
-                        hspace=0.22, wspace=0.10)
+    fig.subplots_adjust(left=0.075, right=0.985, top=1 - 1.05 / height,
+                        bottom=0.64 / height, hspace=0.22, wspace=0.10)
 
     for r, mode in enumerate(modes):
         for c, wl in enumerate(workloads):
@@ -238,10 +242,12 @@ def _plot(grids, threads, depths, dst, spec_mbs=None):
             fontsize=7.5, color=INK_MUTED, va="bottom",
         )
 
-    fig.suptitle("NVMe read throughput sweep", x=0.075, y=0.975,
+    fig.suptitle("NVMe read throughput sweep", x=0.075,
+                 y=1 - 0.145 / height,
                  ha="left", fontsize=14, color=INK_PRIMARY)
-    fig.text(0.075, 0.905,
-             "MiB/s by queue depth and io_threads, stream vs sync, per workload",
+    fig.text(0.075, 1 - 0.551 / height,
+             "MiB/s by queue depth and io_threads, "
+             + " vs ".join(modes) + ", per workload",
              fontsize=9.5, color=INK_SECONDARY)
 
     handles = [
@@ -252,7 +258,7 @@ def _plot(grids, threads, depths, dst, spec_mbs=None):
     ]
     fig.legend(
         handles=handles, title="io_threads",
-        loc="upper right", bbox_to_anchor=(0.985, 0.97),
+        loc="upper right", bbox_to_anchor=(0.985, 1 - 0.174 / height),
         ncol=4, frameon=False,
         fontsize=8.5, title_fontsize=8.5,
         labelcolor=INK_SECONDARY, alignment="right",

@@ -58,6 +58,15 @@ steps:
       batch-size: 1
       mode: stream
 
+  - name: opends_filesize8gib_async
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: filesize8gib
+      batches: 1
+      batch-size: 1
+      mode: async
+
   - name: opends_tiktokish
     uses: bench_run
     with:
@@ -74,6 +83,15 @@ steps:
       batches: 200
       batch-size: 26
       mode: stream
+
+  - name: opends_tiktokish_async
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: tiktokish
+      batches: 200
+      batch-size: 26
+      mode: async
 
   - name: opends_lmcacheish
     uses: bench_run
@@ -92,6 +110,15 @@ steps:
       batch-size: 26
       mode: stream
 
+  - name: opends_lmcacheish_async
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: lmcacheish
+      batches: 70
+      batch-size: 26
+      mode: async
+
   - name: opends_imagenetish
     uses: bench_run
     with:
@@ -108,6 +135,15 @@ steps:
       batches: 300
       batch-size: 4096
       mode: stream
+
+  - name: opends_imagenetish_async
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: imagenetish
+      batches: 300
+      batch-size: 4096
+      mode: async
 
   - name: homi_stack_down
     run: |

@@ -41,7 +41,9 @@ SUITES = {
 
 DATASETS = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
 
-MODES = ["sync", "stream"]
+MODES = ["sync", "stream", "async"]
+# fil implements --async for the opends backend only
+BACKEND_MODES = {"gds": ["sync", "stream"]}
 
 DEFAULT_CONFIGS = Path(__file__).resolve().parent / "sweep.toml"
 
@@ -57,10 +59,10 @@ KNOB_DEFAULTS = {"io_threads": 2, "queue_depth": 8,
 
 GDS_SETUP = ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"]
 
-
 def _bench_steps(backend, modes, datasets):
+    avail = BACKEND_MODES.get(backend, MODES)
     return [f"{backend}_{ds}" + ("" if m == "sync" else f"_{m}")
-            for ds in datasets for m in modes]
+            for ds in datasets for m in modes if m in avail]
 
 
 def _int_list(s):
@@ -89,10 +91,15 @@ def _mode_list(s):
 
 def _run_gds(args, modes, datasets):
     """Singleton sweep: the gds suite has no knobs to grid over."""
+    bench = _bench_steps("gds", modes, datasets)
+    if not bench:
+        print(f"\n=== gds suite: nothing to run for --mode "
+              f"{','.join(modes)} ===", flush=True)
+        return
     if set(modes) == set(MODES) and set(datasets) == set(DATASETS):
         steps = []
     else:
-        steps = GDS_SETUP + _bench_steps("gds", modes, datasets)
+        steps = GDS_SETUP + bench
     print(f"\n=== gds suite: "
           f"{', '.join(steps) if steps else 'all steps'} ===", flush=True)
     try:
@@ -221,8 +228,9 @@ parser.add_argument("--suite", action="append", choices=list(SUITES),
                          "all.")
 parser.add_argument("--mode", type=_mode_list,
                     metavar="LIST",
-                    help="Comma-separated modes to keep, sync and/or "
-                         "stream. Default sync,stream.")
+                    help="Comma-separated modes to keep: sync, stream, "
+                         "async. Default all three; the gds suite has no "
+                         "async leg and skips it.")
 parser.add_argument("--dataset", action="append", choices=DATASETS,
                     help="Narrow every config to this dataset, dropping the "
                          "configs that do not name it. Repeat to combine.")
