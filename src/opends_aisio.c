@@ -3,10 +3,12 @@
  * opends_aisio.c - aisio backend for raw-NVMe direct storage.
  *
  * Reads go straight from an NVMe device into GPU memory via xNVMe's upcie-cuda
- * backend (PCIe P2P DMA). The HOMI daemon is the primary of an xNVMe
- * multi-process group and holds the controller up; this driver joins the same
- * group as a secondary and allocates its own I/O queues. A registered file's
- * extents come from homic_get_extents.
+ * backend (PCIe P2P DMA). The HOMI server (xnvme's "homi start") is the
+ * primary of an xNVMe multi-process group and holds the controller up; this
+ * driver joins the same group as a secondary and allocates its own I/O
+ * queues. A registered file's extents come from an xal index that xal-server
+ * publishes over POSIX shared memory; the index is in byte units, and this
+ * driver converts to LBAs with its own device geometry.
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before opends_driver_open runs.
@@ -29,20 +31,21 @@
 #include <limits.h>
 #include <pthread.h>
 #include <sched.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
-#include <homic.h>
-#include <homi_proto.h>
+#include <libxal.h>
 #include <libxnvme.h>
 
-#define ENV_HOMI_SOCKET "OPENDS_HOMI_SOCKET"
+#define ENV_XAL_SHM "OPENDS_XAL_SHM"
 #define ENV_HOMI_DEV "OPENDS_HOMI_DEV"
 #define ENV_IO_THREADS "OPENDS_AISIO_IO_THREADS"
 #define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
@@ -52,7 +55,8 @@
 #define ENV_SHM_ID "OPENDS_AISIO_SHM_ID"
 #define ENV_HOST_HEAP_MB "OPENDS_AISIO_HOST_HEAP_MB"
 #define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
-#define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
+#define DEFAULT_XAL_SHM "/xal_dev0"
+#define DEFAULT_SHM_ID 1
 #define DEFAULT_IO_THREADS 2
 #define MAX_IO_THREADS 15
 #define MAX_BUF_ENTRIES 8192
@@ -168,8 +172,9 @@ struct io_worker {
 };
 
 struct driver {
-	char dev_uri[64]; ///< NVMe device (BDF) the HOMI daemon owns
-	uint32_t shm_id;  ///< Multi-process group the HOMI daemon is primary of
+	char dev_uri[64]; ///< NVMe device (BDF) the HOMI server owns
+	uint32_t shm_id;  ///< Multi-process group the HOMI server is primary of
+	struct xal *xal;  ///< Read-only attach to the index xal-server publishes
 	size_t host_heap_nbytes;
 	size_t device_heap_nbytes;
 	struct xnvme_dev *xdev;
@@ -309,44 +314,142 @@ stream_bounce_free(struct opends_stream *s, struct driver *d)
 
 #define ESTALE_RETRIES 6000
 #define ESTALE_BACKOFF_US 50000
+#define COVERAGE_RETRIES 100
+
+/*
+ * Copy the extents for `path` out of the shared index.
+ *
+ * The server rewrites the shared pools in place when the filesystem changes,
+ * concurrent with this read. Treat the pools as a seqlock snapshot: an odd seq
+ * means a rewrite is in progress, the seq changing across the read means the
+ * pools moved under us, and a dirty flag means the filesystem changed but is
+ * not yet re-indexed. Report -ESTALE in all of those and let the caller retry.
+ */
+static int
+extents_snapshot(struct driver *d, char *path, struct ds_extent **out,
+                 uint32_t *out_n)
+{
+	struct xal *xal = d->xal;
+	struct xal_extents *xe = NULL;
+
+	int seq = xal_get_seq_lock(xal);
+	if ((seq & 1) || xal_is_dirty(xal))
+		return -ESTALE;
+
+	int rc = xal_get_extents(xal, path, &xe);
+	if (rc < 0) {
+		/* A torn read during a rewrite can surface as a spurious
+		 * lookup failure; only trust the error if the snapshot held. */
+		if (xal_get_seq_lock(xal) != seq || xal_is_dirty(xal))
+			return -ESTALE;
+		return rc;
+	}
+
+	/* xe points into the shared inode pool, so count/extent_idx may be
+	 * torn. Capture them, then validate the snapshot before use. */
+	uint32_t n = xe->count;
+	uint32_t base = xe->extent_idx;
+
+	atomic_thread_fence(memory_order_acquire);
+	if (xal_get_seq_lock(xal) != seq || xal_is_dirty(xal))
+		return -ESTALE;
+
+	struct ds_extent *ex = calloc(n ? n : 1, sizeof(*ex));
+	if (!ex)
+		return -ENOMEM;
+
+	for (uint32_t i = 0; i < n; i++) {
+		struct xal_extent *e = xal_extent_at(xal, base + i);
+		struct xal_extent_converted b = {0};
+
+		rc = xal_extent_in_bytes(xal, e, &b);
+		if (rc < 0)
+			goto failed;
+		/* xal-server never opens the device, so its index carries no
+		 * LBA size; convert with our own geometry. */
+		if (b.start_block & (uint64_t)(d->lba_size - 1)) {
+			rc = -EIO;
+			goto failed;
+		}
+		ex[i].file_offset = b.start_offset;
+		ex[i].slba = b.start_block >> d->lba_shift;
+		ex[i].length = b.size;
+	}
+
+	atomic_thread_fence(memory_order_acquire);
+	if (xal_get_seq_lock(xal) != seq || xal_is_dirty(xal)) {
+		free(ex);
+		return -ESTALE;
+	}
+
+	*out = ex;
+	*out_n = n;
+	return 0;
+
+failed:
+	free(ex);
+	if (xal_get_seq_lock(xal) != seq || xal_is_dirty(xal))
+		return -ESTALE;
+	return rc;
+}
+
+static uint64_t
+extents_end(const struct ds_extent *ex, uint32_t n)
+{
+	uint64_t end = 0;
+
+	for (uint32_t i = 0; i < n; i++) {
+		uint64_t e = ex[i].file_offset + ex[i].length;
+		if (e > end)
+			end = e;
+	}
+	return end;
+}
 
 static int
 resolve_extents(struct driver *d, int fd, struct ds_extent **out,
                 uint32_t *out_n)
 {
-	struct homic_extent *hx = NULL;
-	uint32_t n = 0;
+	char fdpath[64], path[PATH_MAX];
+	struct stat st;
+	ssize_t plen;
+
+	snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", fd);
+	plen = readlink(fdpath, path, sizeof(path) - 1);
+	if (plen < 0)
+		return -errno;
+	path[plen] = '\0';
+
+	if (fstat(fd, &st) < 0)
+		return -errno;
+
+	/* No client-side dirty marking exists against xal-server (the shared
+	 * state maps read-only); after an allocating write the server's
+	 * watcher re-indexes on its own. Retry while the index is stale, and
+	 * briefly while it does not yet cover the file's size. */
 	int rc = -ESTALE;
-
 	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
-		rc = homic_get_extents(d->dev_uri, fd, &hx, &n);
-		if (rc != -ESTALE)
+		rc = extents_snapshot(d, path, out, out_n);
+		if (rc == -ESTALE) {
+			usleep(ESTALE_BACKOFF_US);
+			continue;
+		}
+		if (rc < 0)
 			break;
-		usleep(ESTALE_BACKOFF_US);
+		if (attempt < COVERAGE_RETRIES &&
+		    extents_end(*out, *out_n) < (uint64_t)st.st_size) {
+			free(*out);
+			usleep(ESTALE_BACKOFF_US);
+			continue;
+		}
+		break;
 	}
-	if (rc < 0)
-		return rc;
-
-	struct ds_extent *ex = calloc(n ? n : 1, sizeof(*ex));
-	if (!ex) {
-		free(hx);
-		return -ENOMEM;
-	}
-	for (uint32_t i = 0; i < n; i++) {
-		ex[i].file_offset = hx[i].file_offset;
-		ex[i].slba = hx[i].slba;
-		ex[i].length = hx[i].length;
-	}
-	free(hx);
-
-	*out = ex;
-	*out_n = n;
-	return 0;
+	return rc;
 }
 
 static ssize_t
-pwrite_op(struct driver *d, struct registered_file *h, const void *src,
-          size_t size, off_t file_offset)
+pwrite_op(struct registered_file *h, const void *src, size_t size,
+          off_t file_offset)
 {
 	if (size == 0)
 		return 0;
@@ -382,10 +485,6 @@ pwrite_op(struct driver *d, struct registered_file *h, const void *src,
 		ret = -errno;
 		goto out;
 	}
-
-	int rrc = homic_mark_dirty(d->dev_uri);
-	if (rrc < 0)
-		ret = rrc;
 out:
 	free(bounce);
 	return ret;
@@ -394,11 +493,10 @@ out:
 static int
 open_device(struct driver *d)
 {
-	/* Joins the group the HOMI daemon is primary of, which the connection
-	 * made before this proves is running. Whoever opens first wins the role
-	 * election, so a shm_id the daemon does not serve would silently make
-	 * this process the controller owner; both sides default to
-	 * HOMI_DEFAULT_SHM_ID so they agree unless both are overridden. */
+	/* Joins the group the HOMI server is primary of. Whoever opens first
+	 * wins the role election, so a shm_id the server does not serve would
+	 * silently make this process the controller owner; both sides use
+	 * shm_id 1 by convention unless overridden. */
 	struct xnvme_opts opts = xnvme_opts_default();
 	opts.be = ds_accel->xnvme_be;
 	opts.shm_id = d->shm_id;
@@ -804,7 +902,7 @@ dispatch_write(struct io_worker *w, struct file_op *op)
 		file_offset = op->u.async.file_offset;
 	}
 
-	ssize_t n = pwrite_op(d, op->h, src, size, file_offset);
+	ssize_t n = pwrite_op(op->h, src, size, file_offset);
 	if (n < 0)
 		n = (n == -(ssize_t)EINVAL)
 		            ? -(ssize_t)OPENDS_INVALID_VALUE
@@ -1130,7 +1228,7 @@ read_env_config(struct driver *d)
 	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
 	d->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
 
-	if (env_int(ENV_SHM_ID, HOMI_DEFAULT_SHM_ID, 0, INT_MAX, &n) < 0)
+	if (env_int(ENV_SHM_ID, DEFAULT_SHM_ID, 0, INT_MAX, &n) < 0)
 		return -EINVAL;
 	d->shm_id = (uint32_t)n;
 
@@ -1199,6 +1297,34 @@ claim_slot_locked(struct driver *d, struct io_worker **wp, uint32_t *headp)
 /*  Driver lifecycle                                                  */
 /* ------------------------------------------------------------------ */
 
+#define ATTACH_RETRIES 1200
+#define ATTACH_BACKOFF_US 50000
+
+/*
+ * Attach to the index xal-server publishes. -ENOENT (not yet published),
+ * -EAGAIN (still being set up) and -ESTALE (first index not finished) all
+ * mean "not yet" for a server starting alongside us, so retry on them.
+ */
+static int
+xal_attach(struct driver *d)
+{
+	const char *shm = getenv(ENV_XAL_SHM);
+	if (!shm || !shm[0])
+		shm = DEFAULT_XAL_SHM;
+
+	int rc = -ENOENT;
+	for (int i = 0; i < ATTACH_RETRIES; i++) {
+		rc = xal_from_shm(shm, &d->xal);
+		if (rc != -ENOENT && rc != -EAGAIN && rc != -ESTALE)
+			break;
+		usleep(ATTACH_BACKOFF_US);
+	}
+	if (rc < 0)
+		fprintf(stderr, "aisio: xal_from_shm(%s) failed; err(%d)\n",
+		        shm, rc);
+	return rc;
+}
+
 opends_error_t
 opends_driver_open(void)
 {
@@ -1227,9 +1353,7 @@ opends_driver_open(void)
 	pthread_mutex_init(&d->reg_lock, NULL);
 	pthread_mutex_init(&d->alloc_lock, NULL);
 
-	const char *sock = getenv(ENV_HOMI_SOCKET);
-	int rc = homic_connect(
-	        (char *)(sock && sock[0] ? sock : DEFAULT_HOMI_SOCKET));
+	int rc = xal_attach(d);
 	if (rc < 0) {
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
@@ -1242,7 +1366,7 @@ opends_driver_open(void)
 
 	int orc = open_device(d);
 	if (orc < 0) {
-		homic_disconnect();
+		xal_close(d->xal);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
@@ -1254,7 +1378,7 @@ opends_driver_open(void)
 	if (arc != 0) {
 		fprintf(stderr, "aisio: workers_setup failed\n");
 		xnvme_dev_close(d->xdev);
-		homic_disconnect();
+		xal_close(d->xal);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
@@ -1286,7 +1410,7 @@ opends_driver_close(void)
 	if (drv->xdev)
 		xnvme_dev_close(drv->xdev);
 
-	homic_disconnect();
+	xal_close(drv->xal);
 
 	pthread_mutex_destroy(&drv->alloc_lock);
 	pthread_mutex_destroy(&drv->submit_lock);
