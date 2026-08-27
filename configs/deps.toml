@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
-# The aisio stack needs a manual xnvme build for now: safl homi_rpc (PR 750)
-# merged with yonggilsong tools-qublk (PR 755), plus a local patch that gives
-# qublk a --shm_id option so it can join the homi multi-process group.
+# Merge of xnvme/xnvme#750 (homi multi-process server) and #755 (qublk ublk
+# server), plus two patches the pairing needs: a qublk --shm_id option so it
+# joins the homi group, and a per-client buffer-alloc cap that fits qublk's
+# queue depth. Branch proto-750-755; move to upstream once both PRs land.
 [xnvme.repository]
-remote = "https://github.com/xnvme/xnvme"
-ref = "53d5f25a46f78465fd9463be75c41b8fe5b150ca"
+remote = "https://github.com/fmma/xnvme"
+ref = "fd347442473f45feccc86743738c3230f1d6ac46"
 
 # xal-server branch (xnvme/xal PR 47).
 [xal.repository]
@@ -15,11 +16,3 @@ ref = "76e56d6c16249081b10fe11e4a1e4ac3fb057357"
 [fil.repository]
 remote = "https://github.com/fmma/fil"
 ref = "opends-0.2.1"
-
-[homi.repository]
-remote = "https://github.com/fmma/homi"
-ref = "5a162399d3a0af1fd572b2a887a2895e9d02df5f"
-
-[qublk.repository]
-remote = "https://github.com/fmma/qublk"
-ref = "71d56d75415f58e3e9ac7fe1e6228cde0ceb1913"

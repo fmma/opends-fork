@@ -10,12 +10,14 @@ doc: |
 
   xal (eXtent Access Library) is a transitive dependency of fil; fil's
   iter walks the on-device XFS metadata via xal to enumerate the
-  dataset. HOMI links it too, to index the device and to re-index on
-  the client's mark-dirty request.
+  dataset. OpenDS links it too, to attach to the extent index that
+  xal-server publishes over shared memory.
 
-  The pin is upstream main, at the commit xnvme/xal#45 landed as. It is
-  a commit rather than a tag because the mark-dirty support it carries
-  is not in a release yet.
+  The pin is the xal-server branch (xnvme/xal#47). It adds the
+  xal-server tool, which indexes a mounted filesystem and publishes
+  the index over POSIX shared memory, and the xal_from_shm attach
+  path the aisio backend reads it through. Move the pin to upstream
+  once the PR lands.
 
   Assumes the OpenDS tree has been synced to the target (setup_deps.py
   does this).

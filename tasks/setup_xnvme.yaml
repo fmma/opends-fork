@@ -9,21 +9,18 @@ doc: |
   OpenDS. The remote and ref are read from [xnvme.repository] in
   deps.toml, which pins the build dependency for the whole project.
 
-  The pin is a commit rather than a tag because it tracks an in-flight
-  upstream pull request. Upstream main stubs the upcie-cuda .mem_map
-  hook to xnvme_be_nosys_mem_map, so opends_buf_register fails with
-  ENOSYS. xnvme/xnvme#745 implements the hook, and the pin is its head.
-  That head also resolves the CUDA registry range from the driver
-  mapping; without it, registering a buffer smaller than the 2 MiB
-  granule fails with EOPNOTSUPP. Move the pin to upstream once #745
-  lands. The head lives on the branch the pull request is opened from,
-  safl/xNVMe#upcie_registry_vendored, which must stay alive for the pin
-  to remain fetchable.
+  The pin is the fmma/xnvme proto-750-755 branch: a merge of
+  xnvme/xnvme#750 (homi, the multi-process controller server) and
+  xnvme/xnvme#755 (qublk, the ublk server), plus two patches the
+  pairing needs. One gives qublk a --shm_id option so it can join the
+  homi multi-process group; the other raises the per-client
+  buffer-alloc cap so qublk can allocate one buffer per queue tag.
+  Move the pin to upstream once both PRs land.
 
-  HOMI and qublk are pinned to their multi-process branches. OpenDS
-  joins the group xNVMe itself shares across processes, so nothing
-  hands out qpairs any more; the HOMI fork stays only for extent
-  resolution, which upstream has no answer for yet.
+  The homi and qublk tools install with the library; the test and
+  bench tasks start them from PATH. Building qublk needs liburing
+  (>= 2.3) and the ublk kernel headers (kernel >= 6.0); running it
+  needs the ublk_drv module loaded.
 
   Assumes the OpenDS tree has been synced to the target (setup_deps.py
   does this).
