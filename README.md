@@ -49,20 +49,24 @@ the open.
 
 ## Performance
 
-_Commit `7a61a12` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU
+_Commit `93fd019` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU
 `NVIDIA RTX 2000 Ada Generation`). `OPENDS_AISIO_IO_THREADS=2` and
 `OPENDS_AISIO_QUEUE_DEPTH=8`._
 
 | Dataset       | mode   | gds (MiB/s) | opends (MiB/s) |
 |---------------|--------|-------------|----------------|
-| filesize8gib  | sync   |        6983 |           7064 |
-| filesize8gib  | stream |        2219 |           7039 |
-| tiktokish     | sync   |        3840 |           5143 |
-| tiktokish     | stream |        2486 |           5385 |
-| imagenetish   | sync   |         335 |            579 |
-| imagenetish   | stream |         681 |           2749 |
-| lmcacheish    | sync   |        5512 |           6140 |
-| lmcacheish    | stream |        4989 |           5369 |
+| filesize8gib  | sync   |        6520 |           6794 |
+| filesize8gib  | stream |        2599 |           7036 |
+| filesize8gib  | async  |           - |           7065 |
+| tiktokish     | sync   |        4614 |           5869 |
+| tiktokish     | stream |        5101 |           4957 |
+| tiktokish     | async  |           - |           5005 |
+| imagenetish   | sync   |         343 |            583 |
+| imagenetish   | stream |         875 |           2787 |
+| imagenetish   | async  |           - |           3073 |
+| lmcacheish    | sync   |        5533 |           6151 |
+| lmcacheish    | stream |        4991 |           5368 |
+| lmcacheish    | async  |           - |           5384 |
 
 ## opends API
 
