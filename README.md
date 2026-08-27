@@ -8,6 +8,7 @@ Generated bench data published by `scripts/bench/artefacts.py`. Orphan branch: n
 
 ## Snapshots
 
+- [`20260827-dcdd300`](snapshots/20260827-dcdd300/report.md)
 - [`20260707-e19b884`](snapshots/20260707-e19b884/report.md)
 - [`20260703-35d2765`](snapshots/20260703-35d2765/report.md)
 - [`20260703-1cc09ec`](snapshots/20260703-1cc09ec/report.md)
