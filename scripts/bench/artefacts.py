@@ -34,6 +34,7 @@ WORKTREE = ROOT / ".artefacts"
 REPORT_FILES = ("report.md", "sweep.csv", "report.png")
 SNAP_DIR = "snapshots"
 LATEST_DIR = "latest"
+SNAP_HEADING = "## Snapshots"
 
 
 def _git(*a, where=ROOT, **kw):
@@ -80,10 +81,8 @@ def _collect(in_dirs, dest):
     return n
 
 
-def _write_index(worktree):
-    snaps = sorted((p.name for p in (worktree / SNAP_DIR).iterdir()
-                    if p.is_dir()), reverse=True)
-    lines = [
+def _index_template():
+    return [
         "# OpenDS benchmark artefacts",
         "",
         "Generated bench data published by `scripts/bench/artefacts.py`. Orphan "
@@ -95,11 +94,29 @@ def _write_index(worktree):
         "`report.md`, `report.png`, `sweep.csv`, and `history.jsonl` (all legs "
         "concatenated).",
         "",
-        "## Snapshots",
-        "",
+        SNAP_HEADING,
     ]
-    lines += [f"- [`{s}`]({SNAP_DIR}/{s}/report.md)" for s in snaps]
-    (worktree / "README.md").write_text("\n".join(lines) + "\n")
+
+
+def _write_index(worktree):
+    snaps = sorted((p.name for p in (worktree / SNAP_DIR).iterdir()
+                    if p.is_dir()), reverse=True)
+    listing = [f"- [`{s}`]({SNAP_DIR}/{s}/report.md)" for s in snaps]
+
+    readme = worktree / "README.md"
+    old = readme.read_text().splitlines() if readme.is_file() else []
+    # Only the snapshot listing is generated. Keep whatever a human wrote
+    # before it and any section after it.
+    if SNAP_HEADING in old:
+        head = old[:old.index(SNAP_HEADING) + 1]
+        rest = old[len(head):]
+        tail = next((rest[i:] for i, line in enumerate(rest)
+                     if line.startswith("## ")), [])
+    else:
+        head, tail = _index_template(), []
+
+    lines = head + [""] + listing + ([""] + tail if tail else [])
+    readme.write_text("\n".join(lines) + "\n")
 
 
 def _resolve(dirs):
