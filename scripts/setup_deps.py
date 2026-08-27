@@ -4,11 +4,14 @@
 
 Builds and installs xNVMe, xal, HOMI, qublk, OpenDS, and fil in
 dependency order. xNVMe is required for the aisio backend. HOMI (homid +
-libhomic) owns the userspace controller and serves qpairs/extents; it
-depends on xal and xnvme, so it follows them. qublk depends on xnvme.
-OpenDS links libhomic, so HOMI is installed before OpenDS. fil is last:
-the bench driver needs xnvme, xal, and the opends_aisio pkg-config file.
-Assumes the tree has been synced to the target (rsync.py).
+libhomic) opens the controller as the multi-process primary and resolves
+file extents; it depends on xal and xnvme, so it follows them. qublk
+depends on xnvme. OpenDS links libhomic, so HOMI is installed before
+OpenDS. Assumes the tree has been synced to the target (rsync.py).
+
+fil is bench-only and links opends_aisio, so it goes last. It once
+needed its own xal prefix; it does not any more, since it asks for
+xal >= 0.2.0 and the pinned xal satisfies that.
 """
 
 from _helpers import ok, run_cijoe

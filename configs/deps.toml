@@ -1,20 +1,21 @@
 # SPDX-License-Identifier: BSD-3-Clause
+
 [xnvme.repository]
-remote = "https://github.com/fmma/xnvme"
-ref = "opends-0.1.1"
+remote = "https://github.com/xnvme/xnvme"
+ref = "53d5f25a46f78465fd9463be75c41b8fe5b150ca"
 
 [xal.repository]
-remote = "https://github.com/fmma/xal"
-ref = "opends-0.1.0"
+remote = "https://github.com/xnvme/xal"
+ref = "61c57d3da1dd113a10928943a479e69ad5b8a340"
 
 [fil.repository]
 remote = "https://github.com/fmma/fil"
-ref = "opends-0.1.2"
+ref = "opends-0.2.1"
 
 [homi.repository]
 remote = "https://github.com/fmma/homi"
-ref = "opends-0.1.0"
+ref = "5a162399d3a0af1fd572b2a887a2895e9d02df5f"
 
 [qublk.repository]
 remote = "https://github.com/fmma/qublk"
-ref = "opends-0.1.0"
+ref = "71d56d75415f58e3e9ac7fe1e6228cde0ceb1913"

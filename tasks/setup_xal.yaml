@@ -10,7 +10,12 @@ doc: |
 
   xal (eXtent Access Library) is a transitive dependency of fil; fil's
   iter walks the on-device XFS metadata via xal to enumerate the
-  dataset.
+  dataset. HOMI links it too, to index the device and to re-index on
+  the client's mark-dirty request.
+
+  The pin is upstream main, at the commit xnvme/xal#45 landed as. It is
+  a commit rather than a tag because the mark-dirty support it carries
+  is not in a release yet.
 
   Assumes the OpenDS tree has been synced to the target (setup_deps.py
   does this).
