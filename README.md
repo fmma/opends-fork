@@ -285,7 +285,7 @@ memory. The stack is then torn down and nvme rebound.
 
    ```sh
    python scripts/rsync.py
-   python scripts/setup_deps.py   # Installs xNVMe, xal, HOMI, qublk, OpenDS
+   python scripts/setup_deps.py   # xNVMe, xal, HOMI, qublk, OpenDS, fil
    python scripts/build.py
    ```
 
