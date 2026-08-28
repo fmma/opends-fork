@@ -63,7 +63,10 @@ xal_dep = dependency('xal', required : false)
 accel_backend = get_option('accel_backend')
 accel_src = 'src/ds_accel_@0@.c'.format(accel_backend)
 accel_kernel_lang = 'cuda'
-accel_kernel_args = []
+# Compile device code for the GPU present at build time. The nvcc default
+# arch has no SASS for newer GPUs, and the driver rejects PTX from a newer
+# toolkit, so the first kernel launch fails with CUDA error 222.
+accel_kernel_args = ['-arch=native']
 accel_sys_inc_dirs = []
 
 if accel_backend == 'cuda'
