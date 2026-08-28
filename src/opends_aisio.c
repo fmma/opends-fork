@@ -196,8 +196,7 @@ struct nvme_device {
 struct driver {
 	struct nvme_device devices[MAX_DEVICES];
 	int n_devices;
-	/** Multi-process group the HOMI server is primary of */
-	uint32_t shm_id;
+	uint32_t homi_shm_id;
 	size_t host_heap_nbytes;
 	size_t device_heap_nbytes;
 	uint32_t max_lba_size;    ///< Largest over the devices
@@ -525,7 +524,7 @@ open_device(struct driver *d, struct nvme_device *dev)
 	 * shm_id 1 by convention unless overridden. */
 	struct xnvme_opts opts = xnvme_opts_default();
 	opts.be = ds_accel->xnvme_be;
-	opts.shm_id = d->shm_id;
+	opts.shm_id = d->homi_shm_id;
 	opts.host_heap_size = d->host_heap_nbytes;
 	opts.device_heap_size = d->device_heap_nbytes;
 
@@ -534,7 +533,7 @@ open_device(struct driver *d, struct nvme_device *dev)
 		fprintf(stderr,
 		        "aisio open_device: xnvme_dev_open(%s, be=%s, "
 		        "shm_id=%u) failed\n",
-		        dev->dev_uri, opts.be, d->shm_id);
+		        dev->dev_uri, opts.be, d->homi_shm_id);
 		return -EIO;
 	}
 
@@ -1432,11 +1431,11 @@ discover_devices(struct driver *d)
 	if (env_int(ENV_SHM_ID, DEFAULT_SHM_ID, 0, INT_MAX, &n) < 0) {
 		return -EINVAL;
 	}
-	d->shm_id = (uint32_t)n;
+	d->homi_shm_id = (uint32_t)n;
 
 	err = -ENOENT;
 	for (int i = 0; i < ATTACH_RETRIES; i++) {
-		err = xnvme_mproc_get_info(d->shm_id, &info);
+		err = xnvme_mproc_get_info(d->homi_shm_id, &info);
 		if (err == 0 && info.nctrlrs > 0) {
 			break;
 		}
@@ -1449,20 +1448,20 @@ discover_devices(struct driver *d)
 		fprintf(stderr,
 		        "aisio: xnvme_mproc_get_info(shm_id=%u) failed; "
 		        "err(%d)\n",
-		        d->shm_id, err);
+		        d->homi_shm_id, err);
 		return err;
 	}
 	if (info.nctrlrs == 0) {
 		fprintf(stderr,
 		        "aisio: the homi group (shm_id=%u) serves no device\n",
-		        d->shm_id);
+		        d->homi_shm_id);
 		return -ENODEV;
 	}
 	if (info.nctrlrs > MAX_DEVICES) {
 		fprintf(stderr,
 		        "aisio: the homi group (shm_id=%u) serves %u devices; "
 		        "the driver takes at most %d\n",
-		        d->shm_id, info.nctrlrs, MAX_DEVICES);
+		        d->homi_shm_id, info.nctrlrs, MAX_DEVICES);
 		return -EINVAL;
 	}
 
