@@ -20,7 +20,12 @@ main(int argc, char **argv)
 	CUdevice cudev;
 	CUcontext cuctx;
 	cuDeviceGet(&cudev, 0);
+	/* CUDA 13 maps cuCtxCreate to the 4-argument _v4 form. */
+#if CUDA_VERSION >= 13000
+	cuCtxCreate(&cuctx, NULL, 0, cudev);
+#else
 	cuCtxCreate(&cuctx, 0, cudev);
+#endif
 
 	opends_error_t err = opends_driver_open();
 	if (err.err != OPENDS_SUCCESS) {
