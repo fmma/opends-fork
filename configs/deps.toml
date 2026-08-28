@@ -15,4 +15,4 @@ ref = "0785db883a81f80a0be4e8edce13bb57cb667278"
 
 [fil.repository]
 remote = "https://github.com/fmma/fil"
-ref = "opends-0.2.1"
+ref = "opends-0.2.2"
