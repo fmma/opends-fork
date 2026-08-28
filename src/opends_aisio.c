@@ -449,9 +449,9 @@ resolve_extents(struct registered_file *h, struct ds_extent **out,
 	if (fstat(h->fd, &st) < 0)
 		return -errno;
 
-	/* This driver does not mark the index dirty after a write. The
-	 * server's watcher re-indexes on its own. Retry while the index is
-	 * stale, and briefly while it does not yet cover the file's size. */
+	/* Writes mark the shared index dirty, and the server re-indexes.
+	 * Retry while the index is stale, and briefly while it does not yet
+	 * cover the file's size. */
 	int rc = -ESTALE;
 	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
 		rc = extents_snapshot(h->dev, path, out, out_n);
@@ -510,6 +510,11 @@ pwrite_op(struct registered_file *h, const void *src, size_t size,
 		ret = -errno;
 		goto out;
 	}
+
+	/* fsync materializes delayed allocations but emits no inotify event,
+	 * so a read right after it can beat the server's watcher. Mark the
+	 * index dirty so reads wait for a fresh snapshot. */
+	xal_mark_dirty(h->dev->xal);
 out:
 	free(bounce);
 	return ret;
