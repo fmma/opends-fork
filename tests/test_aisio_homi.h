@@ -48,6 +48,7 @@ static inline int
 aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
 {
 	CUdevice cudev;
+	CUresult cres;
 
 	out->cuctx = NULL;
 	out->fd = -1;
@@ -55,7 +56,13 @@ aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
 
 	cuInit(0);
 	cuDeviceGet(&cudev, 0);
-	if (cuCtxCreate(&out->cuctx, 0, cudev) != CUDA_SUCCESS) {
+	/* CUDA 13 maps cuCtxCreate to the 4-argument _v4 form. */
+#if CUDA_VERSION >= 13000
+	cres = cuCtxCreate(&out->cuctx, NULL, 0, cudev);
+#else
+	cres = cuCtxCreate(&out->cuctx, 0, cudev);
+#endif
+	if (cres != CUDA_SUCCESS) {
 		fprintf(stderr, "cuCtxCreate failed\n");
 		return -1;
 	}
