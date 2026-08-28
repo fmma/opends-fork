@@ -18,22 +18,30 @@ NVMe straight into GPU memory.
   `nvme` driver in the read data path). Based on
   [aisio](https://github.com/xnvme/aisio). A homi server (an xNVMe tool) is
   the primary of an xNVMe multi-process group and holds the userspace NVMe
-  controller up; the driver joins that group as a secondary and allocates its
-  own I/O queues. File extents come from the index xal-server publishes over
-  POSIX shared memory, built over the qublk-exported block device. Reads and
-  writes are supported. Requires xNVMe, xal, and the CUDA toolkit.
+  controllers up; the driver joins that group as a secondary and allocates its
+  own I/O queues. The driver takes its device set from the group's runtime:
+  every device the server holds gets its own queues and I/O threads. File
+  extents come from per-device indexes xal-server publishes over POSIX shared
+  memory, built over the qublk-exported block devices, and a registered file
+  is bound to the device whose index resolves its path. Reads and writes are
+  supported. Requires xNVMe, xal, and the CUDA toolkit.
 
 ## aisio configuration
 
 The aisio backend reads its configuration from environment variables at
 `opends_driver_open`. Values that are out of range, or not a number, fail
-the open.
+the open. The devices are not configured here: the driver takes them from
+the multi-process runtime the homi server created, so the homi command line
+is the only place they are named.
 
-- `OPENDS_HOMI_DEV` (required): The NVMe device the homi server owns (PCI BDF).
-- `OPENDS_XAL_SHM`: Shared-memory name of the xal-server extent index.
-  Default `/xal_dev0`.
-- `OPENDS_AISIO_IO_THREADS`: Number of internal IO worker threads. Default 2.
-  Driver open creates one NVMe queue per worker.
+- `OPENDS_XAL_SHM`: Shared-memory names of the xal-server extent indexes, a
+  comma-separated list paired with the runtime's device order. Default
+  `/xal_dev<i>` for device i.
+- `OPENDS_AISIO_IO_THREADS`: Total number of internal IO worker threads.
+  Default 2, or the device count when that is larger. Driver open creates one
+  NVMe queue per worker and gives the workers to the devices round-robin, so a
+  worker serves one device. It fails when the workers are fewer than the
+  devices, since a device with no worker cannot be read.
 - `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 8.
 - `OPENDS_AISIO_CPU_MASK`: Hex mask of CPUs for the workers (e.g. `0xf0`).
   Each worker gets a one-CPU affinity via `pthread_attr_setaffinity_np(3)`:

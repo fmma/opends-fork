@@ -4,11 +4,13 @@
  *
  * Reads go straight from an NVMe device into GPU memory via xNVMe's upcie-cuda
  * backend (PCIe P2P DMA). The HOMI server (xnvme's "homi start") is the
- * primary of an xNVMe multi-process group and holds the controller up; this
- * driver joins the same group as a secondary and allocates its own I/O
- * queues. A registered file's extents come from an xal index that xal-server
- * publishes over POSIX shared memory; the index is in byte units, and this
- * driver converts to LBAs with its own device geometry.
+ * primary of an xNVMe multi-process group and holds the controllers up; this
+ * driver joins the same group as a secondary, takes its device set from the
+ * group's runtime, and allocates its own I/O queues. A registered file's
+ * extents come from a per-device xal index that xal-server publishes over
+ * POSIX shared memory; the index is in byte units, and this driver converts
+ * to LBAs with its own device geometry. The index whose mountpoint covers a
+ * file's path also binds the file to its device.
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before opends_driver_open runs.
@@ -46,7 +48,6 @@
 #include <libxnvme.h>
 
 #define ENV_XAL_SHM "OPENDS_XAL_SHM"
-#define ENV_HOMI_DEV "OPENDS_HOMI_DEV"
 #define ENV_IO_THREADS "OPENDS_AISIO_IO_THREADS"
 #define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
@@ -55,10 +56,12 @@
 #define ENV_SHM_ID "OPENDS_AISIO_SHM_ID"
 #define ENV_HOST_HEAP_MB "OPENDS_AISIO_HOST_HEAP_MB"
 #define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
-#define DEFAULT_XAL_SHM "/xal_dev0"
+#define DEFAULT_XAL_SHM_FMT "/xal_dev%d"
 #define DEFAULT_SHM_ID 1
 #define DEFAULT_IO_THREADS 2
 #define MAX_IO_THREADS 15
+/* A device with no worker cannot be read, so the workers bound the set. */
+#define MAX_DEVICES MAX_IO_THREADS
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
@@ -68,9 +71,11 @@
 #define MAX_QUEUE_DEPTH 4096
 
 /* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, one set
- * per I/O thread. 256 MiB covers the largest configuration the knobs allow
- * (MAX_IO_THREADS queues at MAX_QUEUE_DEPTH). xNVMe would otherwise default to
- * 1 GiB, which does not multiply across the processes sharing the hugepages. */
+ * per I/O thread. The heap is process-wide and the thread count does not grow
+ * with the device count, so 256 MiB covers the largest configuration the knobs
+ * allow (MAX_IO_THREADS queues at MAX_QUEUE_DEPTH). xNVMe would otherwise
+ * default to 1 GiB, which does not multiply across the processes sharing the
+ * hugepages. */
 #define DEFAULT_HOST_HEAP_MB 256
 #define MAX_HEAP_MB (64 * 1024)
 #define DEFAULT_IDLE_SPIN_US 200
@@ -94,8 +99,11 @@ struct buf_entry {
 	bool owned; /* true: xnvme_buf_alloc; false: xnvme_mem_map. */
 };
 
+struct nvme_device;
+
 struct registered_file {
 	int fd;
+	struct nvme_device *dev;
 };
 
 struct opends_stream {
@@ -164,6 +172,7 @@ struct driver;
 
 struct io_worker {
 	struct driver *drv;
+	struct nvme_device *dev;
 	struct xnvme_queue *queue;
 	struct file_op file_op_queue[FILE_OP_QUEUE_SIZE];
 	uint32_t queue_head;
@@ -171,17 +180,28 @@ struct io_worker {
 	pthread_t thread;
 };
 
-struct driver {
-	char dev_uri[64]; ///< NVMe device (BDF) the HOMI server owns
-	uint32_t shm_id;  ///< Multi-process group the HOMI server is primary of
-	struct xal *xal;  ///< Attach to the index xal-server publishes
-	size_t host_heap_nbytes;
-	size_t device_heap_nbytes;
+struct nvme_device {
+	char dev_uri[XNVME_IDENT_URI_LEN];
+	struct xal *xal; ///< Attach to the index xal-server publishes
 	struct xnvme_dev *xdev;
 	uint32_t nsid;
 	uint32_t lba_size;
 	uint32_t lba_shift;
 	uint32_t mdts_nbytes;
+	struct io_worker *workers;
+	int n_workers;
+	uint32_t rr_next;
+};
+
+struct driver {
+	struct nvme_device devices[MAX_DEVICES];
+	int n_devices;
+	/** Multi-process group the HOMI server is primary of */
+	uint32_t shm_id;
+	size_t host_heap_nbytes;
+	size_t device_heap_nbytes;
+	uint32_t max_lba_size;    ///< Largest over the devices
+	uint32_t min_mdts_nbytes; ///< Smallest over the devices
 	struct buf_entry bufs[MAX_BUF_ENTRIES];
 	int buf_count;
 
@@ -201,8 +221,6 @@ struct driver {
 	bool busy_spin;
 	uint64_t cpu_mask;
 	bool assume_aligned_only;
-	struct io_worker *workers;
-	uint32_t rr_next;
 	pthread_mutex_t submit_lock;
 	pthread_mutex_t reg_lock;
 	pthread_mutex_t alloc_lock;
@@ -237,11 +255,19 @@ cpu_relax(void)
 #endif
 }
 
+/* The upcie DMA registries are process-global and ignore the dev argument, so
+ * one device stands in for all of them on every buffer call. */
+static inline struct xnvme_dev *
+mem_dev(struct driver *d)
+{
+	return d->devices[0].xdev;
+}
+
 static void *
 buf_alloc_locked(struct driver *d, size_t nbytes)
 {
 	pthread_mutex_lock(&d->alloc_lock);
-	void *p = xnvme_buf_alloc(d->xdev, nbytes);
+	void *p = xnvme_buf_alloc(mem_dev(d), nbytes);
 	pthread_mutex_unlock(&d->alloc_lock);
 	return p;
 }
@@ -250,7 +276,7 @@ static void
 buf_free_locked(struct driver *d, void *p)
 {
 	pthread_mutex_lock(&d->alloc_lock);
-	xnvme_buf_free(d->xdev, p);
+	xnvme_buf_free(mem_dev(d), p);
 	pthread_mutex_unlock(&d->alloc_lock);
 }
 
@@ -285,8 +311,9 @@ stream_bounce_alloc(struct opends_stream *s, struct driver *d)
 	memset(desc_host, 0, sizeof(struct ds_bounce_copy));
 
 	/* One slot suffices: at most one bounce per op, and the per-stream gate
-	 * serialises ops. */
-	void *buf = buf_alloc_locked(d, d->lba_size);
+	 * serialises ops. A stream is not bound to a device, so the slot takes
+	 * the largest lba_size in the set. */
+	void *buf = buf_alloc_locked(d, d->max_lba_size);
 	if (!buf) {
 		ds_accel->host_free(desc_host);
 		return -1;
@@ -326,10 +353,10 @@ stream_bounce_free(struct opends_stream *s, struct driver *d)
  * not yet re-indexed. Report -ESTALE in all of those and let the caller retry.
  */
 static int
-extents_snapshot(struct driver *d, char *path, struct ds_extent **out,
+extents_snapshot(struct nvme_device *dev, char *path, struct ds_extent **out,
                  uint32_t *out_n)
 {
-	struct xal *xal = d->xal;
+	struct xal *xal = dev->xal;
 	struct xal_extents *xe = NULL;
 
 	int seq = xal_get_seq_lock(xal);
@@ -367,12 +394,12 @@ extents_snapshot(struct driver *d, char *path, struct ds_extent **out,
 			goto failed;
 		/* xal-server never opens the device, so its index carries no
 		 * LBA size; convert with our own geometry. */
-		if (b.start_block & (uint64_t)(d->lba_size - 1)) {
+		if (b.start_block & (uint64_t)(dev->lba_size - 1)) {
 			rc = -EIO;
 			goto failed;
 		}
 		ex[i].file_offset = b.start_offset;
-		ex[i].slba = b.start_block >> d->lba_shift;
+		ex[i].slba = b.start_block >> dev->lba_shift;
 		ex[i].length = b.size;
 	}
 
@@ -407,20 +434,20 @@ extents_end(const struct ds_extent *ex, uint32_t n)
 }
 
 static int
-resolve_extents(struct driver *d, int fd, struct ds_extent **out,
+resolve_extents(struct registered_file *h, struct ds_extent **out,
                 uint32_t *out_n)
 {
 	char fdpath[64], path[PATH_MAX];
 	struct stat st;
 	ssize_t plen;
 
-	snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", fd);
+	snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", h->fd);
 	plen = readlink(fdpath, path, sizeof(path) - 1);
 	if (plen < 0)
 		return -errno;
 	path[plen] = '\0';
 
-	if (fstat(fd, &st) < 0)
+	if (fstat(h->fd, &st) < 0)
 		return -errno;
 
 	/* This driver does not mark the index dirty after a write. The
@@ -428,7 +455,7 @@ resolve_extents(struct driver *d, int fd, struct ds_extent **out,
 	 * stale, and briefly while it does not yet cover the file's size. */
 	int rc = -ESTALE;
 	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
-		rc = extents_snapshot(d, path, out, out_n);
+		rc = extents_snapshot(h->dev, path, out, out_n);
 		if (rc == -ESTALE) {
 			usleep(ESTALE_BACKOFF_US);
 			continue;
@@ -490,7 +517,7 @@ out:
 }
 
 static int
-open_device(struct driver *d)
+open_device(struct driver *d, struct nvme_device *dev)
 {
 	/* Joins the group the HOMI server is primary of. Whoever opens first
 	 * wins the role election, so a shm_id the server does not serve would
@@ -502,41 +529,83 @@ open_device(struct driver *d)
 	opts.host_heap_size = d->host_heap_nbytes;
 	opts.device_heap_size = d->device_heap_nbytes;
 
-	d->xdev = xnvme_dev_open(d->dev_uri, &opts);
-	if (!d->xdev) {
+	dev->xdev = xnvme_dev_open(dev->dev_uri, &opts);
+	if (!dev->xdev) {
 		fprintf(stderr,
 		        "aisio open_device: xnvme_dev_open(%s, be=%s, "
 		        "shm_id=%u) failed\n",
-		        d->dev_uri, opts.be, d->shm_id);
+		        dev->dev_uri, opts.be, d->shm_id);
 		return -EIO;
 	}
 
-	const struct xnvme_geo *geo = xnvme_dev_get_geo(d->xdev);
-	d->nsid = xnvme_dev_get_nsid(d->xdev);
-	d->lba_size = geo->lba_nbytes ? geo->lba_nbytes : geo->nbytes;
-	d->mdts_nbytes =
+	const struct xnvme_geo *geo = xnvme_dev_get_geo(dev->xdev);
+	dev->nsid = xnvme_dev_get_nsid(dev->xdev);
+	dev->lba_size = geo->lba_nbytes ? geo->lba_nbytes : geo->nbytes;
+	dev->mdts_nbytes =
 	        geo->mdts_nbytes ? geo->mdts_nbytes : DEFAULT_BOUNCE_SIZE;
 
-	if (d->lba_size == 0) {
+	if (dev->lba_size == 0) {
 		fprintf(stderr,
-		        "aisio open_device: zero geometry from xnvme_dev_open "
-		        "(lba_nbytes=%u nbytes=%u mdts_nbytes=%u); "
-		        "controller likely needs a PCI reset before this "
-		        "open\n",
-		        geo->lba_nbytes, geo->nbytes, geo->mdts_nbytes);
-		xnvme_dev_close(d->xdev);
-		d->xdev = NULL;
+		        "aisio open_device(%s): zero geometry from "
+		        "xnvme_dev_open (lba_nbytes=%u nbytes=%u "
+		        "mdts_nbytes=%u); controller likely needs a PCI reset "
+		        "before this open\n",
+		        dev->dev_uri, geo->lba_nbytes, geo->nbytes,
+		        geo->mdts_nbytes);
+		xnvme_dev_close(dev->xdev);
+		dev->xdev = NULL;
 		return -EIO;
 	}
-	if (d->lba_size & (d->lba_size - 1)) {
+	if (dev->lba_size & (dev->lba_size - 1)) {
 		fprintf(stderr,
-		        "aisio open_device: lba_size=%u is not a power of 2\n",
-		        d->lba_size);
-		xnvme_dev_close(d->xdev);
-		d->xdev = NULL;
+		        "aisio open_device(%s): lba_size=%u is not a power of "
+		        "2\n",
+		        dev->dev_uri, dev->lba_size);
+		xnvme_dev_close(dev->xdev);
+		dev->xdev = NULL;
 		return -EIO;
 	}
-	d->lba_shift = (uint32_t)__builtin_ctz(d->lba_size);
+	dev->lba_shift = (uint32_t)__builtin_ctz(dev->lba_size);
+
+	return 0;
+}
+
+static void
+close_devices(struct driver *d)
+{
+	for (int i = 0; i < d->n_devices; i++) {
+		if (d->devices[i].xdev) {
+			xnvme_dev_close(d->devices[i].xdev);
+			d->devices[i].xdev = NULL;
+		}
+	}
+}
+
+static int
+open_devices(struct driver *d)
+{
+	int err;
+
+	for (int i = 0; i < d->n_devices; i++) {
+		err = open_device(d, &d->devices[i]);
+		if (err < 0) {
+			close_devices(d);
+			return err;
+		}
+	}
+
+	d->max_lba_size = 0;
+	d->min_mdts_nbytes = UINT32_MAX;
+	for (int i = 0; i < d->n_devices; i++) {
+		struct nvme_device *dev = &d->devices[i];
+
+		if (dev->lba_size > d->max_lba_size) {
+			d->max_lba_size = dev->lba_size;
+		}
+		if (dev->mdts_nbytes < d->min_mdts_nbytes) {
+			d->min_mdts_nbytes = dev->mdts_nbytes;
+		}
+	}
 
 	return 0;
 }
@@ -552,7 +621,7 @@ chunk_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 	if (xnvme_cmd_ctx_cpl_status(ctx)) {
 		op->err = OPENDS_DEVICE_DRIVER_ERROR;
 	} else {
-		uint32_t lba_size = drv->lba_size;
+		uint32_t lba_size = op->h->dev->lba_size;
 		op->bytes_acc += ((uint64_t)ctx->cmd.nvm.nlb + 1) * lba_size;
 	}
 	op->chunks_remaining--;
@@ -560,11 +629,11 @@ chunk_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 }
 
 static int
-submit_read_middle(struct driver *d, struct read_cursor *c, struct file_op *op,
-                   uint64_t middle_lbas)
+submit_read_middle(struct nvme_device *dev, struct read_cursor *c,
+                   struct file_op *op, uint64_t middle_lbas)
 {
-	uint32_t lba_nbytes = d->lba_size;
-	uint64_t max_chunk_lbas = d->mdts_nbytes >> d->lba_shift;
+	uint32_t lba_nbytes = dev->lba_size;
+	uint64_t max_chunk_lbas = dev->mdts_nbytes >> dev->lba_shift;
 	uint64_t lbas_done = 0;
 	while (lbas_done < middle_lbas) {
 		uint64_t chunk_lbas =
@@ -585,7 +654,7 @@ submit_read_middle(struct driver *d, struct read_cursor *c, struct file_op *op,
 		uint8_t *dst_chunk = c->abs_dst + lbas_done * lba_nbytes;
 
 		op->chunks_remaining++;
-		int srv = xnvme_nvm_read(ctx, d->nsid, chunk_slba, nlb,
+		int srv = xnvme_nvm_read(ctx, dev->nsid, chunk_slba, nlb,
 		                         dst_chunk, NULL);
 		if (srv == -EBUSY) {
 			op->chunks_remaining--;
@@ -624,15 +693,15 @@ submit_bounce_read(struct io_worker *w, struct file_op *op, void *bounce_buf,
                    uint8_t *abs_dst, uint64_t slba, size_t src_off,
                    size_t nbytes)
 {
-	struct driver *d = w->drv;
+	struct nvme_device *dev = w->dev;
 
-	if (op->n_bounces >= BOUNCE_SLOTS || src_off + nbytes > d->lba_size) {
+	if (op->n_bounces >= BOUNCE_SLOTS || src_off + nbytes > dev->lba_size) {
 		op->err = OPENDS_INTERNAL_ERROR;
 		return -1;
 	}
 
 	int slot = op->n_bounces;
-	uint8_t *bounce = (uint8_t *)bounce_buf + (size_t)slot * d->lba_size;
+	uint8_t *bounce = (uint8_t *)bounce_buf + (size_t)slot * dev->lba_size;
 	uint16_t nlb = 0;
 
 	for (;;) {
@@ -645,7 +714,8 @@ submit_bounce_read(struct io_worker *w, struct file_op *op, void *bounce_buf,
 		}
 		xnvme_cmd_ctx_set_cb(ctx, bounce_cb, op);
 
-		int srv = xnvme_nvm_read(ctx, d->nsid, slba, nlb, bounce, NULL);
+		int srv =
+		        xnvme_nvm_read(ctx, dev->nsid, slba, nlb, bounce, NULL);
 		if (srv == -EBUSY) {
 			xnvme_queue_put_cmd_ctx(w->queue, ctx);
 			xnvme_queue_poke(w->queue, 0);
@@ -694,7 +764,7 @@ submit_host_bounce(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
 {
 	if (!op->bounce_buf)
 		op->bounce_buf = buf_alloc_locked(
-		        w->drv, BOUNCE_SLOTS * (size_t)w->drv->lba_size);
+		        w->drv, BOUNCE_SLOTS * (size_t)w->dev->lba_size);
 	if (!op->bounce_buf) {
 		op->err = OPENDS_INTERNAL_ERROR;
 		return -1;
@@ -724,13 +794,13 @@ submit_partial(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
 static void
 start_read_op(struct io_worker *w, struct file_op *op)
 {
-	struct driver *d = w->drv;
+	struct nvme_device *dev = w->dev;
 
-	if (d->lba_size == 0) {
+	if (dev->lba_size == 0) {
 		op->err = OPENDS_INTERNAL_ERROR;
 		return;
 	}
-	if ((d->mdts_nbytes >> d->lba_shift) == 0) {
+	if ((dev->mdts_nbytes >> dev->lba_shift) == 0) {
 		op->err = OPENDS_INVALID_VALUE;
 		return;
 	}
@@ -755,14 +825,14 @@ start_read_op(struct io_worker *w, struct file_op *op)
 
 	struct ds_extent *extents;
 	uint32_t extent_count;
-	int frc = resolve_extents(d, op->h->fd, &extents, &extent_count);
+	int frc = resolve_extents(op->h, &extents, &extent_count);
 	if (frc < 0) {
 		op->err = OPENDS_FS_SETUP_ERROR;
 		return;
 	}
 
-	uint32_t lba_shift = d->lba_shift;
-	uint32_t lba_mask = d->lba_size - 1;
+	uint32_t lba_shift = dev->lba_shift;
+	uint32_t lba_mask = dev->lba_size - 1;
 
 	for (uint32_t i = 0; i < extent_count; i++) {
 		const struct ds_extent *e = &extents[i];
@@ -784,11 +854,11 @@ start_read_op(struct io_worker *w, struct file_op *op)
 
 		size_t head_off = off_in_ext & lba_mask;
 		if (head_off) {
-			size_t head_bytes = d->lba_size - head_off;
+			size_t head_bytes = dev->lba_size - head_off;
 
 			if (head_bytes > remaining)
 				head_bytes = remaining;
-			if (remaining - head_bytes >= d->lba_size &&
+			if (remaining - head_bytes >= dev->lba_size &&
 			    (head_bytes & (NVME_PRP_OFFSET_ALIGN - 1))) {
 				op->err = OPENDS_INVALID_VALUE;
 				goto out;
@@ -810,7 +880,7 @@ start_read_op(struct io_worker *w, struct file_op *op)
 			        .abs_dst = abs_dst,
 			        .remaining = remaining,
 			};
-			if (submit_read_middle(d, &c, op, middle_lbas) < 0)
+			if (submit_read_middle(dev, &c, op, middle_lbas) < 0)
 				goto out;
 			cur_slba = c.cur_slba;
 			abs_dst = c.abs_dst;
@@ -884,9 +954,8 @@ complete_read_op(struct file_op *op)
 }
 
 static void
-dispatch_write(struct io_worker *w, struct file_op *op)
+dispatch_write(struct file_op *op)
 {
-	struct driver *d = w->drv;
 	const void *src;
 	size_t size;
 	off_t file_offset;
@@ -920,7 +989,7 @@ static void
 dispatch_pending(struct io_worker *w, struct file_op *op)
 {
 	if (op->is_write) {
-		dispatch_write(w, op);
+		dispatch_write(op);
 		return;
 	}
 	op->chunks_remaining = 0;
@@ -1046,6 +1115,60 @@ mask_nth_cpu(uint64_t mask, int n)
 	return -1;
 }
 
+/* Workers go round-robin over the devices: worker i serves device
+ * i % n_devices. */
+static int
+workers_of_device(const struct driver *d, int di)
+{
+	int base = d->n_io_threads / d->n_devices;
+
+	return base + (di < d->n_io_threads % d->n_devices ? 1 : 0);
+}
+
+static void
+workers_stop(struct driver *d)
+{
+	__atomic_store_n(&d->stop, true, __ATOMIC_RELEASE);
+	for (int di = 0; di < d->n_devices; di++) {
+		struct nvme_device *dev = &d->devices[di];
+
+		for (int i = 0; i < dev->n_workers; i++) {
+			pthread_join(dev->workers[i].thread, NULL);
+		}
+	}
+}
+
+static void
+workers_free(struct driver *d)
+{
+	for (int di = 0; di < d->n_devices; di++) {
+		struct nvme_device *dev = &d->devices[di];
+
+		if (!dev->workers) {
+			continue;
+		}
+		for (int i = 0; i < dev->n_workers; i++) {
+			struct io_worker *w = &dev->workers[i];
+
+			for (uint32_t s = 0; s < FILE_OP_QUEUE_SIZE; s++) {
+				struct file_op *op = &w->file_op_queue[s];
+
+				if (op->bounce_buf) {
+					buf_free_locked(d, op->bounce_buf);
+					op->bounce_buf = NULL;
+				}
+			}
+			if (w->queue) {
+				xnvme_queue_term(w->queue);
+				w->queue = NULL;
+			}
+		}
+		free(dev->workers);
+		dev->workers = NULL;
+		dev->n_workers = 0;
+	}
+}
+
 /* Returns 0 on success; on failure, the dev_err to report (vendor code or
  * -1). */
 static int
@@ -1066,57 +1189,59 @@ workers_setup(struct driver *d)
 	d->stream_words_host = host;
 	d->stream_words_dptr = dptr;
 
-	d->workers = calloc((size_t)d->n_io_threads, sizeof(*d->workers));
-	if (!d->workers)
-		goto fail_words;
-
 	d->stop = false;
-	int started = 0;
 	int mask_cpus = __builtin_popcountll(d->cpu_mask);
-	for (int i = 0; i < d->n_io_threads; i++) {
-		struct io_worker *w = &d->workers[i];
-		w->drv = d;
-		if (xnvme_queue_init(d->xdev, d->queue_depth, 0, &w->queue) <
-		    0) {
-			w->queue = NULL;
+	int pinned = 0;
+	for (int di = 0; di < d->n_devices; di++) {
+		struct nvme_device *dev = &d->devices[di];
+		int nw = workers_of_device(d, di);
+
+		dev->workers = calloc((size_t)nw, sizeof(*dev->workers));
+		if (!dev->workers)
 			goto fail;
+
+		for (int i = 0; i < nw; i++) {
+			struct io_worker *w = &dev->workers[i];
+			w->drv = d;
+			w->dev = dev;
+			if (xnvme_queue_init(dev->xdev, d->queue_depth, 0,
+			                     &w->queue) < 0) {
+				w->queue = NULL;
+				goto fail;
+			}
+			pthread_attr_t attr;
+			pthread_attr_t *attrp = NULL;
+			if (mask_cpus) {
+				cpu_set_t set;
+				CPU_ZERO(&set);
+				CPU_SET(mask_nth_cpu(d->cpu_mask,
+				                     pinned % mask_cpus),
+				        &set);
+				pthread_attr_init(&attr);
+				pthread_attr_setaffinity_np(&attr, sizeof(set),
+				                            &set);
+				attrp = &attr;
+			}
+			int rc = pthread_create(&w->thread, attrp,
+			                        io_thread_main, w);
+			if (attrp)
+				pthread_attr_destroy(&attr);
+			if (rc != 0) {
+				xnvme_queue_term(w->queue);
+				w->queue = NULL;
+				goto fail;
+			}
+			pinned++;
+			dev->n_workers = i + 1;
 		}
-		pthread_attr_t attr;
-		pthread_attr_t *attrp = NULL;
-		if (mask_cpus) {
-			cpu_set_t set;
-			CPU_ZERO(&set);
-			CPU_SET(mask_nth_cpu(d->cpu_mask, i % mask_cpus), &set);
-			pthread_attr_init(&attr);
-			pthread_attr_setaffinity_np(&attr, sizeof(set), &set);
-			attrp = &attr;
-		}
-		int rc = pthread_create(&w->thread, attrp, io_thread_main, w);
-		if (attrp)
-			pthread_attr_destroy(&attr);
-		if (rc != 0) {
-			xnvme_queue_term(w->queue);
-			w->queue = NULL;
-			goto fail;
-		}
-		started++;
 	}
 
 	d->workers_ready = true;
 	return 0;
 
 fail:
-	__atomic_store_n(&d->stop, true, __ATOMIC_RELEASE);
-	for (int i = 0; i < started; i++)
-		pthread_join(d->workers[i].thread, NULL);
-	for (int i = 0; i < d->n_io_threads; i++) {
-		struct io_worker *w = &d->workers[i];
-		if (w->queue)
-			xnvme_queue_term(w->queue);
-	}
-	free(d->workers);
-	d->workers = NULL;
-fail_words:
+	workers_stop(d);
+	workers_free(d);
 	ds_accel->host_free(d->stream_words_host);
 	d->stream_words_host = NULL;
 	return -1;
@@ -1128,30 +1253,13 @@ workers_teardown(struct driver *d)
 	if (!d->workers_ready)
 		return;
 
-	__atomic_store_n(&d->stop, true, __ATOMIC_RELEASE);
-	for (int i = 0; i < d->n_io_threads; i++)
-		pthread_join(d->workers[i].thread, NULL);
+	workers_stop(d);
 
 	for (int i = 0; i < d->n_streams; i++) {
 		stream_bounce_free(&d->streams[i], d);
 	}
 
-	for (int i = 0; i < d->n_io_threads; i++) {
-		struct io_worker *w = &d->workers[i];
-		for (uint32_t s = 0; s < FILE_OP_QUEUE_SIZE; s++) {
-			struct file_op *op = &w->file_op_queue[s];
-			if (op->bounce_buf) {
-				buf_free_locked(d, op->bounce_buf);
-				op->bounce_buf = NULL;
-			}
-		}
-		if (w->queue) {
-			xnvme_queue_term(w->queue);
-			w->queue = NULL;
-		}
-	}
-	free(d->workers);
-	d->workers = NULL;
+	workers_free(d);
 
 	ds_accel->host_free(d->stream_words_host);
 	d->stream_words_host = NULL;
@@ -1195,10 +1303,21 @@ static int
 read_env_config(struct driver *d)
 {
 	int n;
+	int thr_def;
 
-	if (env_int(ENV_IO_THREADS, DEFAULT_IO_THREADS, 1, MAX_IO_THREADS, &n) <
-	    0)
+	/* One worker per device at least, since a device with no worker cannot
+	 * be read. The threads are the total, not a per-device count. */
+	thr_def = DEFAULT_IO_THREADS < d->n_devices ? d->n_devices
+	                                            : DEFAULT_IO_THREADS;
+	if (env_int(ENV_IO_THREADS, thr_def, 1, MAX_IO_THREADS, &n) < 0)
 		return -EINVAL;
+	if (n < d->n_devices) {
+		fprintf(stderr,
+		        "aisio: %s=%d leaves some of the %d devices without a "
+		        "worker\n",
+		        ENV_IO_THREADS, n, d->n_devices);
+		return -EINVAL;
+	}
 	d->n_io_threads = n;
 
 	if (env_int(ENV_QUEUE_DEPTH, DEFAULT_QUEUE_DEPTH, 1, MAX_QUEUE_DEPTH,
@@ -1226,10 +1345,6 @@ read_env_config(struct driver *d)
 
 	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
 	d->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
-
-	if (env_int(ENV_SHM_ID, DEFAULT_SHM_ID, 0, INT_MAX, &n) < 0)
-		return -EINVAL;
-	d->shm_id = (uint32_t)n;
 
 	if (env_int(ENV_HOST_HEAP_MB, DEFAULT_HOST_HEAP_MB, 1, MAX_HEAP_MB,
 	            &n) < 0)
@@ -1267,16 +1382,17 @@ read_env_config(struct driver *d)
 }
 
 static struct io_worker *
-route_op(struct driver *d)
+route_op(struct nvme_device *dev)
 {
-	return &d->workers[d->rr_next++ % (uint32_t)d->n_io_threads];
+	return &dev->workers[dev->rr_next++ % (uint32_t)dev->n_workers];
 }
 
 static struct file_op *
-claim_slot_locked(struct driver *d, struct io_worker **wp, uint32_t *headp)
+claim_slot_locked(struct driver *d, struct nvme_device *dev,
+                  struct io_worker **wp, uint32_t *headp)
 {
 	for (;;) {
-		struct io_worker *w = route_op(d);
+		struct io_worker *w = route_op(dev);
 		uint32_t head = w->queue_head;
 
 		if (head - __atomic_load_n(&w->queue_tail, __ATOMIC_ACQUIRE) <
@@ -1300,28 +1416,159 @@ claim_slot_locked(struct driver *d, struct io_worker **wp, uint32_t *headp)
 #define ATTACH_BACKOFF_US 50000
 
 /*
- * Attach to the index xal-server publishes. -ENOENT (not yet published),
- * -EAGAIN (still being set up) and -ESTALE (first index not finished) all
- * mean "not yet" for a server starting alongside us, so retry on them.
+ * The device set comes from the multi-process runtime the HOMI server
+ * created: the driver serves every controller the group holds, in the
+ * runtime's order. -ENOENT (no runtime yet), -EAGAIN (mid-creation) and a
+ * group that holds no controller yet all mean the server is still starting,
+ * so retry on them.
+ */
+static int
+discover_devices(struct driver *d)
+{
+	struct xnvme_mproc_info info;
+	int n;
+	int err;
+
+	if (env_int(ENV_SHM_ID, DEFAULT_SHM_ID, 0, INT_MAX, &n) < 0) {
+		return -EINVAL;
+	}
+	d->shm_id = (uint32_t)n;
+
+	err = -ENOENT;
+	for (int i = 0; i < ATTACH_RETRIES; i++) {
+		err = xnvme_mproc_get_info(d->shm_id, &info);
+		if (err == 0 && info.nctrlrs > 0) {
+			break;
+		}
+		if (err < 0 && err != -ENOENT && err != -EAGAIN) {
+			break;
+		}
+		usleep(ATTACH_BACKOFF_US);
+	}
+	if (err < 0) {
+		fprintf(stderr,
+		        "aisio: xnvme_mproc_get_info(shm_id=%u) failed; "
+		        "err(%d)\n",
+		        d->shm_id, err);
+		return err;
+	}
+	if (info.nctrlrs == 0) {
+		fprintf(stderr,
+		        "aisio: the homi group (shm_id=%u) serves no device\n",
+		        d->shm_id);
+		return -ENODEV;
+	}
+	if (info.nctrlrs > MAX_DEVICES) {
+		fprintf(stderr,
+		        "aisio: the homi group (shm_id=%u) serves %u devices; "
+		        "the driver takes at most %d\n",
+		        d->shm_id, info.nctrlrs, MAX_DEVICES);
+		return -EINVAL;
+	}
+
+	for (uint32_t i = 0; i < info.nctrlrs; i++) {
+		snprintf(d->devices[i].dev_uri, sizeof(d->devices[i].dev_uri),
+		         "%s", info.ctrlrs[i]);
+	}
+	d->n_devices = (int)info.nctrlrs;
+
+	return 0;
+}
+
+/* OPENDS_XAL_SHM optionally overrides the index names as a comma-separated
+ * list, paired with the runtime's device order. Default: /xal_dev<i>. */
+static int
+xal_shm_name(int di, int n_devices, char *out, size_t out_len)
+{
+	const char *spec = getenv(ENV_XAL_SHM);
+	const char *p;
+	const char *end;
+	size_t len;
+	int n;
+
+	if (!spec || !spec[0]) {
+		snprintf(out, out_len, DEFAULT_XAL_SHM_FMT, di);
+		return 0;
+	}
+
+	n = 1;
+	for (p = spec; *p; p++) {
+		if (*p == ',') {
+			n++;
+		}
+	}
+	if (n != n_devices) {
+		fprintf(stderr, "aisio: %s names %d indexes for %d devices\n",
+		        ENV_XAL_SHM, n, n_devices);
+		return -EINVAL;
+	}
+
+	p = spec;
+	for (int i = 0; i < di; i++) {
+		p = strchr(p, ',') + 1;
+	}
+	end = strchr(p, ',');
+	len = end ? (size_t)(end - p) : strlen(p);
+	if (len == 0 || len >= out_len) {
+		fprintf(stderr, "aisio: %s entry %d is empty or too long\n",
+		        ENV_XAL_SHM, di);
+		return -EINVAL;
+	}
+	memcpy(out, p, len);
+	out[len] = '\0';
+
+	return 0;
+}
+
+static void
+xal_detach(struct driver *d)
+{
+	for (int i = 0; i < d->n_devices; i++) {
+		if (d->devices[i].xal) {
+			xal_close(d->devices[i].xal);
+			d->devices[i].xal = NULL;
+		}
+	}
+}
+
+/*
+ * Attach to the per-device indexes xal-server publishes. -ENOENT (not yet
+ * published), -EAGAIN (still being set up) and -ESTALE (first index not
+ * finished) all mean "not yet" for a server starting alongside us, so retry
+ * on them.
  */
 static int
 xal_attach(struct driver *d)
 {
-	const char *shm = getenv(ENV_XAL_SHM);
-	if (!shm || !shm[0])
-		shm = DEFAULT_XAL_SHM;
+	char shm[256];
+	int err;
 
-	int rc = -ENOENT;
-	for (int i = 0; i < ATTACH_RETRIES; i++) {
-		rc = xal_from_shm(shm, &d->xal);
-		if (rc != -ENOENT && rc != -EAGAIN && rc != -ESTALE)
-			break;
-		usleep(ATTACH_BACKOFF_US);
+	for (int di = 0; di < d->n_devices; di++) {
+		err = xal_shm_name(di, d->n_devices, shm, sizeof(shm));
+		if (err < 0) {
+			xal_detach(d);
+			return err;
+		}
+
+		err = -ENOENT;
+		for (int i = 0; i < ATTACH_RETRIES; i++) {
+			err = xal_from_shm(shm, &d->devices[di].xal);
+			if (err != -ENOENT && err != -EAGAIN &&
+			    err != -ESTALE) {
+				break;
+			}
+			usleep(ATTACH_BACKOFF_US);
+		}
+		if (err < 0) {
+			fprintf(stderr,
+			        "aisio: xal_from_shm(%s) failed; err(%d)\n",
+			        shm, err);
+			xal_detach(d);
+			return err;
+		}
 	}
-	if (rc < 0)
-		fprintf(stderr, "aisio: xal_from_shm(%s) failed; err(%d)\n",
-		        shm, rc);
-	return rc;
+
+	return 0;
 }
 
 opends_error_t
@@ -1330,21 +1577,13 @@ opends_driver_open(void)
 	if (drv)
 		return opends_err(OPENDS_DRIVER_ALREADY_OPEN);
 
-	const char *dev = getenv(ENV_HOMI_DEV);
-	if (!dev || !dev[0]) {
-		fprintf(stderr,
-		        "aisio: %s must name the NVMe device the homi server "
-		        "owns\n",
-		        ENV_HOMI_DEV);
-		return opends_err(OPENDS_FS_SETUP_ERROR);
-	}
-
 	struct driver *d = calloc(1, sizeof(*d));
 	if (!d)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
-	snprintf(d->dev_uri, sizeof(d->dev_uri), "%s", dev);
-	if (read_env_config(d) < 0) {
+	/* The thread-count default follows the device count, so discovery
+	 * comes before the rest of the environment. */
+	if (discover_devices(d) < 0 || read_env_config(d) < 0) {
 		free(d);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
@@ -1363,9 +1602,9 @@ opends_driver_open(void)
 
 	drv = d;
 
-	int orc = open_device(d);
+	int orc = open_devices(d);
 	if (orc < 0) {
-		xal_close(d->xal);
+		xal_detach(d);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
@@ -1376,8 +1615,8 @@ opends_driver_open(void)
 	int arc = workers_setup(d);
 	if (arc != 0) {
 		fprintf(stderr, "aisio: workers_setup failed\n");
-		xnvme_dev_close(d->xdev);
-		xal_close(d->xal);
+		close_devices(d);
+		xal_detach(d);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
@@ -1402,14 +1641,13 @@ opends_driver_close(void)
 		if (e->owned)
 			buf_free_locked(drv, (void *)e->base);
 		else
-			xnvme_mem_unmap(drv->xdev, (void *)e->base);
+			xnvme_mem_unmap(mem_dev(drv), (void *)e->base);
 	}
 	drv->buf_count = 0;
 
-	if (drv->xdev)
-		xnvme_dev_close(drv->xdev);
+	close_devices(drv);
 
-	xal_close(drv->xal);
+	xal_detach(drv);
 
 	pthread_mutex_destroy(&drv->alloc_lock);
 	pthread_mutex_destroy(&drv->submit_lock);
@@ -1436,7 +1674,7 @@ opends_driver_get_properties(opends_drv_props_t *props)
 	memset(props, 0, sizeof(*props));
 	props->major_version = 0;
 	props->minor_version = 1;
-	props->max_direct_io_size = drv->mdts_nbytes;
+	props->max_direct_io_size = drv->min_mdts_nbytes;
 	return opends_ok();
 }
 
@@ -1463,18 +1701,80 @@ opends_get_version(unsigned *major, unsigned *minor, unsigned *patch)
 /*  Handle registration                                               */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Find the device that serves `fd` by asking each device's index for the
+ * file's path. The indexes cover disjoint filesystems, so at most one can
+ * answer: -EINVAL means the path is outside that index's mountpoint, any
+ * other failure means the index is not settled yet and is worth another
+ * pass (a freshly created file appears once the server re-indexes).
+ */
+static int
+bind_device(struct driver *d, int fd, struct nvme_device **out)
+{
+	char fdpath[64], path[PATH_MAX];
+	struct xal_inode *inode;
+	ssize_t plen;
+	int rc;
+
+	snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", fd);
+	plen = readlink(fdpath, path, sizeof(path) - 1);
+	if (plen < 0) {
+		return -errno;
+	}
+	path[plen] = '\0';
+
+	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
+		bool retryable = false;
+
+		for (int i = 0; i < d->n_devices; i++) {
+			struct nvme_device *dev = &d->devices[i];
+
+			rc = xal_get_inode(dev->xal, path, &inode);
+			if (rc == 0) {
+				*out = dev;
+				return 0;
+			}
+			if (rc != -EINVAL) {
+				retryable = true;
+			}
+		}
+		if (!retryable) {
+			break;
+		}
+		usleep(ESTALE_BACKOFF_US);
+	}
+
+	fprintf(stderr,
+	        "aisio: %s is not on a filesystem the homi stack serves\n",
+	        path);
+	return -ENODEV;
+}
+
 opends_error_t
 opends_handle_register(opends_handle_t *fh, int fd)
 {
+	struct nvme_device *dev;
+	int err;
+
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	if (!fh)
 		return opends_err(OPENDS_INVALID_VALUE);
 
+	/* With one device the extent lookup at I/O time already answers this,
+	 * and skipping the probe lets a not-yet-indexed fresh file register. */
+	dev = &drv->devices[0];
+	if (drv->n_devices > 1) {
+		err = bind_device(drv, fd, &dev);
+		if (err < 0)
+			return opends_err(OPENDS_FS_SETUP_ERROR);
+	}
+
 	struct registered_file *h = calloc(1, sizeof(*h));
 	if (!h)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	h->fd = fd;
+	h->dev = dev;
 
 	*fh = h;
 	__atomic_fetch_add(&use_count, 1, __ATOMIC_RELAXED);
@@ -1497,7 +1797,7 @@ opends_handle_deregister(opends_handle_t fh)
 void *
 opends_alloc(size_t size)
 {
-	if (!drv || !drv->xdev)
+	if (!drv || !mem_dev(drv))
 		return NULL;
 
 	pthread_mutex_lock(&drv->reg_lock);
@@ -1547,7 +1847,7 @@ opends_buf_register(const void *buf_base, size_t size, int flags)
 
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
-	if (!drv->xdev)
+	if (!mem_dev(drv))
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	if (!buf_base || !size)
 		return opends_err(OPENDS_INVALID_VALUE);
@@ -1564,7 +1864,7 @@ opends_buf_register(const void *buf_base, size_t size, int flags)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
-	int rc = xnvme_mem_map(drv->xdev, (void *)buf_base, size);
+	int rc = xnvme_mem_map(mem_dev(drv), (void *)buf_base, size);
 	if (rc < 0) {
 		pthread_mutex_unlock(&drv->reg_lock);
 		fprintf(stderr,
@@ -1586,7 +1886,7 @@ opends_buf_deregister(const void *buf_base)
 {
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
-	if (!drv->xdev)
+	if (!mem_dev(drv))
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	if (!buf_base)
 		return opends_err(OPENDS_INVALID_VALUE);
@@ -1600,7 +1900,7 @@ opends_buf_deregister(const void *buf_base)
 			}
 			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
 			drv->buf_count--;
-			xnvme_mem_unmap(drv->xdev, (void *)buf_base);
+			xnvme_mem_unmap(mem_dev(drv), (void *)buf_base);
 			pthread_mutex_unlock(&drv->reg_lock);
 			return opends_ok();
 		}
@@ -1628,14 +1928,15 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	future->done = 0;
 	future->result = 0;
 
+	struct registered_file *h = (struct registered_file *)fh;
 	struct io_worker *w;
 	uint32_t head;
 
 	pthread_mutex_lock(&d->submit_lock);
-	struct file_op *op = claim_slot_locked(d, &w, &head);
+	struct file_op *op = claim_slot_locked(d, h->dev, &w, &head);
 	op->mode = FILE_OP_ASYNC;
 	op->is_write = is_write;
-	op->h = (struct registered_file *)fh;
+	op->h = h;
 	op->buf_base = buf_base;
 	op->u.async.size = size;
 	op->u.async.file_offset = file_offset;
@@ -1712,15 +2013,16 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (!opends_stream)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
+	struct registered_file *h = (struct registered_file *)fh;
 	struct io_worker *w;
 	uint32_t head;
 
 	pthread_mutex_lock(&d->submit_lock);
-	struct file_op *op = claim_slot_locked(d, &w, &head);
+	struct file_op *op = claim_slot_locked(d, h->dev, &w, &head);
 	uint32_t seq = ++opends_stream->next_seq;
 	op->mode = FILE_OP_STREAM;
 	op->is_write = is_write;
-	op->h = (struct registered_file *)fh;
+	op->h = h;
 	op->buf_base = buf_base;
 	op->u.stream.size_p = size_p;
 	op->u.stream.file_offset_p = file_offset_p;

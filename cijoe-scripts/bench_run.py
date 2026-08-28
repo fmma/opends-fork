@@ -7,8 +7,8 @@ block) written to artifacts/<backend>_<data_dir>_<mode>.log.
 Each bench run runs filperf under `prlimit --nofile`. nofile is
 required for opends and harmless elsewhere. gds runs get a cold-cache `drop_caches`; opends
 reads files on the HOMI/qublk mount via DMA into GPU memory, so the
-kernel page cache is irrelevant and the device BDF and index shm name
-are passed through OPENDS_HOMI_DEV/OPENDS_XAL_SHM.
+kernel page cache is irrelevant and the index shm name is passed
+through OPENDS_XAL_SHM.
 """
 
 import json
@@ -163,10 +163,7 @@ def main(args, cijoe):
         shm = "/xal_dev0"
         if not mnt:
             mnt = cijoe.getconf("test.mount_point")
-        env = (
-            f"OPENDS_HOMI_DEV='{bdf}' OPENDS_XAL_SHM='{shm}' "
-            f"OPENDS_HOMI_MNT='{mnt}' "
-        )
+        env = f"OPENDS_XAL_SHM='{shm}' OPENDS_HOMI_MNT='{mnt}' "
         if io_threads:
             env += f"OPENDS_AISIO_IO_THREADS='{io_threads}' "
         if queue_depth:
