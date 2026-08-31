@@ -42,7 +42,7 @@ opends_op_status_error(opends_op_error_t status)
 	case OPENDS_BATCH_SUBMIT_FAILED:       return "failed to submit batch operation";
 	case OPENDS_MEMORY_PINNING_FAILED:     return "failed to allocate pinned device memory";
 	case OPENDS_BATCH_FULL:                return "queue full for batch operation";
-	case OPENDS_ASYNC_NOT_SUPPORTED:       return "stream operation not supported";
+	case OPENDS_ASYNC_NOT_SUPPORTED:       return "async I/O not supported by this backend";
 	case OPENDS_IO_MAX_ERROR:              return "max error";
 	default:                                return "unknown opends error";
 	}
