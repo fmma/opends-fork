@@ -244,7 +244,11 @@ opends_error_t opends_stream_deregister(opends_stream_t stream);
  * in between. opends_batch_get_status reports each completion exactly
  * once: it returns once at least min_nr undelivered completions are
  * available or the timeout expires (NULL waits without limit), and
- * delivers up to *nr of them.
+ * delivers up to *nr of them. The nr passed to opends_batch_setup is
+ * the most operations the handle holds in flight at once. A slot is
+ * free again after get_status has delivered its completion.
+ * opends_batch_submit returns OPENDS_BATCH_FULL when it submits more
+ * operations than there are free slots.
  */
 typedef enum opends_opcode {
 	OPENDS_READ = 0,

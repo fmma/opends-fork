@@ -18,6 +18,7 @@
 #include <sched.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 
 struct batch_entry {
 	opends_async_future_t future;
@@ -29,8 +30,8 @@ struct batch_entry {
 
 struct async_batch {
 	struct batch_entry *entries;
-	unsigned count;
-	unsigned delivered;
+	unsigned used;
+	unsigned inflight;
 	unsigned capacity;
 };
 
@@ -38,6 +39,18 @@ static bool
 entry_done(struct batch_entry *e)
 {
 	return e->failed || __atomic_load_n(&e->future.done, __ATOMIC_ACQUIRE);
+}
+
+/* A slot frees once its completion is delivered. */
+static struct batch_entry *
+entry_take(struct async_batch *b)
+{
+	for (unsigned i = 0; i < b->used; i++)
+		if (b->entries[i].delivered) {
+			memset(&b->entries[i], 0, sizeof(b->entries[i]));
+			return &b->entries[i];
+		}
+	return &b->entries[b->used++];
 }
 
 opends_error_t
@@ -70,12 +83,12 @@ opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
 
 	if (!b || !iocbp)
 		return opends_err(OPENDS_INVALID_VALUE);
-	if (nr > b->capacity - b->count)
+	if (nr > b->capacity - b->inflight)
 		return opends_err(OPENDS_BATCH_FULL);
 
 	for (unsigned i = 0; i < nr; i++) {
 		opends_io_params_t *p = &iocbp[i];
-		struct batch_entry *e = &b->entries[b->count];
+		struct batch_entry *e = entry_take(b);
 		opends_error_t err;
 
 		e->cookie = p->cookie;
@@ -92,7 +105,7 @@ opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
 			        p->u.batch.dev_ptr_offset, &e->future);
 		if (err.err != OPENDS_SUCCESS)
 			e->failed = true;
-		b->count++;
+		b->inflight++;
 	}
 
 	return opends_ok();
@@ -103,7 +116,7 @@ count_ready(struct async_batch *b)
 {
 	unsigned ready = 0;
 
-	for (unsigned i = 0; i < b->count; i++)
+	for (unsigned i = 0; i < b->used; i++)
 		if (!b->entries[i].delivered && entry_done(&b->entries[i]))
 			ready++;
 	return ready;
@@ -118,7 +131,7 @@ opends_batch_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
 
 	if (!b || !nr || !iocbp)
 		return opends_err(OPENDS_INVALID_VALUE);
-	if (min_nr > *nr || min_nr > b->count - b->delivered)
+	if (min_nr > *nr || min_nr > b->inflight)
 		return opends_err(OPENDS_INVALID_VALUE);
 
 	struct timespec deadline;
@@ -146,7 +159,7 @@ opends_batch_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
 	}
 
 	unsigned out = 0;
-	for (unsigned i = 0; i < b->count && out < *nr; i++) {
+	for (unsigned i = 0; i < b->used && out < *nr; i++) {
 		struct batch_entry *e = &b->entries[i];
 
 		if (e->delivered || !entry_done(e))
@@ -167,7 +180,7 @@ opends_batch_get_status(opends_batch_handle_t batch_idp, unsigned min_nr,
 			ev->ret = r < 0 ? 0 : (size_t)r;
 		}
 		e->delivered = true;
-		b->delivered++;
+		b->inflight--;
 	}
 
 	*nr = out;
@@ -182,7 +195,7 @@ opends_batch_cancel(opends_batch_handle_t batch_idp)
 	if (!b)
 		return opends_err(OPENDS_INVALID_VALUE);
 
-	for (unsigned i = 0; i < b->count; i++) {
+	for (unsigned i = 0; i < b->used; i++) {
 		struct batch_entry *e = &b->entries[i];
 
 		if (e->delivered)
@@ -203,7 +216,7 @@ opends_batch_destroy(opends_batch_handle_t batch_idp)
 	if (!b)
 		return;
 
-	for (unsigned i = 0; i < b->count; i++)
+	for (unsigned i = 0; i < b->used; i++)
 		if (!b->entries[i].failed)
 			opends_async_await(&b->entries[i].future);
 
