@@ -221,6 +221,11 @@ ssize_t opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
  * order. The size, offset, and byte count parameters are pointers so
  * the values can be read at stream execution time rather than
  * submission time.
+ *
+ * Backend limits (aisio): at most 8192 streams may be registered at
+ * once; opends_stream_register returns OPENDS_INTERNAL_ERROR past that.
+ * Each I/O worker holds at most 1024 operations in flight; a full queue
+ * applies back-pressure rather than failing.
  */
 typedef void *opends_stream_t;
 
