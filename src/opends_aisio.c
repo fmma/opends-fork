@@ -1008,7 +1008,7 @@ workers_teardown(struct driver *d)
 		for (uint32_t s = 0; s < FILE_OP_QUEUE_SIZE; s++) {
 			struct file_op *op = &w->file_op_queue[s];
 			if (op->tail_bounce) {
-				xnvme_buf_free(d->xdev, op->tail_bounce);
+				buf_free_locked(d, op->tail_bounce);
 				op->tail_bounce = NULL;
 			}
 		}
