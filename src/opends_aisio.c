@@ -52,6 +52,7 @@
 #define MAX_IO_THREADS 15
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
+#define ODIRECT_ALIGN 4096
 #define NVME_MAX_NLB 65536
 #define NVME_PRP_PAGE 4096
 #define DEFAULT_QUEUE_DEPTH 8
@@ -329,8 +330,9 @@ pwrite_op(struct driver *d, struct registered_file *h, const void *src,
 	if (size == 0)
 		return 0;
 
-	void *bounce = malloc(size);
-	if (!bounce)
+	void *bounce = NULL;
+	int err = posix_memalign(&bounce, ODIRECT_ALIGN, size);
+	if (err != 0)
 		return -ENOMEM;
 
 	ssize_t ret = (ssize_t)size;
