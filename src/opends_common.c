@@ -174,3 +174,47 @@ out:
 	free(bounce);
 	return ret;
 }
+
+ssize_t
+opends_direct_pread(int fd, void *dst, size_t size, off_t off)
+{
+	if (size == 0)
+		return 0;
+
+	off_t start = off & ~(off_t)(OPENDS_DIRECT_ALIGN - 1);
+	size_t head = (size_t)(off - start);
+	size_t span = (head + size + OPENDS_DIRECT_ALIGN - 1) &
+	              ~(size_t)(OPENDS_DIRECT_ALIGN - 1);
+
+	void *bounce = NULL;
+	int err = posix_memalign(&bounce, OPENDS_DIRECT_ALIGN, span);
+	if (err != 0)
+		return -ENOMEM;
+
+	ssize_t ret = 0;
+	size_t got = 0;
+	while (got < span) {
+		ssize_t r = pread(fd, (uint8_t *)bounce + got, span - got,
+		                  start + (off_t)got);
+		if (r < 0) {
+			if (errno == EINTR)
+				continue;
+			ret = -errno;
+			goto out;
+		}
+		if (r == 0)
+			break;
+		got += (size_t)r;
+	}
+
+	if (got > head) {
+		size_t n = got - head;
+		if (n > size)
+			n = size;
+		memcpy(dst, (uint8_t *)bounce + head, n);
+		ret = (ssize_t)n;
+	}
+out:
+	free(bounce);
+	return ret;
+}

@@ -3,7 +3,9 @@
 
 #include "opends_internal.h"
 
+#include <fcntl.h>
 #include <sched.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
@@ -11,6 +13,7 @@
 
 struct ref_handle {
 	int fd;
+	int oflags;
 };
 
 static bool driver_open;
@@ -81,11 +84,16 @@ opends_handle_register(opends_handle_t *fh, int fd)
 	if (!fh || fd < 0)
 		return opends_err(OPENDS_INVALID_VALUE);
 
+	int oflags = fcntl(fd, F_GETFL);
+	if (oflags < 0)
+		return opends_err(OPENDS_INVALID_VALUE);
+
 	struct ref_handle *h = malloc(sizeof(*h));
 	if (!h)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	h->fd = fd;
+	h->oflags = oflags;
 	*fh = h;
 	use_count++;
 	return opends_ok();
@@ -160,6 +168,20 @@ opends_buf_deregister(const void *buf_base)
 	return opends_err(OPENDS_MEMORY_NOT_REGISTERED);
 }
 
+static int
+host_copy(void *dst, const void *src, size_t bytes)
+{
+	memcpy(dst, src, bytes);
+	return 0;
+}
+
+static bool
+direct_aligned(const void *p, size_t size, off_t off)
+{
+	return (((uintptr_t)p | size | (uintptr_t)off) &
+	        (OPENDS_DIRECT_ALIGN - 1)) == 0;
+}
+
 static opends_error_t
 ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
                  off_t file_offset, off_t buf_offset,
@@ -171,13 +193,18 @@ ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
 		return opends_err(OPENDS_INVALID_VALUE);
 
 	struct ref_handle *h = fh;
+	char *p = (char *)buf_base + buf_offset;
+	bool aligned = direct_aligned(p, size, file_offset);
 	ssize_t result;
-	if (is_write)
-		result = pwrite(h->fd, (const char *)buf_base + buf_offset,
-		                size, file_offset);
+	if (is_write && aligned)
+		result = pwrite(h->fd, p, size, file_offset);
+	else if (is_write)
+		result = opends_direct_pwrite(h->fd, h->oflags, p, size,
+		                              file_offset, host_copy);
+	else if (aligned)
+		result = pread(h->fd, p, size, file_offset);
 	else
-		result = pread(h->fd, (char *)buf_base + buf_offset, size,
-		               file_offset);
+		result = opends_direct_pread(h->fd, p, size, file_offset);
 	if (result < 0)
 		result = -(ssize_t)OPENDS_INTERNAL_ERROR;
 
