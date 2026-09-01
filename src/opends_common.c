@@ -1,5 +1,16 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
+#define _GNU_SOURCE
+
 #include "opends_internal.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* clang-format off */
 const char *
@@ -48,3 +59,118 @@ opends_op_status_error(opends_op_error_t status)
 	}
 }
 /* clang-format on */
+
+static int
+read_block(int fd, void *buf, off_t off)
+{
+	ssize_t r;
+
+	do {
+		r = pread(fd, buf, OPENDS_DIRECT_ALIGN, off);
+	} while (r < 0 && errno == EINTR);
+	if (r < 0)
+		return -errno;
+	memset((uint8_t *)buf + r, 0, OPENDS_DIRECT_ALIGN - (size_t)r);
+	return 0;
+}
+
+/* Fill the partial edge blocks of [start, start + span) from the file. */
+static int
+rmw_fill(int fd, int oflags, uint8_t *bounce, off_t start, size_t span,
+         size_t head, size_t tail)
+{
+	int rfd = fd;
+	int err = 0;
+	size_t last = span - OPENDS_DIRECT_ALIGN;
+
+	if ((oflags & O_ACCMODE) == O_WRONLY) {
+		char path[64];
+		snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+		rfd = open(path, O_RDONLY | O_DIRECT);
+		if (rfd < 0)
+			return -errno;
+	}
+	if (head)
+		err = read_block(rfd, bounce, start);
+	if (err == 0 && tail && (last || !head))
+		err = read_block(rfd, bounce + last, start + (off_t)last);
+	if (rfd != fd)
+		close(rfd);
+	return err;
+}
+
+ssize_t
+opends_direct_pwrite(int fd, int oflags, const void *src, size_t size,
+                     off_t off,
+                     int (*copy)(void *dst, const void *src, size_t bytes))
+{
+	if (size == 0)
+		return 0;
+
+	off_t start = off & ~(off_t)(OPENDS_DIRECT_ALIGN - 1);
+	off_t end = off + (off_t)size;
+	size_t head = (size_t)(off - start);
+	size_t span = (head + size + OPENDS_DIRECT_ALIGN - 1) &
+	              ~(size_t)(OPENDS_DIRECT_ALIGN - 1);
+	size_t tail = span - head - size;
+
+	void *bounce = NULL;
+	int err = posix_memalign(&bounce, OPENDS_DIRECT_ALIGN, span);
+	if (err != 0)
+		return -ENOMEM;
+
+	ssize_t ret = (ssize_t)size;
+	off_t trunc_to = -1;
+	if (tail) {
+		struct stat st;
+		err = fstat(fd, &st);
+		if (err < 0) {
+			ret = -errno;
+			goto out;
+		}
+		if (st.st_size < end)
+			st.st_size = end;
+		if (start + (off_t)span > st.st_size)
+			trunc_to = st.st_size;
+	}
+	if (head || tail) {
+		err = rmw_fill(fd, oflags, bounce, start, span, head, tail);
+		if (err < 0) {
+			ret = err;
+			goto out;
+		}
+	}
+	err = copy((uint8_t *)bounce + head, src, size);
+	if (err != 0) {
+		ret = -EIO;
+		goto out;
+	}
+
+	size_t done = 0;
+	while (done < span) {
+		ssize_t w = pwrite(fd, (uint8_t *)bounce + done, span - done,
+		                   start + (off_t)done);
+		if (w < 0) {
+			if (errno == EINTR)
+				continue;
+			ret = -errno;
+			goto out;
+		}
+		if (w == 0) {
+			ret = -EIO;
+			goto out;
+		}
+		done += (size_t)w;
+	}
+
+	if (trunc_to >= 0) {
+		err = ftruncate(fd, trunc_to);
+		if (err < 0) {
+			ret = -errno;
+			goto out;
+		}
+	}
+out:
+	free(bounce);
+	return ret;
+}

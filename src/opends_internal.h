@@ -4,6 +4,19 @@
 
 #include "opends.h"
 
+#include <sys/types.h>
+
+/* Practical upper bound of the logical block size O_DIRECT aligns to. */
+#define OPENDS_DIRECT_ALIGN 4096
+
+/* O_DIRECT pwrite of size bytes at off, from src through copy(). The edge
+ * blocks are completed by read-modify-write when off or size is unaligned.
+ * Returns size or a negative errno. */
+ssize_t opends_direct_pwrite(int fd, int oflags, const void *src, size_t size,
+                             off_t off,
+                             int (*copy)(void *dst, const void *src,
+                                         size_t bytes));
+
 static inline opends_error_t
 opends_ok(void)
 {

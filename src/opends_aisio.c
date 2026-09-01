@@ -52,7 +52,6 @@
 #define MAX_IO_THREADS 15
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
-#define ODIRECT_ALIGN 4096
 #define NVME_MAX_NLB 65536
 #define NVME_PRP_PAGE 4096
 #define DEFAULT_QUEUE_DEPTH 8
@@ -80,6 +79,7 @@ struct buf_entry {
 
 struct registered_file {
 	int fd;
+	int oflags;
 };
 
 struct opends_stream {
@@ -327,47 +327,19 @@ static ssize_t
 pwrite_op(struct driver *d, struct registered_file *h, const void *src,
           size_t size, off_t file_offset)
 {
-	if (size == 0)
-		return 0;
+	int err;
+	ssize_t ret = opends_direct_pwrite(h->fd, h->oflags, src, size,
+	                                   file_offset, ds_accel->copy);
+	if (ret <= 0)
+		return ret;
 
-	void *bounce = NULL;
-	int err = posix_memalign(&bounce, ODIRECT_ALIGN, size);
-	if (err != 0)
-		return -ENOMEM;
+	err = fsync(h->fd);
+	if (err < 0)
+		return -errno;
 
-	ssize_t ret = (ssize_t)size;
-	if (ds_accel->copy(bounce, src, size) != 0) {
-		ret = -EIO;
-		goto out;
-	}
-
-	size_t done = 0;
-	while (done < size) {
-		ssize_t w = pwrite(h->fd, (uint8_t *)bounce + done, size - done,
-		                   file_offset + (off_t)done);
-		if (w < 0) {
-			if (errno == EINTR)
-				continue;
-			ret = -errno;
-			goto out;
-		}
-		if (w == 0) {
-			ret = -EIO;
-			goto out;
-		}
-		done += (size_t)w;
-	}
-
-	if (fsync(h->fd) < 0) {
-		ret = -errno;
-		goto out;
-	}
-
-	int rrc = homic_mark_dirty(d->dev_uri);
-	if (rrc < 0)
-		ret = rrc;
-out:
-	free(bounce);
+	err = homic_mark_dirty(d->dev_uri);
+	if (err < 0)
+		return err;
 	return ret;
 }
 
@@ -1304,10 +1276,15 @@ opends_handle_register(opends_handle_t *fh, int fd)
 	if (!fh)
 		return opends_err(OPENDS_INVALID_VALUE);
 
+	int oflags = fcntl(fd, F_GETFL);
+	if (oflags < 0)
+		return opends_err(OPENDS_INVALID_VALUE);
+
 	struct registered_file *h = calloc(1, sizeof(*h));
 	if (!h)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	h->fd = fd;
+	h->oflags = oflags;
 
 	*fh = h;
 	__atomic_fetch_add(&use_count, 1, __ATOMIC_RELAXED);
