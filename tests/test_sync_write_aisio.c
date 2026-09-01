@@ -35,6 +35,7 @@ main(int argc, char **argv)
 
 	struct write_homi_env env = {
 	        .fh = a.fh,
+	        .fd = a.fd,
 	        .stream = NULL,
 	        .submit_write = sync_submit_write,
 	        .mode_label = "sync",
