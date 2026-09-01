@@ -333,10 +333,6 @@ pwrite_op(struct driver *d, struct registered_file *h, const void *src,
 	if (ret <= 0)
 		return ret;
 
-	err = fsync(h->fd);
-	if (err < 0)
-		return -errno;
-
 	err = homic_mark_dirty(d->dev_uri);
 	if (err < 0)
 		return err;
