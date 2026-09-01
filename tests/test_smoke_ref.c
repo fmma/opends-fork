@@ -241,6 +241,16 @@ main(void)
 		return 1;
 
 	opends_handle_t fh;
+	opends_error_t berr = opends_handle_register(&fh, fd);
+	if (berr.err != OPENDS_DIO_NOT_SET) {
+		fprintf(stderr, "buffered fd not refused: %d\n", berr.err);
+		return 1;
+	}
+	int err = fcntl(fd, F_SETFL, O_DIRECT);
+	if (err < 0) {
+		perror("fcntl");
+		return 1;
+	}
 	if (check(opends_handle_register(&fh, fd), "handle_register"))
 		return 1;
 

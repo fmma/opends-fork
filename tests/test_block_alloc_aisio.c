@@ -36,7 +36,8 @@ main(int argc, char **argv)
 	const size_t blk = PAGE;
 
 	struct aisio_homi a;
-	if (aisio_homi_setup_flags(path, O_RDWR | O_CREAT | O_TRUNC, &a) < 0)
+	if (aisio_homi_setup_flags(path, O_RDWR | O_CREAT | O_TRUNC | O_DIRECT,
+	                           &a) < 0)
 		return 1;
 
 	fprintf(stderr,

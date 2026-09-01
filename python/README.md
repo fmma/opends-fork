@@ -83,8 +83,8 @@ Mapping at a glance:
 Two differences to note. There is no explicit driver object: OpenDS opens the
 driver when you register a buffer or open a file and closes it when the last
 of either is released, so the `CuFileDriver()` line has no OpenDS equivalent.
-And `use_direct_io` defaults to the backend's requirement when unset (gds
-needs it, aisio and ref do not), so it can be omitted unless overriding.
+And `use_direct_io` defaults to `True`, since every backend requires O_DIRECT,
+so it can be omitted unless overriding.
 
 ## Backend selection
 

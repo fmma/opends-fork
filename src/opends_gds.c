@@ -16,6 +16,7 @@
 
 #include <cufile.h>
 #include <cuda_runtime_api.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -131,6 +132,12 @@ opends_handle_register(opends_handle_t *fh, int fd)
 {
 	if (!fh || fd < 0)
 		return opends_err(OPENDS_INVALID_VALUE);
+
+	int oflags = fcntl(fd, F_GETFL);
+	if (oflags < 0)
+		return opends_err(OPENDS_INVALID_VALUE);
+	if (!(oflags & O_DIRECT))
+		return opends_err(OPENDS_DIO_NOT_SET);
 
 	struct gds_handle *h = malloc(sizeof(*h));
 	if (!h)

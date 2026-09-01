@@ -146,7 +146,8 @@ opends_error_t opends_driver_set_max_direct_io_size(size_t max_direct_io_size);
 /*
  * File handle registration. Each file descriptor must be registered
  * before it can be used with opends_sync_read/write. The file must be
- * opened with O_DIRECT. Linux only.
+ * opened with O_DIRECT. Registration fails with OPENDS_DIO_NOT_SET
+ * otherwise. Linux only.
  */
 opends_error_t opends_handle_register(opends_handle_t *fh, int fd);
 void opends_handle_deregister(opends_handle_t fh);
@@ -208,7 +209,9 @@ ssize_t opends_async_await(opends_async_future_t *future);
  * Synchronous I/O. Returns byte count on success or a negated
  * opends_op_error_t on failure. The buf_offset parameter writes
  * into the buffer at an offset, useful for scatter reads into a
- * single allocation.
+ * single allocation. A write may start and end anywhere; the partial
+ * edge blocks are completed by read-modify-write, which is not atomic
+ * against other writers of the file.
  */
 ssize_t opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
                          off_t file_offset, off_t buf_offset);

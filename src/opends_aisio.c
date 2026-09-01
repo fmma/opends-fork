@@ -1279,6 +1279,8 @@ opends_handle_register(opends_handle_t *fh, int fd)
 	int oflags = fcntl(fd, F_GETFL);
 	if (oflags < 0)
 		return opends_err(OPENDS_INVALID_VALUE);
+	if (!(oflags & O_DIRECT))
+		return opends_err(OPENDS_DIO_NOT_SET);
 
 	struct registered_file *h = calloc(1, sizeof(*h));
 	if (!h)
