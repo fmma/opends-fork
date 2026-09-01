@@ -97,11 +97,6 @@ equivalent.
 
 ### Basic read
 
-Read offsets must be LBA-aligned and the file opened with `O_DIRECT`. The size
-need not be: the aisio backend reads a sub-LBA tail through a bounce buffer and
-copies it into place. A read starting at an unaligned offset returns
-`OPENDS_INVALID_VALUE`.
-
 ```c
 #include <opends.h>
 #include <cuda_runtime.h>

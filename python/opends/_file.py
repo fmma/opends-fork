@@ -362,11 +362,6 @@ _FLAGS = {
     "a": os.O_WRONLY | os.O_CREAT | os.O_APPEND,
 }
 
-# Backends that need the file descriptor opened O_DIRECT by default. gds
-# drives cuFile through the fd and requires it; aisio uses the fd only for
-# FIEMAP extent lookup (data moves by userspace DMA); ref is buffered.
-_DIRECT_BACKENDS = {"gds"}
-
 
 class OpenDSFile:
     def __init__(self, path, flags="r", *, use_direct_io=None, mode=0o644):
@@ -374,7 +369,7 @@ class OpenDSFile:
             raise ValueError("unsupported flags %r" % flags)
         oflags = _FLAGS[flags]
         if use_direct_io is None:
-            use_direct_io = _c.BACKEND in _DIRECT_BACKENDS
+            use_direct_io = True
         if use_direct_io:
             oflags |= os.O_DIRECT
         self._fh = None

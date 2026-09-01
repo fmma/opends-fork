@@ -28,7 +28,8 @@ main(int argc, char **argv)
 	const char *path = argv[1];
 
 	struct aisio_homi a;
-	if (aisio_homi_setup_flags(path, O_RDWR | O_CREAT | O_TRUNC, &a) < 0)
+	if (aisio_homi_setup_flags(path, O_RDWR | O_CREAT | O_TRUNC | O_DIRECT,
+	                           &a) < 0)
 		return 1;
 
 	fprintf(stderr, "opends_sync_write tests (aisio backend, HOMI)\n");
@@ -41,6 +42,21 @@ main(int argc, char **argv)
 	        .mode_label = "sync",
 	};
 	int failed = run_write_homi_tests(&env);
+
+	int bfd = open(path, O_RDWR);
+	opends_handle_t bfh = NULL;
+	opends_error_t rerr = opends_handle_register(&bfh, bfd);
+	if (bfd < 0 || rerr.err != OPENDS_DIO_NOT_SET) {
+		fprintf(stderr, "buffered fd not refused (fd %d, err %d)\n",
+		        bfd, rerr.err);
+		if (rerr.err == OPENDS_SUCCESS)
+			opends_handle_deregister(bfh);
+		failed++;
+	} else {
+		fprintf(stderr, "buffered fd refused ok\n");
+	}
+	if (bfd >= 0)
+		close(bfd);
 
 	aisio_homi_teardown(&a);
 	unlink(path);

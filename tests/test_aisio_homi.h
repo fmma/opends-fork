@@ -38,10 +38,11 @@ struct aisio_homi {
  * Returns 0 on success with *out filled in, or -1 on failure (a message is
  * printed). On failure nothing needs tearing down.
  *
- * `flags` is passed to open(2); read tests use O_RDONLY, write tests use
- * O_RDWR (optionally O_CREAT|O_TRUNC for a fresh file). Extents are resolved
- * per I/O (not at registration), so a freshly created file just works: the
- * re-index the first opends_sync_write performs makes its blocks resolvable.
+ * `flags` is passed to open(2) and must include O_DIRECT; read tests use
+ * O_RDONLY, write tests O_RDWR (optionally O_CREAT|O_TRUNC). Extents are
+ * resolved per I/O (not at registration), so a freshly created file just
+ * works: the re-index the first opends_sync_write performs makes its blocks
+ * resolvable.
  */
 static inline int
 aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
@@ -93,7 +94,7 @@ aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
 static inline int
 aisio_homi_setup(const char *path, struct aisio_homi *out)
 {
-	return aisio_homi_setup_flags(path, O_RDONLY, out);
+	return aisio_homi_setup_flags(path, O_RDONLY | O_DIRECT, out);
 }
 
 static inline void
