@@ -17,6 +17,10 @@ ssize_t opends_direct_pwrite(int fd, int oflags, const void *src, size_t size,
                              int (*copy)(void *dst, const void *src,
                                          size_t bytes));
 
+/* O_DIRECT pread of size bytes at off into dst through a bounce buffer.
+ * Returns the bytes read (short at EOF) or a negative errno. */
+ssize_t opends_direct_pread(int fd, void *dst, size_t size, off_t off);
+
 static inline opends_error_t
 opends_ok(void)
 {
