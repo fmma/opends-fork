@@ -878,6 +878,8 @@ dispatch_write(struct io_worker *w, struct file_op *op)
 	}
 
 	ssize_t n = pwrite_op(op->h, src, size, file_offset);
+	if (n >= 0)
+		xal_mark_dirty(d->xal);
 	if (n < 0)
 		n = (n == -(ssize_t)EINVAL)
 		            ? -(ssize_t)OPENDS_INVALID_VALUE
