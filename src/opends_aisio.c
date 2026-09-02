@@ -4,10 +4,10 @@
  *
  * Reads go straight from an NVMe device into GPU memory via xNVMe's upcie-cuda
  * backend (PCIe P2P DMA). The HOMI server (xnvme's "homi start") is the
- * primary of an xNVMe multi-process group and holds the controller up; this
+ * primary of an xNVMe multi-process group and holds the controller up. This
  * driver joins the same group as a secondary and allocates its own I/O
- * queues. A registered file's extents come from an xal index that xal-server
- * publishes over POSIX shared memory; the index is in byte units, and this
+ * queues. A registered file's extents come from a xal index that xal-server
+ * publishes over POSIX shared memory. The index is in byte units, and this
  * driver converts to LBAs with its own device geometry.
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
@@ -307,47 +307,55 @@ stream_bounce_free(struct opends_stream *s, struct driver *d)
 
 #define ESTALE_RETRIES 6000
 #define ESTALE_BACKOFF_US 50000
-#define COVERAGE_RETRIES 100
 
-/*
- * Copy the extents for `path` out of the shared index.
- *
- * The server rewrites the shared pools in place when the filesystem changes,
- * concurrent with this read. Treat the pools as a seqlock snapshot: an odd seq
- * means a rewrite is in progress, the seq changing across the read means the
- * pools moved under us, and a dirty flag means the filesystem changed but is
- * not yet re-indexed. Report -ESTALE in all of those and let the caller retry.
- */
+/* True while the seqlock snapshot taken at `seq` is still valid: the server
+ * is not rewriting the shared pools, they did not move since `seq` was read,
+ * and the filesystem is not dirty (changed but not yet re-indexed). */
+static bool
+snapshot_held(struct xal *xal, int seq)
+{
+	int cur;
+	bool dirty;
+
+	atomic_thread_fence(memory_order_acquire);
+	cur = xal_get_seq_lock(xal);
+	dirty = xal_is_dirty(xal);
+	return !(seq & 1) && cur == seq && !dirty;
+}
+
+/* Copy the extents for `path` out of the shared index. The server rewrites
+ * the shared pools in place, concurrent with this read, so validate the
+ * snapshot before trusting anything read from them. -ESTALE means retry. */
 static int
 extents_snapshot(struct driver *d, char *path, struct ds_extent **out,
                  uint32_t *out_n)
 {
 	struct xal *xal = d->xal;
 	struct xal_extents *xe = NULL;
+	struct ds_extent *ex = NULL;
+	uint32_t n = 0, base;
+	bool held;
+	int seq, rc;
 
-	int seq = xal_get_seq_lock(xal);
-	if ((seq & 1) || xal_is_dirty(xal))
+	seq = xal_get_seq_lock(xal);
+	held = snapshot_held(xal, seq);
+	if (!held)
 		return -ESTALE;
 
-	int rc = xal_get_extents(xal, path, &xe);
-	if (rc < 0) {
-		/* A torn read during a rewrite can surface as a spurious
-		 * lookup failure; only trust the error if the snapshot held. */
-		if (xal_get_seq_lock(xal) != seq || xal_is_dirty(xal))
-			return -ESTALE;
-		return rc;
-	}
+	rc = xal_get_extents(xal, path, &xe);
+	if (rc < 0)
+		goto out;
 
 	/* xe points into the shared inode pool, so count/extent_idx may be
-	 * torn. Capture them, then validate the snapshot before use. */
-	uint32_t n = xe->count;
-	uint32_t base = xe->extent_idx;
-
-	atomic_thread_fence(memory_order_acquire);
-	if (xal_get_seq_lock(xal) != seq || xal_is_dirty(xal))
+	 * torn. Capture them, then validate before using them as allocation
+	 * size and pool indices. */
+	n = xe->count;
+	base = xe->extent_idx;
+	held = snapshot_held(xal, seq);
+	if (!held)
 		return -ESTALE;
 
-	struct ds_extent *ex = calloc(n ? n : 1, sizeof(*ex));
+	ex = calloc(n ? n : 1, sizeof(*ex));
 	if (!ex)
 		return -ENOMEM;
 
@@ -357,46 +365,34 @@ extents_snapshot(struct driver *d, char *path, struct ds_extent **out,
 
 		rc = xal_extent_in_bytes(xal, e, &b);
 		if (rc < 0)
-			goto failed;
+			goto out;
 		/* xal-server never opens the device, so its index carries no
 		 * LBA size; convert with our own geometry. */
 		if (b.start_block & (uint64_t)(d->lba_size - 1)) {
 			rc = -EIO;
-			goto failed;
+			goto out;
 		}
 		ex[i].file_offset = b.start_offset;
 		ex[i].slba = b.start_block >> d->lba_shift;
 		ex[i].length = b.size;
 	}
 
-	atomic_thread_fence(memory_order_acquire);
-	if (xal_get_seq_lock(xal) != seq || xal_is_dirty(xal)) {
+out:
+	/* A torn read during a rewrite can surface as a spurious error, and a
+	 * clean result may hold torn extents; only trust either if the
+	 * snapshot held. */
+	held = snapshot_held(xal, seq);
+	if (!held) {
 		free(ex);
 		return -ESTALE;
 	}
-
+	if (rc < 0) {
+		free(ex);
+		return rc;
+	}
 	*out = ex;
 	*out_n = n;
 	return 0;
-
-failed:
-	free(ex);
-	if (xal_get_seq_lock(xal) != seq || xal_is_dirty(xal))
-		return -ESTALE;
-	return rc;
-}
-
-static uint64_t
-extents_end(const struct ds_extent *ex, uint32_t n)
-{
-	uint64_t end = 0;
-
-	for (uint32_t i = 0; i < n; i++) {
-		uint64_t e = ex[i].file_offset + ex[i].length;
-		if (e > end)
-			end = e;
-	}
-	return end;
 }
 
 static int
@@ -404,8 +400,8 @@ resolve_extents(struct driver *d, int fd, struct ds_extent **out,
                 uint32_t *out_n)
 {
 	char fdpath[64], path[PATH_MAX];
-	struct stat st;
 	ssize_t plen;
+	int rc;
 
 	snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", fd);
 	plen = readlink(fdpath, path, sizeof(path) - 1);
@@ -413,28 +409,15 @@ resolve_extents(struct driver *d, int fd, struct ds_extent **out,
 		return -errno;
 	path[plen] = '\0';
 
-	if (fstat(fd, &st) < 0)
-		return -errno;
-
-	/* This driver does not mark the index dirty after a write. The
-	 * server's watcher re-indexes on its own. Retry while the index is
-	 * stale, and briefly while it does not yet cover the file's size. */
-	int rc = -ESTALE;
+	/* A write marks the index dirty (dispatch_write), and the server's
+	 * watcher re-indexes on filesystem events. Retry until a clean
+	 * snapshot resolves. */
+	rc = -ESTALE;
 	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
 		rc = extents_snapshot(d, path, out, out_n);
-		if (rc == -ESTALE) {
-			usleep(ESTALE_BACKOFF_US);
-			continue;
-		}
-		if (rc < 0)
+		if (rc != -ESTALE)
 			break;
-		if (attempt < COVERAGE_RETRIES &&
-		    extents_end(*out, *out_n) < (uint64_t)st.st_size) {
-			free(*out);
-			usleep(ESTALE_BACKOFF_US);
-			continue;
-		}
-		break;
+		usleep(ESTALE_BACKOFF_US);
 	}
 	return rc;
 }
