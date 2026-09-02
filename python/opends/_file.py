@@ -191,7 +191,7 @@ def _install_signal_handlers():
 
 # ---------------------------------------------------------------------------
 # Buffer registration cache. Externally allocated buffers must be registered
-# before I/O (required by the aisio/gds backends; a no-op effect on ref).
+# before I/O (required by the aisio/cufile backends; a no-op effect on ref).
 # Registration is keyed by base pointer and lazily established on first use.
 # ---------------------------------------------------------------------------
 
@@ -362,10 +362,10 @@ _FLAGS = {
     "a": os.O_WRONLY | os.O_CREAT | os.O_APPEND,
 }
 
-# Backends that need the file descriptor opened O_DIRECT by default. gds
+# Backends that need the file descriptor opened O_DIRECT by default. cufile
 # drives cuFile through the fd and requires it; aisio uses the fd only for
 # FIEMAP extent lookup (data moves by userspace DMA); ref is buffered.
-_DIRECT_BACKENDS = {"gds"}
+_DIRECT_BACKENDS = {"cufile"}
 
 
 class OpenDSFile:
