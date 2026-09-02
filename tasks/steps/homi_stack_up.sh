@@ -17,7 +17,7 @@ fi
 BDF=$1
 MOUNT=$2
 HERE=$(dirname "$0")
-SHM_ID=1
+HOMI_ID=1
 XAL_SHM=/xal_dev0
 CONF=/run/homi/xal-server.conf
 
@@ -38,12 +38,12 @@ ulimit -c unlimited 2>/dev/null || true
 # The server's host heap is the pool every secondary draws from; the aisio
 # driver alone asks for 256 MiB by default.
 echo "starting homi"
-setsid homi start "$BDF" --shm_id "$SHM_ID" --be upcie \
+setsid homi start "$BDF" --homi-id "$HOMI_ID" --be upcie \
 	--host_heap_size $((512 * 1024 * 1024)) \
 	< /dev/null > /run/homi/homi.log 2>&1 &
 # 'homi status' exits non-zero until the server is up and its devices ready.
 for _ in $(seq 1 120); do
-	homi status --shm_id "$SHM_ID" > /dev/null 2>&1 && break
+	homi status --homi-id "$HOMI_ID" > /dev/null 2>&1 && break
 	if ! pgrep -x homi > /dev/null; then
 		echo "error: homi exited during startup" >&2
 		cat /run/homi/homi.log >&2 || true
@@ -51,14 +51,14 @@ for _ in $(seq 1 120); do
 	fi
 	sleep 0.5
 done
-if ! homi status --shm_id "$SHM_ID" > /dev/null 2>&1; then
+if ! homi status --homi-id "$HOMI_ID" > /dev/null 2>&1; then
 	echo "error: homi did not become ready" >&2
 	cat /run/homi/homi.log >&2 || true
 	exit 1
 fi
 
 echo "starting qublk"
-setsid qublk run "$BDF" --be upcie --shm_id "$SHM_ID" --nqueues 1 \
+setsid qublk run "$BDF" --be upcie --homi-id "$HOMI_ID" --nqueues 1 \
 	< /dev/null > /run/homi/qublk.log 2>&1 &
 UBLK=""
 for _ in $(seq 1 60); do
