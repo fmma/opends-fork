@@ -5,7 +5,7 @@ The artifact is the verbatim filperf output (CSV plus `--summary`
 block) written to artifacts/<backend>_<data_dir>_<mode>.log.
 
 Each bench run runs filperf under `prlimit --nofile`. nofile is
-required for opends and harmless elsewhere. gds runs get a cold-cache `drop_caches`; opends
+required for opends and harmless elsewhere. cufile runs get a cold-cache `drop_caches`; opends
 reads files on the HOMI/qublk mount via DMA into GPU memory, so the
 kernel page cache is irrelevant and the device BDF and index shm name
 are passed through OPENDS_HOMI_DEV/OPENDS_XAL_SHM.
@@ -20,10 +20,6 @@ from pathlib import Path
 NOFILE = 1048576
 
 MODE_FLAG = {"sync": None, "stream": "--stream", "async": "--async"}
-
-# The suite, the artifacts and the report say "gds"; fil calls the cuFile
-# backend "cufile".
-FILPERF_BACKEND = {"gds": "cufile"}
 
 SUMMARY_FIELDS = {
     "Total time": "total_time_s",
@@ -144,7 +140,7 @@ def main(args, cijoe):
     bdf = cijoe.getconf("test.nvme_bdf")
     env = ""
     mnt = args.mnt
-    if args.backend == "gds":
+    if args.backend == "cufile":
         repo = cijoe.getconf("test.repo_path")
         err, state = cijoe.run(f"'{repo}/tasks/steps/resolve_nvme_ns.sh' '{bdf}'")
         if err:
@@ -152,7 +148,7 @@ def main(args, cijoe):
         target = state.output().strip().splitlines()[-1]
     elif args.backend == "opends":
         # homi owns the controller; qublk re-exports it as a ublk block device
-        # that fil walks with xal for enumeration, exactly like gds walks the
+        # that fil walks with xal for enumeration, exactly like cufile walks the
         # kernel-bound NVMe. The aisio backend joins the homi group and reads
         # extents from the xal-server index, so the device read path bypasses
         # the ublk target.
@@ -183,7 +179,7 @@ def main(args, cijoe):
     filperf = [
         f"{env}prlimit --nofile={NOFILE}:{NOFILE} --",
         f"filperf '{target}'",
-        f"--backend {FILPERF_BACKEND.get(args.backend, args.backend)}",
+        f"--backend {args.backend}",
         f"--data-dir {args.data_dir}",
         f"--batches {args.batches} --batch-size {args.batch_size}",
         "--summary",
