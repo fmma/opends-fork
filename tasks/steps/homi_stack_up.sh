@@ -21,6 +21,12 @@ HOMI_ID=1
 XAL_SHM=/xal_dev0
 CONF=/run/homi/xal-server.conf
 
+die() {
+	echo "error: $1" >&2
+	cat "$2" >&2 || true
+	exit 1
+}
+
 mkdir -p /run/homi
 
 # Clear any stale stack from a crashed or aborted prior run before bringing up
@@ -45,16 +51,12 @@ setsid homi start "$BDF" --homi-id "$HOMI_ID" --be upcie \
 for _ in $(seq 1 120); do
 	homi status --homi-id "$HOMI_ID" > /dev/null 2>&1 && break
 	if ! pgrep -x homi > /dev/null; then
-		echo "error: homi exited during startup" >&2
-		cat /run/homi/homi.log >&2 || true
-		exit 1
+		die "homi exited during startup" /run/homi/homi.log
 	fi
 	sleep 0.5
 done
 if ! homi status --homi-id "$HOMI_ID" > /dev/null 2>&1; then
-	echo "error: homi did not become ready" >&2
-	cat /run/homi/homi.log >&2 || true
-	exit 1
+	die "homi did not become ready" /run/homi/homi.log
 fi
 
 echo "starting qublk"
@@ -67,9 +69,7 @@ for _ in $(seq 1 60); do
 	sleep 0.3
 done
 if [ -z "$UBLK" ] || [ ! -b "$UBLK" ]; then
-	echo "error: qublk did not expose a ublk device" >&2
-	cat /run/homi/qublk.log >&2 || true
-	exit 1
+	die "qublk did not expose a ublk device" /run/homi/qublk.log
 fi
 echo "$UBLK" > /run/homi/ublk_dev
 
@@ -95,18 +95,12 @@ setsid xal-server --config "$CONF" < /dev/null > /run/homi/xal-server.log 2>&1 &
 for _ in $(seq 1 120); do
 	[ -e "/dev/shm${XAL_SHM}_state" ] && break
 	if ! pgrep -x xal-server > /dev/null; then
-		echo "error: xal-server exited during startup" >&2
-		cat /run/homi/xal-server.log >&2 || true
-		journalctl -t xal-server -n 20 --no-pager >&2 || true
-		exit 1
+		die "xal-server exited during startup" /run/homi/xal-server.log
 	fi
 	sleep 0.5
 done
 if [ ! -e "/dev/shm${XAL_SHM}_state" ]; then
-	echo "error: xal-server did not publish $XAL_SHM" >&2
-	cat /run/homi/xal-server.log >&2 || true
-	journalctl -t xal-server -n 20 --no-pager >&2 || true
-	exit 1
+	die "xal-server did not publish $XAL_SHM" /run/homi/xal-server.log
 fi
 
 echo "HOMI stack up: homi + qublk ($UBLK) + xal-server mounted at $MOUNT"
