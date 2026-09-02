@@ -20,7 +20,9 @@ fi
 
 cd "$SRC_DIR"
 
-if [ -n "$(git status --porcelain)" ]; then
+# Untracked files survive the checkout (e.g. meson writes subprojects/
+# into the source tree); only tracked modifications block.
+if [ -n "$(git status --porcelain -uno)" ]; then
 	echo "error: dependency checkout is not clean: $SRC_DIR" >&2
 	git status --short >&2
 	echo "       commit, stash, or 'git -C $SRC_DIR reset --hard' it, then retry" >&2
@@ -28,7 +30,14 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 git remote set-url origin "$REMOTE"
-git fetch --all --tags
+# --prune drops tracking refs of the old remote after a REMOTE change;
+# they can collide with the new remote's branch names.
+git fetch --all --tags --prune
+# A pinned commit may sit on no branch (e.g. a PR head); fetch it by hash.
+if ! git rev-parse --verify --quiet "origin/$REF^{commit}" > /dev/null &&
+   ! git rev-parse --verify --quiet "$REF^{commit}" > /dev/null; then
+	git fetch origin "$REF"
+fi
 # Prefer origin/REF so branch refs pick up the latest remote tip; fall
 # back to REF directly for tags and commit hashes.
 if git rev-parse --verify --quiet "origin/$REF^{commit}" > /dev/null; then
