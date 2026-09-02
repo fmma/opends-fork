@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 [xnvme.repository]
-remote = "https://github.com/fmma/xnvme"
-ref = "fd347442473f45feccc86743738c3230f1d6ac46"
+remote = "https://github.com/safl/xnvme"
+ref = "homi_serve"
 
 [xal.repository]
 remote = "https://github.com/xnvme/xal"

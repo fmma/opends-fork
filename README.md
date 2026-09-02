@@ -48,7 +48,7 @@ the open.
   LBA-aligned. Reads that end off an LBA boundary fail with
   `OPENDS_INVALID_VALUE`, and the stream path stops enqueueing the bounce
   kernel.
-- `OPENDS_AISIO_SHM_ID`: xNVMe multi-process group to join. Default 1, which
+- `OPENDS_AISIO_HOMI_ID`: xNVMe multi-process group to join. Default 1, which
   the test tasks also pass to homi, so both sides agree.
 - `OPENDS_AISIO_HOST_HEAP_MB`: Host DMA heap for this process, holding its own
   queue rings and PRP lists. Default 256. The heap comes out of the hugepages
@@ -258,14 +258,14 @@ Integration tests run on a remote target via
   the kernel `nvme` driver).
 - An NVIDIA GPU with the CUDA toolkit; GDS (GPUDirect Storage) for the gds
   tests; xNVMe's `upcie-cuda` backend for the aisio tests.
-- A kernel built with UDMABUF-import support, IOMMU disabled, and 2 MiB
-  hugepages allocated (prerequisites for the GPU↔NVMe dma-buf P2P path that
-  aisio uses).
+- The uPCIe dma-buf importer kernel module loaded (out-of-tree, shipped as a
+  DKMS package; a stock kernel suffices), IOMMU disabled, and 2 MiB hugepages
+  allocated (prerequisites for the GPU-NVMe dma-buf P2P path that aisio uses).
 - An XFS filesystem on the test namespace; the mount step does not format. Test
   artifacts live under `<mount_point>/opends_tests/`.
 
 The [aisio](https://github.com/xnvme/aisio) project ships cijoe tasks that take
-a fresh Ubuntu 24.04 install through every step above (custom kernel, NVIDIA
+a fresh Ubuntu 24.04 install through every step above (kernel modules, NVIDIA
 stack, hugepages, XFS format, reference datasets). Follow its README first to
 bring up a target that meets these requirements. OpenDS pins its own dependency
 refs (xNVMe, xal, fil) in `configs/deps.toml` and installs the stack via

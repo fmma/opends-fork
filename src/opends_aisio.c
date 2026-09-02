@@ -52,11 +52,11 @@
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
 #define ENV_ASSUME_ALIGNED_ONLY "OPENDS_AISIO_ASSUME_ALIGNED_ONLY"
 #define ENV_IDLE_SPIN "OPENDS_AISIO_IDLE_SPIN"
-#define ENV_SHM_ID "OPENDS_AISIO_SHM_ID"
+#define ENV_HOMI_ID "OPENDS_AISIO_HOMI_ID"
 #define ENV_HOST_HEAP_MB "OPENDS_AISIO_HOST_HEAP_MB"
 #define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
 #define DEFAULT_XAL_SHM "/xal_dev0"
-#define DEFAULT_SHM_ID 1
+#define DEFAULT_HOMI_ID 1
 #define DEFAULT_IO_THREADS 2
 #define MAX_IO_THREADS 15
 #define MAX_BUF_ENTRIES 8192
@@ -166,7 +166,7 @@ struct io_worker {
 
 struct driver {
 	char dev_uri[64]; ///< NVMe device (BDF) the HOMI server owns
-	uint32_t shm_id;  ///< Multi-process group the HOMI server is primary of
+	uint32_t homi_id; ///< Multi-process group the HOMI server is primary of
 	struct xal *xal;  ///< Attach to the index xal-server publishes
 	size_t host_heap_nbytes;
 	size_t device_heap_nbytes;
@@ -486,12 +486,12 @@ static int
 open_device(struct driver *d)
 {
 	/* Joins the group the HOMI server is primary of. Whoever opens first
-	 * wins the role election, so a shm_id the server does not serve would
+	 * wins the role election, so a homi_id the server does not serve would
 	 * silently make this process the controller owner; both sides use
-	 * shm_id 1 by convention unless overridden. */
+	 * homi_id 1 by convention unless overridden. */
 	struct xnvme_opts opts = xnvme_opts_default();
 	opts.be = ds_accel->xnvme_be;
-	opts.shm_id = d->shm_id;
+	opts.homi_id = d->homi_id;
 	opts.host_heap_size = d->host_heap_nbytes;
 	opts.device_heap_size = d->device_heap_nbytes;
 
@@ -499,8 +499,8 @@ open_device(struct driver *d)
 	if (!d->xdev) {
 		fprintf(stderr,
 		        "aisio open_device: xnvme_dev_open(%s, be=%s, "
-		        "shm_id=%u) failed\n",
-		        d->dev_uri, opts.be, d->shm_id);
+		        "homi_id=%u) failed\n",
+		        d->dev_uri, opts.be, d->homi_id);
 		return -EIO;
 	}
 
@@ -1203,9 +1203,9 @@ read_env_config(struct driver *d)
 	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
 	d->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
 
-	if (env_int(ENV_SHM_ID, DEFAULT_SHM_ID, 0, INT_MAX, &n) < 0)
+	if (env_int(ENV_HOMI_ID, DEFAULT_HOMI_ID, 0, INT_MAX, &n) < 0)
 		return -EINVAL;
-	d->shm_id = (uint32_t)n;
+	d->homi_id = (uint32_t)n;
 
 	if (env_int(ENV_HOST_HEAP_MB, DEFAULT_HOST_HEAP_MB, 1, MAX_HEAP_MB,
 	            &n) < 0)
