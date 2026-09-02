@@ -227,10 +227,24 @@ test_stream_io(opends_handle_t fh, char *wbuf, char *rbuf)
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
-	char path[] = "/tmp/smoke_ref_XXXXXX";
-	int fd = mkstemp(path);
+	/* /tmp is a tmpfs on some distributions, and tmpfs rejects O_DIRECT;
+	 * argv[1] points the test file at a directory that supports it. */
+	const char *dir = "/tmp";
+	char path[4096];
+	int fd;
+	int n;
+
+	if (argc > 1) {
+		dir = argv[1];
+	}
+	n = snprintf(path, sizeof(path), "%s/smoke_ref_XXXXXX", dir);
+	if (n < 0 || (size_t)n >= sizeof(path)) {
+		fprintf(stderr, "directory path too long\n");
+		return 1;
+	}
+	fd = mkstemp(path);
 	if (fd < 0) {
 		perror("mkstemp");
 		return 1;
