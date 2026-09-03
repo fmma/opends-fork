@@ -19,19 +19,28 @@ cijoe, using the same rsync/build/run_tests flow as manual development
 the workflow run. The operator tooling lives with the operator, not in
 this repository.
 
+The `bench` label works the same way and implies `test-full`: one
+approval runs the full suite first, and only a passing suite starts
+the standard sweep (`scripts/bench/sweep.toml`, opends suite) on the
+target. The sweep's report and history land on the `artefacts` branch
+(`scripts/bench/artefacts.py --push`). The reference datasets must
+already be populated on the target; the operator preflight checks for
+them but does not create them.
+
 ## Repository setup
 
 One-time GitHub configuration on the repository the workflow runs in:
 
-1. Create the `test-full` label.
+1. Create the `test-full` and `bench` labels.
 2. Create an environment named `manual-operator` with the operator as
    required reviewer.
 3. In Settings, Actions, set "Require approval for all outside
    collaborators". This is the security boundary for outside PRs; the
    environment gate is not, since a PR can edit the workflow file.
-4. Add `test-full (contact operator to run)` to the required status
-   checks. A skipped check satisfies the requirement, so unlabeled
-   PRs are unaffected. The requirement pins the job's display name;
-   renaming the job blocks merges as "Expected".
+4. Add `test-full (contact operator to run)` and `bench` to the
+   required status checks. A skipped check satisfies the
+   requirement, so unlabeled PRs are unaffected. The requirement
+   pins the job display names; renaming a job blocks merges as
+   "Expected".
 
 The operator-machine setup is documented with the operator tooling.
