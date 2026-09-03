@@ -46,8 +46,9 @@ jobs:
         working-directory: python
 
   # Full suite, aisio included, on a hardware target. Opt-in with the
-  # test-full label, approved per run in the test-full environment by
-  # an operator who brings up a one-shot runner (see docs/ci-hw.md).
+  # test-full label, approved per run in the manual-operator
+  # environment by an operator who brings up a one-shot runner (see
+  # docs/ci-hw.md).
   # Do not add it to required status checks. A new push cancels a
   # superseded run, waiting or mid-suite; the always() teardown still
   # runs on a cancel.
@@ -63,7 +64,7 @@ jobs:
       (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-full')))
     needs: [lint, test-ref]
     runs-on: [self-hosted, test-full]
-    environment: test-full
+    environment: manual-operator
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
