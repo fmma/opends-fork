@@ -4,9 +4,10 @@ The `test-full` check runs the full test suite, aisio included, on a
 hardware target. It is opt-in per PR and human-triggered per run.
 
 A maintainer puts the `test-full` label on the PR. That starts a
-`ci / test-full` run gated on the hosted `lint` and `test-ref` jobs;
-once they pass, the run waits for approval in the `test-full`
-environment. Nothing executes on hardware yet. A new push to a
+`ci / test-full (contact operator to run)` check gated on the hosted
+`lint` and `test-ref` jobs; once they pass, the run waits for
+approval in the `test-full` environment. Nothing executes on
+hardware yet. A new push to a
 labeled PR cancels the superseded run, waiting or mid-suite, and
 starts a fresh one.
 

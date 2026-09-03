@@ -52,6 +52,9 @@ jobs:
   # superseded run, waiting or mid-suite; the always() teardown still
   # runs on a cancel.
   test-full:
+    # The name is the only text shown while the job waits for
+    # approval; point the contributor at the operator.
+    name: test-full (contact operator to run)
     # Trigger when the test-full label is added, and on pushes while
     # the label is present.
     if: >-
