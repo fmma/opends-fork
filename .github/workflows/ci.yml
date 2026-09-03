@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize, labeled]
   workflow_dispatch:
 
 permissions:
@@ -16,6 +17,8 @@ concurrency:
 
 jobs:
   lint:
+    # Label events only matter for test-full; skip the rest.
+    if: github.event.action != 'labeled' || github.event.label.name == 'test-full'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +27,7 @@ jobs:
       - run: scripts/lint_check.py
 
   test-ref:
+    if: github.event.action != 'labeled' || github.event.label.name == 'test-full'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -40,3 +44,33 @@ jobs:
       - name: Run python binding tests
         run: python3 -m pytest tests
         working-directory: python
+
+  # Full suite, aisio included, on a hardware target. Opt-in with the
+  # test-full label, approved per run in the test-full environment by
+  # an operator who brings up a one-shot runner (see docs/ci-hw.md).
+  # Do not add it to required status checks. A new push cancels a
+  # superseded run, waiting or mid-suite; the always() teardown still
+  # runs on a cancel.
+  test-full:
+    # Trigger when the test-full label is added, and on pushes while
+    # the label is present.
+    if: >-
+      success() && (
+      (github.event.action == 'labeled' && github.event.label.name == 'test-full') ||
+      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-full')))
+    needs: [lint, test-ref]
+    runs-on: [self-hosted, test-full]
+    environment: test-full
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install target configs
+        run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - run: scripts/rsync.py
+      - run: scripts/build.py
+      - run: scripts/run_tests.py
+      - name: Tear the stack down
+        # test.yaml tears down as its last step, but fail_fast skips
+        # it when a test fails; leave the target usable regardless.
+        if: always()
+        run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/test.yaml homi_stack_down
