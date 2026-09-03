@@ -18,3 +18,11 @@ cijoe, using the same rsync/build/run_tests flow as manual development
 (see "Remote testing with CIJOE" in the README). The full log lands on
 the workflow run. The operator tooling lives with the operator, not in
 this repository.
+
+The `bench` label works the same way and implies `test-full`: one
+approval runs the full suite first, and only a passing suite starts
+the standard sweep (`scripts/bench/sweep.toml`, opends suite) on the
+target. The sweep's report and history land on the `artefacts` branch
+(`scripts/bench/artefacts.py --push`). The reference datasets must
+already be populated on the target; the operator preflight checks for
+them but does not create them.
