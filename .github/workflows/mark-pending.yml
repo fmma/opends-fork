@@ -6,7 +6,7 @@
 # workflow never checks out or executes PR code, which is why
 # pull_request_target is safe here. Do not add test-full to required
 # status checks; it is opt-in and must not gate merges.
-name: test-full
+name: mark-pending
 
 on:
   pull_request_target:
@@ -16,7 +16,7 @@ permissions:
   statuses: write
 
 jobs:
-  mark-pending:
+  test-full:
     # Trigger when the test-full label is added, and on pushes while
     # the label is present. Other label additions do not retrigger.
     if: >-
