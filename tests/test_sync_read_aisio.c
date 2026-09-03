@@ -31,6 +31,7 @@ main(int argc, char **argv)
 	        .buf_acquire = cuda_alloc_acquire,
 	        .buf_release = cuda_alloc_release,
 	        .mode_label = "alloc",
+	        .rejects_nondword_head = 1,
 	};
 	int failed = run_sync_read_tests(&env_alloc);
 
@@ -42,6 +43,7 @@ main(int argc, char **argv)
 	        .buf_acquire = cuda_register_acquire,
 	        .buf_release = cuda_register_release,
 	        .mode_label = "register",
+	        .rejects_nondword_head = 1,
 	};
 	failed += run_sync_read_tests(&env_register);
 

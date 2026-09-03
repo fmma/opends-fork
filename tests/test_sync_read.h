@@ -35,6 +35,9 @@ struct test_env {
 	void *(*buf_acquire)(size_t size);
 	void (*buf_release)(void *buf);
 	const char *mode_label;
+	/* Backend refuses a read that starts off a dword once whole LBAs
+	 * follow (aisio). 0 means such reads succeed and verify data. */
+	int rejects_nondword_head;
 };
 
 /*
@@ -597,6 +600,62 @@ test_read_unaligned_head_buf_offset(struct test_env *env)
 	return rc;
 }
 
+/*
+ * Pin the rejection boundary. A read that starts off a dword and covers
+ * whole LBAs past the first cannot express its start as a PRP offset,
+ * so a backend that DMAs those LBAs directly refuses it with
+ * OPENDS_INVALID_VALUE. A backend that bounces every block accepts the
+ * same reads, so it verifies data instead. Both sizes reach whole LBAs
+ * whether the device reports 512 or 4096.
+ */
+static int
+test_read_nondword_head(struct test_env *env)
+{
+	static const struct {
+		off_t offset;
+		size_t size;
+	} cases[] = {
+	        {1, 12288},
+	        {4095, 8192},
+	};
+
+	size_t max_size = 0;
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		if (cases[i].size > max_size)
+			max_size = cases[i].size;
+	}
+
+	void *buf = env->buf_acquire(max_size);
+	if (!buf)
+		return 1;
+
+	int rc = 0;
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		char label[64];
+		snprintf(label, sizeof(label), "nondword[off=%ld,sz=%zu]",
+		         (long)cases[i].offset, cases[i].size);
+		if (!env->rejects_nondword_head) {
+			rc = verify_read(env, buf, max_size, cases[i].size,
+			                 cases[i].offset, 0, label);
+		} else {
+			ssize_t n =
+			        opends_sync_read(env->fh, buf, cases[i].size,
+			                         cases[i].offset, 0);
+			if (n != -(ssize_t)OPENDS_INVALID_VALUE) {
+				fprintf(stderr, "  %s: got %zd, expected %zd\n",
+				        label, n,
+				        -(ssize_t)OPENDS_INVALID_VALUE);
+				rc = 1;
+			}
+		}
+		if (rc)
+			break;
+	}
+
+	env->buf_release(buf);
+	return rc;
+}
+
 /* --- Test runner ------------------------------------------------ */
 
 struct test_entry {
@@ -624,6 +683,7 @@ static const struct test_entry sync_read_tests[] = {
 	{"offset_size_sweep",   test_read_offset_size_sweep},
 	{"unaligned_head",      test_read_unaligned_head},
 	{"unaligned_head_boff", test_read_unaligned_head_buf_offset},
+	{"nondword_head",       test_read_nondword_head},
 };
 /* clang-format on */
 
