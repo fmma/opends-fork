@@ -43,6 +43,19 @@
  *   Deregistering or freeing an object with I/O still in flight on it
  *   is undefined, as with closing a file descriptor that has I/O in
  *   flight.
+ *
+ * Alignment:
+ *
+ *   Files are opened with O_DIRECT, but the API does not inherit the
+ *   POSIX direct I/O alignment rules. A read or write may start and
+ *   end anywhere in the file.
+ *
+ *   Restrictions (aisio): a read that starts mid-LBA and covers whole
+ *   LBAs past the first must start on a 4-byte boundary. A
+ *   stream read must start on an LBA boundary, and only its tail may
+ *   be partial. Both violations fail with OPENDS_INVALID_VALUE. With
+ *   OPENDS_AISIO_ASSUME_ALIGNED_ONLY set, every read must be fully
+ *   LBA-aligned.
  */
 #ifndef OPENDS_H_
 #define OPENDS_H_
@@ -134,6 +147,10 @@ typedef void *opends_handle_t;
  * context current at opends_driver_open. Every thread that submits
  * I/O must have that same context current; the aisio backend fails
  * such submits with OPENDS_CONTEXT_MISMATCH.
+ *
+ * opends_use_count returns the number of registered file handles.
+ * opends_driver_set_max_direct_io_size is forwarded to cuFile by the
+ * gds backend and ignored by ref and aisio.
  */
 opends_error_t opends_driver_open(void);
 opends_error_t opends_driver_close(void);
@@ -145,7 +162,7 @@ opends_error_t opends_driver_set_max_direct_io_size(size_t max_direct_io_size);
 
 /*
  * File handle registration. Each file descriptor must be registered
- * before it can be used with opends_sync_read/write. The file must be
+ * before it can be used for I/O in any mode. The file must be
  * opened with O_DIRECT. Registration fails with OPENDS_DIO_NOT_SET
  * otherwise. Linux only.
  */
@@ -153,18 +170,18 @@ opends_error_t opends_handle_register(opends_handle_t *fh, int fd);
 void opends_handle_deregister(opends_handle_t fh);
 
 /*
- * Buffer allocation. Buffers used with opends_sync_read/write must be
- * either allocated through opends_alloc or registered with
- * opends_buf_register so the backend can set up DMA mappings.
+ * Buffer allocation. Buffers used for I/O must be either allocated
+ * through opends_alloc or registered with opends_buf_register so the
+ * backend can set up DMA mappings.
  */
 void *opends_alloc(size_t size);
 void opends_free(void *buf);
 
 /*
- * Register an externally allocated buffer for use with opends_sync_read
- * and opends_sync_write. The caller retains ownership of the allocation;
- * deregister before freeing. flags is forwarded to the backend (e.g.
- * cuFileBufRegister flags for gds).
+ * Register an externally allocated buffer for use in I/O calls. The
+ * caller retains ownership of the allocation, so deregister before
+ * freeing. flags is forwarded to the backend (e.g. cuFileBufRegister
+ * flags for gds).
  */
 opends_error_t opends_buf_register(const void *buf_base, size_t size,
                                    int flags);
@@ -209,9 +226,7 @@ ssize_t opends_async_await(opends_async_future_t *future);
  * Synchronous I/O. Returns byte count on success or a negated
  * opends_op_error_t on failure. The buf_offset parameter writes
  * into the buffer at an offset, useful for scatter reads into a
- * single allocation. A write may start and end anywhere; the partial
- * edge blocks are completed by read-modify-write, which is not atomic
- * against other writers of the file.
+ * single allocation.
  */
 ssize_t opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
                          off_t file_offset, off_t buf_offset);
@@ -257,6 +272,11 @@ opends_error_t opends_stream_deregister(opends_stream_t stream);
  * free again after get_status has delivered its completion.
  * opends_batch_submit returns OPENDS_BATCH_FULL when it submits more
  * operations than there are free slots.
+ *
+ * opends_batch_cancel cannot stop I/O the backend already accepted:
+ * it awaits outstanding operations and reports their undelivered
+ * completions as canceled. A batch handle is not thread-safe. Guard a
+ * batch shared between threads externally.
  */
 typedef enum opends_opcode {
 	OPENDS_READ = 0,
