@@ -176,7 +176,7 @@ def main():
         _write_index(WORKTREE)
 
         _git("add", "-A", where=WORKTREE)
-        c = _git("commit", "-m", msg, where=WORKTREE)
+        c = _git("commit", "--no-verify", "-m", msg, where=WORKTREE)
         unchanged = "nothing to commit" in (c.stdout + c.stderr)
         if c.returncode and not unchanged:
             sys.exit((c.stderr or c.stdout).strip())
@@ -187,7 +187,7 @@ def main():
             print(f"wrote {BRANCH}:{SNAP_DIR}/{label} "
                   f"from {n} source files ({head})")
         if a.push:
-            p = _git("push", "origin", BRANCH)
+            p = _git("push", "--no-verify", "origin", BRANCH)
             sys.stdout.write(p.stdout)
             sys.stderr.write(p.stderr)
             if p.returncode:

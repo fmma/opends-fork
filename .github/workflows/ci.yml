@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
@@ -16,6 +17,10 @@ concurrency:
 
 jobs:
   lint:
+    if: >-
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      contains(github.event.pull_request.labels.*.name, 'test-full') ||
+      contains(github.event.pull_request.labels.*.name, 'bench')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +29,10 @@ jobs:
       - run: scripts/lint_check.py
 
   test-ref:
+    if: >-
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      contains(github.event.pull_request.labels.*.name, 'test-full') ||
+      contains(github.event.pull_request.labels.*.name, 'bench')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -40,3 +49,62 @@ jobs:
       - name: Run python binding tests
         run: python3 -m pytest tests
         working-directory: python
+
+  # Full suite, aisio included, on a hardware target. Opt-in with the
+  # test-full label, approved per run in the manual-operator
+  # environment by an operator who brings up a one-shot runner (see
+  # docs/ci-hw.md).
+  test-full:
+    name: test-full (contact operator to run)
+    if: >-
+      success() && (
+      contains(github.event.pull_request.labels.*.name, 'test-full') ||
+      contains(github.event.pull_request.labels.*.name, 'bench'))
+    needs: [lint, test-ref]
+    runs-on: [self-hosted, test-full]
+    environment: manual-operator
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install target configs
+        run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - run: scripts/rsync.py
+      - run: scripts/build.py
+      - run: scripts/run_tests.py
+      - name: Tear the stack down
+        if: always()
+        run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/test.yaml homi_stack_down
+
+  # Standard sweep (scripts/bench/sweep.toml) on a hardware target,
+  # published to the artefacts branch. Opt-in with the bench label.
+  # The approval gate is inherited through test-full: the sweep only
+  # starts after the approved suite passes.
+  bench:
+    if: success() && contains(github.event.pull_request.labels.*.name, 'bench')
+    needs: [lint, test-ref, test-full]
+    runs-on: [self-hosted, test-full]
+    permissions:
+      contents: write
+    timeout-minutes: 720
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install target configs
+        run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - run: scripts/rsync.py
+      - run: scripts/build.py
+      - name: Run the standard sweep
+        run: scripts/bench/run.py --suite opends
+      - name: Render the report
+        run: scripts/bench/report.py
+      - name: Publish to the artefacts branch
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          git fetch origin +refs/heads/artefacts:refs/remotes/origin/artefacts || true
+          scripts/bench/artefacts.py --push
+      - name: Tear the stack down
+        if: always()
+        run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
