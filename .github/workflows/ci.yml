@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
@@ -40,3 +41,19 @@ jobs:
       - name: Run python binding tests
         run: python3 -m pytest tests
         working-directory: python
+
+  test-full:
+    if: success() && contains(github.event.pull_request.labels.*.name, 'test-full')
+    needs: [lint, test-ref]
+    runs-on: nvme-cuda
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install target configs
+        run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - run: scripts/rsync.py
+      - run: scripts/build.py
+      - run: scripts/run_tests.py
+      - name: Tear the stack down
+        if: always()
+        run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/test.yaml homi_stack_down
