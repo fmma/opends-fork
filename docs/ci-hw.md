@@ -19,20 +19,28 @@ same rsync/build/run_tests flow as manual development (see "Remote
 testing with CIJOE" in the README). The full log lands on the
 workflow run.
 
+The bench labels work the same way. `bench` runs one leg at the
+default knobs, `bench-sweep` runs the standard sweep
+(`scripts/bench/sweep.toml`), and `bench-full-sweep` runs the whole
+knob cross product. Each publishes its report and history to the
+`artefacts` branch (`scripts/bench/artefacts.py --push`). The
+reference datasets must already be present on the machine.
+
 ## Repository setup
 
 One-time GitHub configuration on the repository the workflow runs in:
 
-1. Create the `test-full` label.
-2. Add `test-full` to the required status checks. A skipped check
-   satisfies the requirement, so unlabeled PRs are unaffected.
+1. Create the `test-full`, `bench`, `bench-sweep`, and
+   `bench-full-sweep` labels.
+2. Add the four checks to the required status checks. A skipped
+   check satisfies the requirement, so unlabeled PRs are unaffected.
 
 ## Runner machine
 
 One-time setup on the hardware machine, as an unprivileged user:
 
 1. Bring the machine to the target requirements ("Remote testing with
-   CIJOE" in the README).
+   CIJOE" in the README). Populate the reference datasets for bench.
 2. Install the GitHub Actions runner under `~/actions-runner`.
    Register it with an extra `nvme-cuda` label. Install it as a
    service (`sudo ./svc.sh install <user> && sudo ./svc.sh start`).
