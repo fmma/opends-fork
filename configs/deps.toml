@@ -2,7 +2,7 @@
 
 [xnvme.repository]
 remote = "https://github.com/fmma/xnvme"
-ref = "db32ee3904bc52ac91a4487acdae2aaf811e3d15"
+ref = "bdbf0ae63155fedf0578449b22441b3f5733031e"
 
 [xal.repository]
 remote = "https://github.com/xnvme/xal"
