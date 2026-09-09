@@ -56,6 +56,7 @@
 #define ENV_HOMI_ID "OPENDS_AISIO_HOMI_ID"
 #define ENV_HOST_HEAP_MB "OPENDS_AISIO_HOST_HEAP_MB"
 #define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
+#define ENV_CQ_MIRROR "OPENDS_AISIO_CQ_MIRROR"
 #define DEFAULT_XAL_SHM_FMT "/xal_dev%d"
 #define DEFAULT_HOMI_ID 1
 #define DEFAULT_IO_THREADS 2
@@ -221,6 +222,7 @@ struct driver {
 	bool busy_spin;
 	uint64_t cpu_mask;
 	bool assume_aligned_only;
+	bool cq_mirror; ///< CQ in GPU memory, warp-mirrored to host (upcie-cuda only)
 	pthread_mutex_t submit_lock;
 	pthread_mutex_t reg_lock;
 	pthread_mutex_t alloc_lock;
@@ -1124,6 +1126,7 @@ workers_free(struct driver *d)
 static int
 workers_setup(struct driver *d)
 {
+	int qopts = d->cq_mirror ? XNVME_QUEUE_CQ_MIRROR : 0;
 	int rc = ds_accel->ctx_get(&d->accel_ctx);
 	if (rc != 0)
 		return rc;
@@ -1154,7 +1157,7 @@ workers_setup(struct driver *d)
 			struct io_worker *w = &dev->workers[i];
 			w->drv = d;
 			w->dev = dev;
-			if (xnvme_queue_init(dev->xdev, d->queue_depth, 0,
+			if (xnvme_queue_init(dev->xdev, d->queue_depth, qopts,
 			                     &w->queue) < 0) {
 				w->queue = NULL;
 				goto fail;
@@ -1295,6 +1298,9 @@ read_env_config(struct driver *d)
 
 	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
 	d->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
+
+	const char *cqm = getenv(ENV_CQ_MIRROR);
+	d->cq_mirror = cqm && cqm[0] && cqm[0] != '0';
 
 	if (env_int(ENV_HOST_HEAP_MB, DEFAULT_HOST_HEAP_MB, 1, MAX_HEAP_MB,
 	            &n) < 0)
