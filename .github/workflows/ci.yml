@@ -52,6 +52,7 @@ jobs:
       - name: Install target configs
         run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
       - run: scripts/rsync.py
+      - run: scripts/setup_deps.py
       - run: scripts/build.py
       - run: scripts/run_tests.py
       - name: Tear the stack down
@@ -70,6 +71,7 @@ jobs:
       - name: Install target configs
         run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
       - run: scripts/rsync.py
+      - run: scripts/setup_deps.py
       - run: scripts/build.py
       - name: Run one leg at the default knobs
         run: scripts/bench/run.py --suite opends --io-threads 2
@@ -100,6 +102,7 @@ jobs:
       - name: Install target configs
         run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
       - run: scripts/rsync.py
+      - run: scripts/setup_deps.py
       - run: scripts/build.py
       - name: Run the standard sweep
         run: scripts/bench/run.py --suite opends
@@ -130,6 +133,7 @@ jobs:
       - name: Install target configs
         run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
       - run: scripts/rsync.py
+      - run: scripts/setup_deps.py
       - run: scripts/build.py
       - name: Run the full sweep
         run: scripts/bench/run.py --suite opends --full-sweep
