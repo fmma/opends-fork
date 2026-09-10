@@ -63,8 +63,6 @@ jobs:
     if: success() && contains(github.event.pull_request.labels.*.name, 'bench')
     needs: [lint, test-ref]
     runs-on: nvme-cuda
-    permissions:
-      contents: write
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -77,25 +75,22 @@ jobs:
         run: scripts/bench/run.py --suite opends --io-threads 2
       - name: Render the report
         run: scripts/bench/report.py
-      - name: Publish to the artefacts branch
-        env:
-          GIT_AUTHOR_NAME: github-actions[bot]
-          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-          GIT_COMMITTER_NAME: github-actions[bot]
-          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: |
-          git fetch origin +refs/heads/artefacts:refs/remotes/origin/artefacts || true
-          scripts/bench/artefacts.py --push
       - name: Tear the stack down
         if: always()
         run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      - name: Upload the report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench
+          path: |
+            cijoe-output-bench
+            cijoe-output-teardown
 
   bench-sweep:
     if: success() && contains(github.event.pull_request.labels.*.name, 'bench-sweep')
     needs: [lint, test-ref]
     runs-on: nvme-cuda
-    permissions:
-      contents: write
     timeout-minutes: 720
     steps:
       - uses: actions/checkout@v4
@@ -108,25 +103,22 @@ jobs:
         run: scripts/bench/run.py --suite opends
       - name: Render the report
         run: scripts/bench/report.py
-      - name: Publish to the artefacts branch
-        env:
-          GIT_AUTHOR_NAME: github-actions[bot]
-          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-          GIT_COMMITTER_NAME: github-actions[bot]
-          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: |
-          git fetch origin +refs/heads/artefacts:refs/remotes/origin/artefacts || true
-          scripts/bench/artefacts.py --push
       - name: Tear the stack down
         if: always()
         run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      - name: Upload the report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-sweep
+          path: |
+            cijoe-output-bench
+            cijoe-output-teardown
 
   bench-full-sweep:
     if: success() && contains(github.event.pull_request.labels.*.name, 'bench-full-sweep')
     needs: [lint, test-ref]
     runs-on: nvme-cuda
-    permissions:
-      contents: write
     timeout-minutes: 2880
     steps:
       - uses: actions/checkout@v4
@@ -139,15 +131,14 @@ jobs:
         run: scripts/bench/run.py --suite opends --full-sweep
       - name: Render the report
         run: scripts/bench/report.py
-      - name: Publish to the artefacts branch
-        env:
-          GIT_AUTHOR_NAME: github-actions[bot]
-          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-          GIT_COMMITTER_NAME: github-actions[bot]
-          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: |
-          git fetch origin +refs/heads/artefacts:refs/remotes/origin/artefacts || true
-          scripts/bench/artefacts.py --push
       - name: Tear the stack down
         if: always()
         run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      - name: Upload the report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-full-sweep
+          path: |
+            cijoe-output-bench
+            cijoe-output-teardown

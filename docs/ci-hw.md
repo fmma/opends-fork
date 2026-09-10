@@ -22,9 +22,9 @@ workflow run.
 The bench labels work the same way. `bench` runs one leg at the
 default knobs, `bench-sweep` runs the standard sweep
 (`scripts/bench/sweep.toml`), and `bench-full-sweep` runs the whole
-knob cross product. Each publishes its report and history to the
-`artefacts` branch (`scripts/bench/artefacts.py --push`). The
-reference datasets must already be present on the machine.
+knob cross product. Each uploads its cijoe output, `report.md`
+included, as a workflow artifact on the run. The reference datasets
+must already be present on the machine.
 
 ## Repository setup
 
