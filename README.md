@@ -161,7 +161,9 @@ and, behind a translating IOMMU, the `iommu_map_pa` module.
   also the size of the CUDA block that drives it. Default 64, at most 1023.
 - `OPENDS_AISIO_GPU_CTXS`: GPU contexts per device, each one op in flight
   with its own queues, command array and PRP lists. A submit waits for a
-  free context. Default 4.
+  free context. Default 4. The controller's I/O queue count bounds contexts
+  times queues per op; a Samsung 990 PRO has 16, shared with homi, qublk
+  and the I/O workers.
 - `OPENDS_AISIO_GPU_QUEUES_PER_OP`: Queues (CUDA blocks) an op is spread
   over. Default 1, at most 8.
 - `OPENDS_AISIO_GPU_MAX_CMDS`: Commands a context holds; a read needing more
@@ -171,6 +173,24 @@ and, behind a translating IOMMU, the `iommu_map_pa` module.
 - `OPENDS_AISIO_GPU_SQ_HOSTMEM`: `1` places the GPU queues' submission
   queues in host memory (`XNVME_QUEUE_SQ_HOSTMEM`) instead of GPU memory.
   Default off.
+
+`aisio_stream_compute` (`examples/aisio_stream_compute.cu`) shows who works
+in each engine. Per iteration it enqueues a fill kernel, a stream read and a
+checksum kernel on one stream, then the host sleeps while the chain runs and
+samples every thread's CPU time from `/proc` before and after; the sums are
+checked against the host's, and GPU timestamps bound each read.
+
+```bash
+export OPENDS_XAL_SHM=/xal_dev0 OPENDS_HOMI_MNT=/mnt/datasets
+aisio_stream_compute /mnt/datasets/opends_tests/gpu_demo.bin 20 1500
+OPENDS_AISIO_GPU_INITIATED=1 aisio_stream_compute /mnt/datasets/opends_tests/gpu_demo.bin 20 1500
+```
+
+With the host engine the two I/O workers use about one core for as long as
+the chain runs; with the GPU engine the host spends a few percent of a core,
+nearly all of it the idle workers waking, while the reads run at the same
+rate. Submitting a 256 MiB read costs the caller about 0.6 ms of CPU, and a
+submit blocks when every context is in flight.
 
 ## Performance
 
