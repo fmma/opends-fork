@@ -90,7 +90,7 @@
  * device page at depth + 1 entries. The controller's memory page is 4 KiB, and
  * every command gets one page for its PRP list, so an op may span at most
  * gpu_max_cmds chunks of up to 512 pages each. */
-#define DEFAULT_GPU_QUEUE_DEPTH 64
+#define DEFAULT_GPU_QUEUE_DEPTH 256
 #define MAX_GPU_QUEUE_DEPTH 1023
 #define DEFAULT_GPU_CTXS 4
 #define MAX_GPU_CTXS 32

@@ -158,7 +158,10 @@ and, behind a translating IOMMU, the `iommu_map_pa` module.
 - `OPENDS_AISIO_GPU_INITIATED`: `1` enables the GPU engine for stream reads.
   Default off. Driver open fails when the GPU queues cannot be created.
 - `OPENDS_AISIO_GPU_QUEUE_DEPTH`: Depth of each GPU-resident queue, which is
-  also the size of the CUDA block that drives it. Default 64, at most 1023.
+  also the size of the CUDA block that drives it. A read with more commands
+  than the depth goes in several rounds, each waiting for the slowest
+  completion before the next, so a depth that holds a whole read is fastest.
+  Default 256, at most 1023.
 - `OPENDS_AISIO_GPU_CTXS`: GPU contexts per device, each one op in flight
   with its own queues, command array and PRP lists. A submit waits for a
   free context. Default 4. The controller's I/O queue count bounds contexts
