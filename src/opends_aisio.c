@@ -98,6 +98,9 @@
 #define MAX_GPU_MAX_CMDS 65536
 #define NVME_PAGE_SIZE 4096
 #define NVME_PRP_LIST_ENTRIES (NVME_PAGE_SIZE / sizeof(uint64_t))
+/* Device memory is exported to the controller in 64 KiB pages, each physically
+ * contiguous, and xNVMe's translation table resolves at that granule. */
+#define GPU_PHYS_GRANULE 65536
 #define GPU_DRAIN_TIMEOUT_NS (10ull * 1000000000ull)
 
 /* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, one set
@@ -2274,6 +2277,25 @@ gpu_pool_teardown(struct driver *d)
 	gpu_pool_free(d);
 }
 
+/* Physical address of a device virtual address, resolving once per granule. */
+static int
+gpu_vtophys(const struct xnvme_dev *xdev, uintptr_t va, uintptr_t *granule_va,
+            uint64_t *granule_phys, uint64_t *phys)
+{
+	uintptr_t g = va & ~(uintptr_t)(GPU_PHYS_GRANULE - 1);
+	int rc;
+
+	if (g != *granule_va) {
+		rc = xnvme_buf_vtophys(xdev, (void *)g, granule_phys);
+		if (rc < 0) {
+			return -EFAULT;
+		}
+		*granule_va = g;
+	}
+	*phys = *granule_phys + (va - g);
+	return 0;
+}
+
 /* PRP1 takes the first page at its offset; PRP2 the second page, or the list
  * staged in page k when the transfer spans more. Returns 1 when a list was
  * used, 0 when not, or a negative errno. */
@@ -2286,15 +2308,19 @@ gpu_set_prps(struct gpu_ctx *c, uint32_t k, uint8_t *dst, size_t len,
 	size_t off = (uintptr_t)dst - first;
 	size_t npages = (off + len + NVME_PAGE_SIZE - 1) / NVME_PAGE_SIZE;
 	uint64_t *list = c->prp_stage + (size_t)k * NVME_PRP_LIST_ENTRIES;
+	uintptr_t granule_va =
+	        1; /* Never a granule start, so the first page resolves. */
+	uint64_t granule_phys = 0;
 	uint64_t phys;
 	int rc;
 
 	if (npages - 1 > NVME_PRP_LIST_ENTRIES) {
 		return -E2BIG;
 	}
-	rc = xnvme_buf_vtophys(xdev, dst, &phys);
+	rc = gpu_vtophys(xdev, (uintptr_t)dst, &granule_va, &granule_phys,
+	                 &phys);
 	if (rc < 0) {
-		return -EFAULT;
+		return rc;
 	}
 	cmd->common.dptr.prp.prp1 = phys;
 	cmd->common.dptr.prp.prp2 = 0;
@@ -2302,10 +2328,10 @@ gpu_set_prps(struct gpu_ctx *c, uint32_t k, uint8_t *dst, size_t len,
 		return 0;
 	}
 	for (size_t p = 1; p < npages; p++) {
-		rc = xnvme_buf_vtophys(
-		        xdev, (void *)(first + p * NVME_PAGE_SIZE), &phys);
+		rc = gpu_vtophys(xdev, first + p * NVME_PAGE_SIZE, &granule_va,
+		                 &granule_phys, &phys);
 		if (rc < 0) {
-			return -EFAULT;
+			return rc;
 		}
 		list[p - 1] = phys;
 	}
