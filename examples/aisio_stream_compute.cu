@@ -224,6 +224,9 @@ main(int argc, char **argv)
 	int nstreams = 1;
 	const char *gpu_env = getenv("OPENDS_AISIO_GPU_INITIATED");
 	bool gpu_engine = gpu_env && gpu_env[0] && gpu_env[0] != '0';
+	const char *plain_env = getenv("AISIO_DEMO_PLAIN_RESULTS");
+	bool want_slots = !(plain_env && plain_env[0] && plain_env[0] != '0');
+	bool slots = false;
 	CUdevice cudev;
 	CUcontext cuctx;
 	CUstream streams[MAX_STREAMS];
@@ -351,16 +354,28 @@ main(int argc, char **argv)
 	sz = (size_t *)calloc(iters, sizeof(*sz));
 	foff = (off_t *)calloc(iters, sizeof(*foff));
 	boff = (off_t *)calloc(iters, sizeof(*boff));
-	bytes = (ssize_t *)calloc(iters, sizeof(*bytes));
+	/* bytes_read lands in a result block so the GPU engine can write it
+	 * from the device; AISIO_DEMO_PLAIN_RESULTS=1 keeps it in plain memory
+	 * to compare against the callback path. */
+	bytes = NULL;
+	if (want_slots)
+		bytes = (ssize_t *)opends_result_alloc(iters * sizeof(*bytes));
+	if (bytes) {
+		memset(bytes, 0, iters * sizeof(*bytes));
+		slots = true;
+	} else {
+		bytes = (ssize_t *)calloc(iters, sizeof(*bytes));
+	}
 	if (!ts || !sums || !sz || !foff || !boff || !bytes) {
 		fprintf(stderr, "calloc failed\n");
 		goto out_stream;
 	}
 
 	printf("aisio_stream_compute: %d x (fill, read %zu KiB, sum) on %d "
-	       "stream%s, GPU engine %s\n",
+	       "stream%s, GPU engine %s, results in %s\n",
 	       iters, nbytes >> 10, nstreams, nstreams > 1 ? "s" : "",
-	       gpu_engine ? "on" : "off");
+	       gpu_engine ? "on" : "off",
+	       slots ? "a result block" : "plain memory");
 
 	snapshot_cpu(&s0);
 	t0 = now_ms();
@@ -474,13 +489,15 @@ main(int argc, char **argv)
 		       lo, acc / iters, hi, nbytes / (acc / iters) / 1e6, chain,
 		       iters / (chain / 1e3),
 		       (double)nbytes * iters / chain / 1e6);
-		printf("SUMMARY engine=%s read_kib=%zu streams=%d iters=%d "
+		printf("SUMMARY engine=%s results=%s read_kib=%zu streams=%d "
+		       "iters=%d "
 		       "avg_ms=%.3f max_ms=%.3f reads_per_s=%.0f gbps=%.2f "
 		       "wall_ms=%.1f cpu_ms=%.1f cpu_caller_ms=%.1f "
 		       "cpu_io_ms=%.1f "
 		       "cpu_pct=%.1f\n",
-		       gpu_engine ? "gpu" : "host", nbytes >> 10, nstreams,
-		       iters, acc / iters, hi, iters / (chain / 1e3),
+		       gpu_engine ? "gpu" : "host", slots ? "slots" : "plain",
+		       nbytes >> 10, nstreams, iters, acc / iters, hi,
+		       iters / (chain / 1e3),
 		       (double)nbytes * iters / chain / 1e6, t2 - t0, cpu_all,
 		       caller_ms, io_ms, 100.0 * cpu_all / (t2 - t0));
 	}

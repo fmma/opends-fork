@@ -194,6 +194,12 @@ OPENDS_AISIO_GPU_INITIATED=1 aisio_stream_compute /mnt/datasets/opends_tests/gpu
 The last line of the output is a machine-readable summary, so a sweep over
 sizes and stream counts can be tabulated.
 
+A stream op's result is written by a host callback behind the I/O, which
+costs 20 to 40 us of stream time per op. When `bytes_read_p` points into a
+block from `opends_result_alloc`, pinned and device-mapped, the GPU engine
+writes the result from the kernel instead and no callback is enqueued; the
+demo uses such a block unless `AISIO_DEMO_PLAIN_RESULTS=1`.
+
 With the host engine the two I/O workers use about one core for as long as
 the chain runs; with the GPU engine the host spends a few percent of a core,
 nearly all of it the idle workers waking, while the reads run at the same
