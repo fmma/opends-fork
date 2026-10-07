@@ -182,6 +182,13 @@ steps:
         '{{ config.test.build_dir }}/test_block_alloc_aisio' \
           '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
 
+  - name: test_python_aisio
+    run: |
+      cd '{{ config.test.repo_path }}/python' && \
+      OPENDS_BACKEND=aisio OPENDS_LIBRARY='{{ config.test.build_dir }}/libopends_aisio.so' \
+        OPENDS_XAL_SHM=/xal_dev0 OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        python3 tests/test_aisio_cuda.py
+
   - name: homi_stack_down
     run: |
       '{{ config.test.repo_path }}/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
