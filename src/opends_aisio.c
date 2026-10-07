@@ -48,9 +48,7 @@
 #include <libxal.h>
 #include <libxnvme.h>
 
-/* No more than the workers (ds_aisio_config.c), since a device with no
- * worker cannot be read. */
-#define MAX_DEVICES 15
+#define MAX_DEVICES 16
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
@@ -158,15 +156,25 @@ struct io_worker {
 	pthread_t thread;
 };
 
+#define KIND_BIT(kind) (1u << (kind))
+
 /* An xnvme_dev on a controller, and the workers that submit on it. */
 struct handle {
 	const char *be;
+	unsigned kinds; ///< KIND_BIT of every memory it serves
+	int ordinal;    ///< GPU index or NUMA node of its memory
 	struct xnvme_dev *xdev;
 	struct io_worker *workers;
 	int n_workers;
 	uint32_t rr_next;
 };
 #define MAX_HANDLES 1
+
+struct memory {
+	bool present;
+	int ordinal;
+	struct handle *alloc; ///< On the first drive
+};
 
 struct nvme_device {
 	char dev_uri[XNVME_IDENT_URI_LEN];
@@ -177,11 +185,14 @@ struct nvme_device {
 	uint32_t mdts_nbytes;
 	struct handle handles[MAX_HANDLES];
 	int n_handles;
+	int route[MAX_MEMS]; ///< The handle that serves a memory, or -1
 };
 
 struct driver {
 	struct nvme_device devices[MAX_DEVICES];
 	int n_devices;
+	struct memory memories[MAX_MEMS];
+	int gpu_ordinal;
 	struct aisio_config cfg;
 	uint32_t max_lba_size;    ///< Largest over the devices
 	uint32_t min_mdts_nbytes; ///< Smallest over the devices
@@ -232,28 +243,36 @@ cpu_relax(void)
 #endif
 }
 
-/* The upcie DMA registries are process-global and ignore the dev argument, so
- * one device stands in for all of them on every buffer call. */
+/* The heaps are per process, so the first drive's handle for a memory stands
+ * in for all of them on every buffer call. */
 static inline struct xnvme_dev *
-mem_dev(struct driver *d)
+alloc_dev(struct driver *d, enum opends_mem_kind mem_kind)
 {
-	return d->devices[0].handles[0].xdev;
+	struct handle *h = d->memories[mem_kind].alloc;
+
+	return h ? h->xdev : NULL;
+}
+
+static inline struct handle *
+handle_for(struct nvme_device *dev, enum opends_mem_kind mem_kind)
+{
+	return &dev->handles[dev->route[mem_kind]];
 }
 
 static void *
-buf_alloc_locked(struct driver *d, size_t nbytes)
+buf_alloc_locked(struct driver *d, enum opends_mem_kind mem_kind, size_t nbytes)
 {
 	pthread_mutex_lock(&d->alloc_lock);
-	void *p = xnvme_buf_alloc(mem_dev(d), nbytes);
+	void *p = xnvme_buf_alloc(alloc_dev(d, mem_kind), nbytes);
 	pthread_mutex_unlock(&d->alloc_lock);
 	return p;
 }
 
 static void
-buf_free_locked(struct driver *d, void *p)
+buf_free_locked(struct driver *d, enum opends_mem_kind mem_kind, void *p)
 {
 	pthread_mutex_lock(&d->alloc_lock);
-	xnvme_buf_free(mem_dev(d), p);
+	xnvme_buf_free(alloc_dev(d, mem_kind), p);
 	pthread_mutex_unlock(&d->alloc_lock);
 }
 
@@ -290,7 +309,7 @@ stream_bounce_alloc(struct opends_stream *s, struct driver *d)
 	/* One slot suffices: at most one bounce per op, and the per-stream gate
 	 * serialises ops. A stream is not bound to a device, so the slot takes
 	 * the largest lba_size in the set. */
-	void *buf = buf_alloc_locked(d, d->max_lba_size);
+	void *buf = buf_alloc_locked(d, OPENDS_MEM_GPU, d->max_lba_size);
 	if (!buf) {
 		ds_accel->host_free(desc_host);
 		return -1;
@@ -306,7 +325,7 @@ static void
 stream_bounce_free(struct opends_stream *s, struct driver *d)
 {
 	if (s->bounce_buf) {
-		buf_free_locked(d, s->bounce_buf);
+		buf_free_locked(d, OPENDS_MEM_GPU, s->bounce_buf);
 		s->bounce_buf = NULL;
 	}
 	if (s->bounce_desc_host) {
@@ -451,6 +470,7 @@ open_handle(struct driver *d, struct nvme_device *dev, struct handle *h)
 	struct xnvme_opts opts = xnvme_opts_default();
 	opts.be = h->be;
 	opts.homi_id = d->cfg.homi_id;
+	opts.gpu_id = (uint32_t)h->ordinal;
 	opts.host_heap_size = d->cfg.host_heap_nbytes;
 	opts.device_heap_size = d->cfg.device_heap_nbytes;
 
@@ -476,6 +496,43 @@ close_device(struct nvme_device *dev)
 	}
 }
 
+/* The xnvme backend that serves a memory on a local drive. */
+static const char *
+backend_of(enum opends_mem_kind mem_kind)
+{
+	switch (mem_kind) {
+	case OPENDS_MEM_GPU: return ds_accel->xnvme_be;
+	default: return NULL;
+	}
+}
+
+/* Give dev a handle serving mem_kind, on the handle that already runs the
+ * same backend when there is one. Returns -ENOSPC when the drive is full. */
+static int
+add_handle(struct nvme_device *dev, const char *be,
+           enum opends_mem_kind mem_kind, int ordinal)
+{
+	struct handle *h;
+
+	for (int i = 0; i < dev->n_handles; i++) {
+		h = &dev->handles[i];
+		if (strcmp(h->be, be) == 0) {
+			h->kinds |= KIND_BIT(mem_kind);
+			dev->route[mem_kind] = i;
+			return 0;
+		}
+	}
+	if (dev->n_handles == MAX_HANDLES) {
+		return -ENOSPC;
+	}
+	h = &dev->handles[dev->n_handles];
+	h->be = be;
+	h->kinds = KIND_BIT(mem_kind);
+	h->ordinal = ordinal;
+	dev->route[mem_kind] = dev->n_handles++;
+	return 0;
+}
+
 static int
 open_device(struct driver *d, struct nvme_device *dev)
 {
@@ -483,8 +540,17 @@ open_device(struct driver *d, struct nvme_device *dev)
 	struct xnvme_dev *xdev;
 	int err;
 
-	dev->handles[0].be = ds_accel->xnvme_be;
-	dev->n_handles = 1;
+	dev->n_handles = 0;
+	for (int k = 0; k < MAX_MEMS; k++) {
+		dev->route[k] = -1;
+		if (!d->memories[k].present) {
+			continue;
+		}
+		err = add_handle(dev, backend_of(k), k, d->memories[k].ordinal);
+		if (err < 0) {
+			return err;
+		}
+	}
 	for (int i = 0; i < dev->n_handles; i++) {
 		err = open_handle(d, dev, &dev->handles[i]);
 		if (err < 0) {
@@ -542,6 +608,12 @@ open_devices(struct driver *d)
 		if (err < 0) {
 			close_devices(d);
 			return err;
+		}
+	}
+
+	for (int k = 0; k < MAX_MEMS; k++) {
+		if (d->memories[k].present) {
+			d->memories[k].alloc = handle_for(&d->devices[0], k);
 		}
 	}
 
@@ -715,7 +787,8 @@ submit_host_bounce(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
 {
 	if (!op->bounce_buf)
 		op->bounce_buf = buf_alloc_locked(
-		        w->drv, BOUNCE_SLOTS * (size_t)w->dev->lba_size);
+		        w->drv, OPENDS_MEM_GPU,
+		        BOUNCE_SLOTS * (size_t)w->dev->lba_size);
 	if (!op->bounce_buf) {
 		op->err = OPENDS_INTERNAL_ERROR;
 		return -1;
@@ -1068,16 +1141,6 @@ mask_nth_cpu(uint64_t mask, int n)
 	return -1;
 }
 
-/* Workers go round-robin over the devices: worker i serves device
- * i % n_devices. */
-static int
-workers_of_device(const struct driver *d, int di)
-{
-	int base = d->cfg.n_io_threads / d->n_devices;
-
-	return base + (di < d->cfg.n_io_threads % d->n_devices ? 1 : 0);
-}
-
 static void
 workers_stop(struct driver *d)
 {
@@ -1108,7 +1171,8 @@ handle_free(struct driver *d, struct handle *h)
 			struct file_op *op = &w->file_op_queue[s];
 
 			if (op->bounce_buf) {
-				buf_free_locked(d, op->bounce_buf);
+				buf_free_locked(d, OPENDS_MEM_GPU,
+				                op->bounce_buf);
 				op->bounce_buf = NULL;
 			}
 		}
@@ -1134,13 +1198,31 @@ workers_free(struct driver *d)
 	}
 }
 
-/* Start nw workers on h. Returns 0, or -1 with what was started left for
+/* The workers a handle runs: the configured count of every memory it
+ * serves. */
+static int
+handle_workers(const struct driver *d, const struct handle *h)
+{
+	int n = 0;
+
+	for (int k = 0; k < MAX_MEMS; k++) {
+		if (h->kinds & KIND_BIT(k)) {
+			n += d->cfg.n_workers[k];
+		}
+	}
+	return n;
+}
+
+/* Start the workers of h. Returns 0, or -1 with what was started left for
  * workers_stop and workers_free. */
 static int
 handle_start(struct driver *d, struct nvme_device *dev, struct handle *h,
-             int nw, int *pinned)
+             int *pinned)
 {
-	int qopts = d->cfg.cq_mirror ? XNVME_QUEUE_P2P_CQ_MIRROR : 0;
+	int nw = handle_workers(d, h);
+	int qopts = ((h->kinds & KIND_BIT(OPENDS_MEM_GPU)) && d->cfg.cq_mirror)
+	                    ? XNVME_QUEUE_P2P_CQ_MIRROR
+	                    : 0;
 	int mask_cpus = __builtin_popcountll(d->cfg.cpu_mask);
 	int err;
 
@@ -1191,14 +1273,13 @@ handle_start(struct driver *d, struct nvme_device *dev, struct handle *h,
 static int
 workers_setup(struct driver *d)
 {
-	int rc = ds_accel->ctx_get(&d->accel_ctx);
-	if (rc != 0)
-		return rc;
-
 	/* Mapped so the device-side gate can address the word; the host
 	 * callback path uses the host view only. */
 	void *host = NULL;
 	ds_accel_devptr_t dptr = 0;
+	int pinned = 0;
+	int rc;
+
 	rc = ds_accel->host_alloc_mapped(STREAM_WORDS_BYTES, &host, &dptr);
 	if (rc != 0)
 		return rc;
@@ -1207,14 +1288,12 @@ workers_setup(struct driver *d)
 	d->stream_words_dptr = dptr;
 
 	d->stop = false;
-	int pinned = 0;
 	for (int di = 0; di < d->n_devices; di++) {
 		struct nvme_device *dev = &d->devices[di];
-		int nw = workers_of_device(d, di);
 
 		for (int hi = 0; hi < dev->n_handles; hi++) {
-			if (handle_start(d, dev, &dev->handles[hi], nw,
-			                 &pinned) < 0) {
+			if (handle_start(d, dev, &dev->handles[hi], &pinned) <
+			    0) {
 				goto fail;
 			}
 		}
@@ -1258,6 +1337,20 @@ opends_stream_get(struct driver *d, ds_accel_stream_t stream)
 	if (idx < 0)
 		return NULL;
 	return &d->streams[idx];
+}
+
+/* The configuration, applied to the memories. */
+static int
+read_config(struct driver *d)
+{
+	if (aisio_config_read(&d->cfg, d->gpu_ordinal) < 0) {
+		return -EINVAL;
+	}
+	d->memories[OPENDS_MEM_GPU].ordinal = d->gpu_ordinal;
+	for (int k = 0; k < MAX_MEMS; k++) {
+		d->memories[k].present = d->cfg.n_workers[k] > 0;
+	}
+	return 0;
 }
 
 static struct io_worker *
@@ -1410,13 +1503,23 @@ opends_driver_open(void)
 		return opends_err(OPENDS_DRIVER_ALREADY_OPEN);
 
 	struct driver *d = calloc(1, sizeof(*d));
+	int rc;
+
 	if (!d)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
-	/* The thread-count default follows the device count, so discovery
-	 * comes before the rest of the environment. */
-	if (discover_devices(d) < 0 ||
-	    aisio_config_read(&d->cfg, d->n_devices) < 0) {
+	/* The configuration is checked against the context's accelerator and
+	 * applied to the discovered devices, so the context is created first
+	 * and discovery precedes the rest of the environment. */
+	rc = ds_accel->ctx_get(&d->accel_ctx);
+	if (rc == 0) {
+		rc = ds_accel->ctx_device(d->accel_ctx, &d->gpu_ordinal);
+	}
+	if (rc != 0) {
+		free(d);
+		return opends_err_dev(OPENDS_DEVICE_DRIVER_ERROR, rc);
+	}
+	if (discover_devices(d) < 0 || read_config(d) < 0) {
 		free(d);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
@@ -1424,7 +1527,7 @@ opends_driver_open(void)
 	pthread_mutex_init(&d->reg_lock, NULL);
 	pthread_mutex_init(&d->alloc_lock, NULL);
 
-	int rc = xal_attach(d);
+	rc = xal_attach(d);
 	if (rc < 0) {
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
@@ -1472,9 +1575,10 @@ opends_driver_close(void)
 	for (int i = 0; i < drv->buf_count; i++) {
 		struct buf_entry *e = &drv->bufs[i];
 		if (e->owned)
-			buf_free_locked(drv, (void *)e->base);
+			buf_free_locked(drv, OPENDS_MEM_GPU, (void *)e->base);
 		else
-			xnvme_mem_unmap(mem_dev(drv), (void *)e->base);
+			xnvme_mem_unmap(alloc_dev(drv, OPENDS_MEM_GPU),
+			                (void *)e->base);
 	}
 	drv->buf_count = 0;
 
@@ -1644,7 +1748,7 @@ opends_mem_alloc(size_t size, enum opends_mem_kind mem_kind, int ordinal,
 	if (!drv) {
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	}
-	if (!mem_dev(drv)) {
+	if (!alloc_dev(drv, OPENDS_MEM_GPU)) {
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	}
 	if (!out || !size || !opends_mem_valid(mem_kind, ordinal)) {
@@ -1653,6 +1757,9 @@ opends_mem_alloc(size_t size, enum opends_mem_kind mem_kind, int ordinal,
 	if (mem_kind != OPENDS_MEM_GPU) {
 		return opends_err(OPENDS_MEMORY_TYPE_INVALID);
 	}
+	if (ordinal != drv->memories[OPENDS_MEM_GPU].ordinal) {
+		return opends_err(OPENDS_DEVICE_NOT_FOUND);
+	}
 
 	pthread_mutex_lock(&drv->reg_lock);
 	if (drv->buf_count >= MAX_BUF_ENTRIES) {
@@ -1660,7 +1767,7 @@ opends_mem_alloc(size_t size, enum opends_mem_kind mem_kind, int ordinal,
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
-	buf = buf_alloc_locked(drv, size);
+	buf = buf_alloc_locked(drv, OPENDS_MEM_GPU, size);
 	if (!buf) {
 		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_err(OPENDS_INTERNAL_ERROR);
@@ -1686,7 +1793,7 @@ opends_free(void *buf)
 		if (drv->bufs[i].base == buf) {
 			if (!drv->bufs[i].owned)
 				break;
-			buf_free_locked(drv, buf);
+			buf_free_locked(drv, OPENDS_MEM_GPU, buf);
 			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
 			drv->buf_count--;
 			break;
@@ -1702,7 +1809,7 @@ opends_buf_register(const void *buf_base, size_t size, int flags)
 
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
-	if (!mem_dev(drv))
+	if (!alloc_dev(drv, OPENDS_MEM_GPU))
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	if (!buf_base || !size)
 		return opends_err(OPENDS_INVALID_VALUE);
@@ -1719,7 +1826,8 @@ opends_buf_register(const void *buf_base, size_t size, int flags)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
-	int rc = xnvme_mem_map(mem_dev(drv), (void *)buf_base, size);
+	int rc = xnvme_mem_map(alloc_dev(drv, OPENDS_MEM_GPU), (void *)buf_base,
+	                       size);
 	if (rc < 0) {
 		pthread_mutex_unlock(&drv->reg_lock);
 		fprintf(stderr,
@@ -1741,7 +1849,7 @@ opends_buf_deregister(const void *buf_base)
 {
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
-	if (!mem_dev(drv))
+	if (!alloc_dev(drv, OPENDS_MEM_GPU))
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	if (!buf_base)
 		return opends_err(OPENDS_INVALID_VALUE);
@@ -1755,7 +1863,8 @@ opends_buf_deregister(const void *buf_base)
 			}
 			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
 			drv->buf_count--;
-			xnvme_mem_unmap(mem_dev(drv), (void *)buf_base);
+			xnvme_mem_unmap(alloc_dev(drv, OPENDS_MEM_GPU),
+			                (void *)buf_base);
 			pthread_mutex_unlock(&drv->reg_lock);
 			return opends_ok();
 		}
@@ -1788,8 +1897,8 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	uint32_t head;
 
 	pthread_mutex_lock(&d->submit_lock);
-	struct file_op *op =
-	        claim_slot_locked(d, &h->dev->handles[0], &w, &head);
+	struct file_op *op = claim_slot_locked(
+	        d, handle_for(h->dev, OPENDS_MEM_GPU), &w, &head);
 	op->mode = FILE_OP_ASYNC;
 	op->is_write = is_write;
 	op->h = h;
@@ -1874,8 +1983,8 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	uint32_t head;
 
 	pthread_mutex_lock(&d->submit_lock);
-	struct file_op *op =
-	        claim_slot_locked(d, &h->dev->handles[0], &w, &head);
+	struct file_op *op = claim_slot_locked(
+	        d, handle_for(h->dev, OPENDS_MEM_GPU), &w, &head);
 	uint32_t seq = ++opends_stream->next_seq;
 	op->mode = FILE_OP_STREAM;
 	op->is_write = is_write;

@@ -201,7 +201,7 @@ def _run_opends(args, modes, datasets, configs):
             a = p["assume_aligned_only"]
             s = p["idle_spin"]
             os.environ["OPENDS_AISIO_IDLE_SPIN"] = str(s)
-            os.environ["OPENDS_AISIO_IO_THREADS"] = str(t)
+            os.environ["OPENDS_AISIO_WORKERS_PER_DRIVE"] = f"gpu={t}"
             os.environ["OPENDS_AISIO_QUEUE_DEPTH"] = str(q)
             os.environ["OPENDS_AISIO_ASSUME_ALIGNED_ONLY"] = str(a)
             leg = _leg_name(p)
@@ -264,8 +264,9 @@ which.add_argument("--sweep-file", metavar="FILE",
                         "datasets and mode, so a costly dataset runs only "
                         "where its own optimum is.")
 grid.add_argument("--io-threads", type=_int_list, metavar="LIST",
-                  help="Comma-separated OPENDS_AISIO_IO_THREADS values to "
-                       "sweep instead of the config list. Any knob flag "
+                  help="Comma-separated GPU worker counts, each run as "
+                       "OPENDS_AISIO_WORKERS_PER_DRIVE=gpu=<n>, to sweep "
+                       "instead of the config list. Any knob flag "
                        "switches to that mode, where the knobs left out sit "
                        "at their aisio default, 2 here. Datasets and mode "
                        "come from --dataset/--mode, and each leg writes to "
