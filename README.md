@@ -107,17 +107,26 @@ is the only place they are named.
 - `OPENDS_XAL_SHM`: Shared-memory names of the xal-server extent indexes, a
   comma-separated list paired with the runtime's device order. Default
   `/xal_dev<i>` for device i.
-- `OPENDS_AISIO_IO_THREADS`: Total number of internal IO worker threads.
-  Default 2, or the device count when that is larger. Driver open creates one
-  NVMe queue per worker and gives the workers to the devices round-robin, so a
-  worker serves one device. It fails when the workers are fewer than the
-  devices, since a device with no worker cannot be read.
-- `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 8.
+- `OPENDS_AISIO_WORKERS_PER_DRIVE`: The I/O worker threads each drive runs,
+  one count per memory. Each worker owns one NVMe queue on its drive.
+
+  ```
+  OPENDS_AISIO_WORKERS_PER_DRIVE=gpu0=2   # the default
+  OPENDS_AISIO_WORKERS_PER_DRIVE=gpu0=4
+  ```
+
+  `gpu0` is CUDA device 0, the ordinal the process sees. The first line
+  runs two workers per drive for GPU buffers, so four drives are eight
+  threads and eight queues. `gpu` alone names the GPU of the context that
+  is current at open, for launchers that share one environment across
+  ranks. Any other ordinal fails the open until multi-GPU is supported. A
+  dual-port drive is two controllers to the group and runs the row twice.
+- `OPENDS_AISIO_QUEUE_DEPTH`: Depth of every queue, at most 1024. Default 8.
 - `OPENDS_AISIO_CPU_MASK`: Hex mask of CPUs for the workers (e.g. `0xf0`).
   Each worker gets a one-CPU affinity via `pthread_attr_setaffinity_np(3)`:
   worker i takes set bit i mod popcount, so a mask with fewer bits than
-  `OPENDS_AISIO_IO_THREADS` pins more than one worker to a CPU. Unset or `0`
-  leaves placement to the scheduler.
+  there are workers pins more than one worker to a CPU. Unset or `0` leaves
+  placement to the scheduler.
 - `OPENDS_AISIO_IDLE_SPIN`: How long an idle IO worker keeps yielding after
   its last activity before it naps, in microseconds. Default 200. `0` naps at
   once. `busy` never yields or naps: the worker polls flat out and holds a CPU
