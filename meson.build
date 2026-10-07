@@ -254,6 +254,14 @@ if aisio_test_enabled
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
+  # Compute kernels and stream reads on one stream, with the host's part
+  # measured; see the file's header for what it reports.
+  executable('aisio_stream_compute',
+    'examples/aisio_stream_compute.cu',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
+    cuda_args : accel_kernel_args,
+  )
 else
   executable('test_sync_read_aisio', 'tests/skip.c')
   executable('test_mt_read_aisio', 'tests/skip.c')
