@@ -3,10 +3,10 @@
  * opends_aisio.c - aisio backend for raw-NVMe direct storage.
  *
  * Reads go straight from an NVMe device into GPU memory via xNVMe's upcie-cuda
- * backend (PCIe P2P DMA). The HOMI server (xnvme's "homi serve") is the
- * primary of an xNVMe multi-process group and holds the controllers up; this
- * driver joins the same group as a secondary, takes its device set from the
- * group's runtime, and allocates its own I/O queues. A registered file's
+ * backend (PCIe P2P DMA). The HOMI server (xnvme's "homi serve") holds the
+ * controllers up and serves them over its control plane; this driver attaches
+ * as a client, takes its device set from the server's runtime, and allocates
+ * its own I/O queues. A registered file's
  * extents come from a per-device xal index that xal-server publishes over
  * POSIX shared memory; the index is in byte units, and this driver converts
  * to LBAs with its own device geometry. The index whose mountpoint covers a
@@ -18,6 +18,13 @@
  * Writes go through the kernel-mounted filesystem: the source is staged to a
  * host buffer and pwritten via the fd, so XFS over qublk allocates blocks and
  * writes the data; the file's extents are then re-resolved for later P2P reads.
+ *
+ * Stream reads have two engines. By default an I/O thread issues the NVMe
+ * commands when the user's stream reaches the op. With
+ * OPENDS_AISIO_GPU_INITIATED=1 the GPU issues them itself from GPU-resident
+ * queues: the commands are built when the op is submitted, so the size and
+ * offsets are read then rather than at stream time, and a kernel on the
+ * user's stream submits and reaps them.
  */
 
 #define _GNU_SOURCE
@@ -27,6 +34,7 @@
 #include "ds_bounce_kernel.h"
 #include "opends_internal.h"
 #include "ds_extent.h"
+#include "ds_gpu_io.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -57,6 +65,12 @@
 #define ENV_HOST_HEAP_MB "OPENDS_AISIO_HOST_HEAP_MB"
 #define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
 #define ENV_CQ_MIRROR "OPENDS_AISIO_CQ_MIRROR"
+#define ENV_GPU_INITIATED "OPENDS_AISIO_GPU_INITIATED"
+#define ENV_GPU_QUEUE_DEPTH "OPENDS_AISIO_GPU_QUEUE_DEPTH"
+#define ENV_GPU_CTXS "OPENDS_AISIO_GPU_CTXS"
+#define ENV_GPU_QUEUES_PER_OP "OPENDS_AISIO_GPU_QUEUES_PER_OP"
+#define ENV_GPU_MAX_CMDS "OPENDS_AISIO_GPU_MAX_CMDS"
+#define ENV_GPU_SQ_HOSTMEM "OPENDS_AISIO_GPU_SQ_HOSTMEM"
 #define DEFAULT_XAL_SHM_FMT "/xal_dev%d"
 #define DEFAULT_HOMI_ID 1
 #define DEFAULT_IO_THREADS 2
@@ -70,6 +84,21 @@
 #define BOUNCE_SLOTS 2
 #define DEFAULT_QUEUE_DEPTH 8
 #define MAX_QUEUE_DEPTH 4096
+
+/* GPU-initiated reads. A GPU queue is one CUDA block, so its depth is bounded
+ * by the block size, and a submission queue in device memory must fit a 64 KiB
+ * device page at depth + 1 entries. The controller's memory page is 4 KiB, and
+ * every command gets one page for its PRP list, so an op may span at most
+ * gpu_max_cmds chunks of up to 512 pages each. */
+#define DEFAULT_GPU_QUEUE_DEPTH 64
+#define MAX_GPU_QUEUE_DEPTH 1023
+#define DEFAULT_GPU_CTXS 4
+#define MAX_GPU_CTXS 32
+#define DEFAULT_GPU_MAX_CMDS 2048
+#define MAX_GPU_MAX_CMDS 65536
+#define NVME_PAGE_SIZE 4096
+#define NVME_PRP_LIST_ENTRIES (NVME_PAGE_SIZE / sizeof(uint64_t))
+#define GPU_DRAIN_TIMEOUT_NS (10ull * 1000000000ull)
 
 /* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, one set
  * per I/O thread. The heap is process-wide and the thread count does not grow
@@ -172,6 +201,27 @@ struct read_cursor {
 
 struct driver;
 
+/* One GPU-initiated op in flight: its queues, the command array and PRP lists
+ * the host builds, and the bounce slot for a sub-LBA tail. Claimed from the
+ * submitting thread, returned by the callback that runs behind the kernel. */
+struct gpu_ctx {
+	struct nvme_device *dev;
+	int busy;
+	bool broken; ///< A timed-out round left the queue state unknown
+	int nq;
+	struct xnvme_cuda_queue *queues[DS_GPU_MAX_BLOCKS];
+	struct ds_gpu_op *op; ///< Host-mapped
+	ds_accel_devptr_t op_dptr;
+	struct xnvme_spec_cmd *cmds; ///< Host-mapped, read by the kernel
+	uint64_t *prp_stage;         ///< Host-mapped, one page per command
+	void *prp_dev;               ///< Device heap, same layout as prp_stage
+	uint64_t *prp_phys;          ///< Physical address of each prp_dev page
+	void *bounce;                ///< Device heap, one LBA
+	uint32_t prp_pages;          ///< Pages of prp_stage the op uses
+	size_t bytes_total;
+	ssize_t *bytes_p;
+};
+
 struct io_worker {
 	struct driver *drv;
 	struct nvme_device *dev;
@@ -193,6 +243,8 @@ struct nvme_device {
 	struct io_worker *workers;
 	int n_workers;
 	uint32_t rr_next;
+	struct gpu_ctx *gpu_ctxs;
+	int n_gpu_ctxs;
 };
 
 struct driver {
@@ -224,6 +276,13 @@ struct driver {
 	bool assume_aligned_only;
 	bool cq_mirror; ///< CQ in GPU memory, warp-mirrored to host (upcie-cuda
 	                ///< only)
+	bool gpu_initiated; ///< Stream reads issued by the GPU
+	bool gpu_ready;
+	bool gpu_sq_hostmem;
+	uint32_t gpu_queue_depth;
+	uint32_t gpu_max_cmds;
+	int gpu_ctxs;
+	int gpu_queues_per_op;
 	pthread_mutex_t submit_lock;
 	pthread_mutex_t reg_lock;
 	pthread_mutex_t alloc_lock;
@@ -232,6 +291,9 @@ struct driver {
 
 static struct driver *drv;
 static long use_count;
+
+static int gpu_pool_setup(struct driver *d);
+static void gpu_pool_teardown(struct driver *d);
 
 static inline uint64_t
 max_u64(uint64_t a, uint64_t b)
@@ -1303,6 +1365,35 @@ read_env_config(struct driver *d)
 	const char *cqm = getenv(ENV_CQ_MIRROR);
 	d->cq_mirror = cqm && cqm[0] && cqm[0] != '0';
 
+	const char *gpu = getenv(ENV_GPU_INITIATED);
+	d->gpu_initiated = gpu && gpu[0] && gpu[0] != '0';
+	if (env_int(ENV_GPU_QUEUE_DEPTH, DEFAULT_GPU_QUEUE_DEPTH, 1,
+	            MAX_GPU_QUEUE_DEPTH, &n) < 0)
+		return -EINVAL;
+	d->gpu_queue_depth = (uint32_t)n;
+	if (env_int(ENV_GPU_CTXS, DEFAULT_GPU_CTXS, 1, MAX_GPU_CTXS, &n) < 0)
+		return -EINVAL;
+	d->gpu_ctxs = n;
+	if (env_int(ENV_GPU_QUEUES_PER_OP, 1, 1, DS_GPU_MAX_BLOCKS, &n) < 0)
+		return -EINVAL;
+	d->gpu_queues_per_op = n;
+	if (env_int(ENV_GPU_MAX_CMDS, DEFAULT_GPU_MAX_CMDS, 1, MAX_GPU_MAX_CMDS,
+	            &n) < 0)
+		return -EINVAL;
+	d->gpu_max_cmds = (uint32_t)n;
+	const char *hsq = getenv(ENV_GPU_SQ_HOSTMEM);
+	d->gpu_sq_hostmem = hsq && hsq[0] && hsq[0] != '0';
+	if (d->gpu_initiated &&
+	    (!ds_accel->launch_host_func || !ds_accel->copy_async ||
+	     !ds_accel->gpu_io_launch)) {
+		fprintf(stderr,
+		        "aisio: %s=1 needs launch_host_func, copy_async and "
+		        "gpu_io_launch, which the vendor ops table does not "
+		        "provide\n",
+		        ENV_GPU_INITIATED);
+		return -EINVAL;
+	}
+
 	if (env_int(ENV_HOST_HEAP_MB, DEFAULT_HOST_HEAP_MB, 1, MAX_HEAP_MB,
 	            &n) < 0)
 		return -EINVAL;
@@ -1582,6 +1673,27 @@ opends_driver_open(void)
 		return opends_err_dev(OPENDS_DEVICE_DRIVER_ERROR, arc);
 	}
 
+	if (d->gpu_initiated) {
+		int grc = gpu_pool_setup(d);
+
+		if (grc != 0) {
+			fprintf(stderr,
+			        "aisio: GPU-initiated reads could not be set "
+			        "up; "
+			        "err(%d)\n",
+			        grc);
+			workers_teardown(d);
+			close_devices(d);
+			xal_detach(d);
+			pthread_mutex_destroy(&d->alloc_lock);
+			pthread_mutex_destroy(&d->submit_lock);
+			pthread_mutex_destroy(&d->reg_lock);
+			free(d);
+			drv = NULL;
+			return opends_err_dev(OPENDS_DEVICE_DRIVER_ERROR, grc);
+		}
+	}
+
 	return opends_ok();
 }
 
@@ -1591,6 +1703,7 @@ opends_driver_close(void)
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 
+	gpu_pool_teardown(drv);
 	workers_teardown(drv);
 
 	for (int i = 0; i < drv->buf_count; i++) {
@@ -1957,6 +2070,553 @@ classify_accel_failure(struct driver *d, int accel_rc)
 	return opends_err_dev(OPENDS_INTERNAL_ERROR, accel_rc);
 }
 
+/* ------------------------------------------------------------------ */
+/*  GPU-initiated reads                                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A stream read the GPU issues itself. The submitting thread resolves the
+ * extents and builds one NVMe read per chunk, PRP lists included, into a GPU
+ * context claimed for the op. A kernel on the user's stream then submits the
+ * commands from the context's GPU-resident queues and reaps them, and a host
+ * callback behind it publishes bytes_read and returns the context. The shape
+ * (size and offsets) is read when the op is submitted, not when the stream
+ * reaches it.
+ */
+
+static void
+gpu_ctx_free(struct driver *d, struct gpu_ctx *c)
+{
+	for (int i = 0; i < c->nq; i++) {
+		xnvme_cuda_queue_destroy(c->dev->xdev, c->queues[i]);
+		c->queues[i] = NULL;
+	}
+	c->nq = 0;
+	if (c->bounce) {
+		buf_free_locked(d, c->bounce);
+		c->bounce = NULL;
+	}
+	if (c->prp_dev) {
+		buf_free_locked(d, c->prp_dev);
+		c->prp_dev = NULL;
+	}
+	free(c->prp_phys);
+	c->prp_phys = NULL;
+	if (c->prp_stage) {
+		ds_accel->host_free(c->prp_stage);
+		c->prp_stage = NULL;
+	}
+	if (c->cmds) {
+		ds_accel->host_free(c->cmds);
+		c->cmds = NULL;
+	}
+	if (c->op) {
+		ds_accel->host_free(c->op);
+		c->op = NULL;
+	}
+}
+
+/* Returns 0 on success; on failure, the dev_err to report (a negative errno
+ * or a vendor code). */
+static int
+gpu_ctx_setup(struct driver *d, struct nvme_device *dev, struct gpu_ctx *c)
+{
+	size_t cap = d->gpu_max_cmds;
+	size_t prp_bytes = cap * NVME_PAGE_SIZE;
+	int qopts = d->gpu_sq_hostmem ? XNVME_QUEUE_SQ_HOSTMEM : 0;
+	void *host = NULL;
+	ds_accel_devptr_t dptr = 0;
+	int rc;
+
+	c->dev = dev;
+
+	rc = ds_accel->host_alloc_mapped(sizeof(*c->op), &host, &dptr);
+	if (rc != 0) {
+		return rc;
+	}
+	memset(host, 0, sizeof(*c->op));
+	c->op = host;
+	c->op_dptr = dptr;
+
+	rc = ds_accel->host_alloc_mapped(cap * sizeof(*c->cmds), &host, &dptr);
+	if (rc != 0) {
+		return rc;
+	}
+	c->cmds = host;
+	c->op->cmds = dptr;
+
+	/* The lists are staged here and copied to the device heap on the
+	 * stream ahead of the kernel; the controller reads them from there. */
+	rc = ds_accel->host_alloc_mapped(prp_bytes, &host, &dptr);
+	if (rc != 0) {
+		return rc;
+	}
+	c->prp_stage = host;
+
+	c->prp_phys = calloc(cap, sizeof(*c->prp_phys));
+	if (!c->prp_phys) {
+		return -ENOMEM;
+	}
+	c->prp_dev = buf_alloc_locked(d, prp_bytes);
+	if (!c->prp_dev) {
+		return -ENOMEM;
+	}
+	if ((uintptr_t)c->prp_dev & (NVME_PAGE_SIZE - 1)) {
+		fprintf(stderr,
+		        "aisio: the PRP list region is not page aligned\n");
+		return -EINVAL;
+	}
+	for (size_t i = 0; i < cap; i++) {
+		rc = xnvme_buf_vtophys(
+		        dev->xdev, (uint8_t *)c->prp_dev + i * NVME_PAGE_SIZE,
+		        &c->prp_phys[i]);
+		if (rc < 0) {
+			return rc;
+		}
+	}
+
+	c->bounce = buf_alloc_locked(d, dev->lba_size);
+	if (!c->bounce) {
+		return -ENOMEM;
+	}
+
+	for (int i = 0; i < d->gpu_queues_per_op; i++) {
+		rc = xnvme_cuda_queue_create(dev->xdev,
+		                             (uint16_t)d->gpu_queue_depth,
+		                             qopts, &c->queues[i]);
+		if (rc < 0) {
+			fprintf(stderr,
+			        "aisio: xnvme_cuda_queue_create(%s, depth=%u) "
+			        "failed; err(%d)\n",
+			        dev->dev_uri, d->gpu_queue_depth, rc);
+			c->queues[i] = NULL;
+			return rc;
+		}
+		c->nq = i + 1;
+		c->op->queues[i] = (uint64_t)(uintptr_t)c->queues[i];
+	}
+
+	return 0;
+}
+
+static void
+gpu_pool_free(struct driver *d)
+{
+	for (int di = 0; di < d->n_devices; di++) {
+		struct nvme_device *dev = &d->devices[di];
+
+		for (int i = 0; i < dev->n_gpu_ctxs; i++) {
+			gpu_ctx_free(d, &dev->gpu_ctxs[i]);
+		}
+		free(dev->gpu_ctxs);
+		dev->gpu_ctxs = NULL;
+		dev->n_gpu_ctxs = 0;
+	}
+	d->gpu_ready = false;
+}
+
+static int
+gpu_pool_setup(struct driver *d)
+{
+	int rc;
+
+	for (int di = 0; di < d->n_devices; di++) {
+		struct nvme_device *dev = &d->devices[di];
+
+		dev->gpu_ctxs =
+		        calloc((size_t)d->gpu_ctxs, sizeof(*dev->gpu_ctxs));
+		if (!dev->gpu_ctxs) {
+			rc = -ENOMEM;
+			goto fail;
+		}
+		for (int i = 0; i < d->gpu_ctxs; i++) {
+			dev->n_gpu_ctxs = i + 1;
+			rc = gpu_ctx_setup(d, dev, &dev->gpu_ctxs[i]);
+			if (rc != 0) {
+				goto fail;
+			}
+		}
+	}
+	d->gpu_ready = true;
+	return 0;
+
+fail:
+	gpu_pool_free(d);
+	return rc;
+}
+
+static void
+gpu_pool_teardown(struct driver *d)
+{
+	uint64_t deadline = monotonic_ns() + GPU_DRAIN_TIMEOUT_NS;
+
+	if (!d->gpu_ready) {
+		return;
+	}
+	/* An op in flight owns its context. The kernel runs without the host,
+	 * so it finishes (or times out) on its own and the callback behind it
+	 * returns the context; wait for that before deleting the queues. */
+	for (int di = 0; di < d->n_devices; di++) {
+		struct nvme_device *dev = &d->devices[di];
+
+		for (int i = 0; i < dev->n_gpu_ctxs; i++) {
+			struct gpu_ctx *c = &dev->gpu_ctxs[i];
+
+			while (!__atomic_load_n(&c->broken, __ATOMIC_ACQUIRE) &&
+			       __atomic_load_n(&c->busy, __ATOMIC_ACQUIRE) &&
+			       monotonic_ns() < deadline) {
+				struct timespec ts = {0, 1000000};
+
+				nanosleep(&ts, NULL);
+			}
+		}
+	}
+	gpu_pool_free(d);
+}
+
+/* PRP1 takes the first page at its offset; PRP2 the second page, or the list
+ * staged in page k when the transfer spans more. Returns 1 when a list was
+ * used, 0 when not, or a negative errno. */
+static int
+gpu_set_prps(struct gpu_ctx *c, uint32_t k, uint8_t *dst, size_t len,
+             struct xnvme_spec_cmd *cmd)
+{
+	const struct xnvme_dev *xdev = c->dev->xdev;
+	uintptr_t first = (uintptr_t)dst & ~(uintptr_t)(NVME_PAGE_SIZE - 1);
+	size_t off = (uintptr_t)dst - first;
+	size_t npages = (off + len + NVME_PAGE_SIZE - 1) / NVME_PAGE_SIZE;
+	uint64_t *list = c->prp_stage + (size_t)k * NVME_PRP_LIST_ENTRIES;
+	uint64_t phys;
+	int rc;
+
+	if (npages - 1 > NVME_PRP_LIST_ENTRIES) {
+		return -E2BIG;
+	}
+	rc = xnvme_buf_vtophys(xdev, dst, &phys);
+	if (rc < 0) {
+		return -EFAULT;
+	}
+	cmd->common.dptr.prp.prp1 = phys;
+	cmd->common.dptr.prp.prp2 = 0;
+	if (npages == 1) {
+		return 0;
+	}
+	for (size_t p = 1; p < npages; p++) {
+		rc = xnvme_buf_vtophys(
+		        xdev, (void *)(first + p * NVME_PAGE_SIZE), &phys);
+		if (rc < 0) {
+			return -EFAULT;
+		}
+		list[p - 1] = phys;
+	}
+	if (npages == 2) {
+		cmd->common.dptr.prp.prp2 = list[0];
+		return 0;
+	}
+	cmd->common.dptr.prp.prp2 = c->prp_phys[k];
+	return 1;
+}
+
+static int
+gpu_add_read(struct driver *d, struct gpu_ctx *c, uint64_t slba, uint32_t nlbas,
+             uint8_t *dst, size_t len)
+{
+	struct ds_gpu_op *op = c->op;
+	struct xnvme_spec_cmd *cmd;
+	int rc;
+
+	if (op->n_cmds >= d->gpu_max_cmds) {
+		return -E2BIG;
+	}
+	cmd = &c->cmds[op->n_cmds];
+	memset(cmd, 0, sizeof(*cmd));
+	cmd->common.opcode = XNVME_SPEC_NVM_OPC_READ;
+	cmd->common.nsid = c->dev->nsid;
+	cmd->nvm.slba = slba;
+	cmd->nvm.nlb = nlbas - 1;
+	rc = gpu_set_prps(c, op->n_cmds, dst, len, cmd);
+	if (rc < 0) {
+		return rc;
+	}
+	if (rc > 0) {
+		c->prp_pages = op->n_cmds + 1;
+	}
+	op->n_cmds++;
+	return 0;
+}
+
+/* Build the commands for a read of size bytes at req_start into dst_base.
+ * Returns 0, -E2BIG when the op does not fit the context (the host path takes
+ * it), -EINVAL for a shape the stream path rejects, -EIO when the extents do
+ * not resolve, or -EFAULT when a buffer does not translate. */
+static int
+gpu_build_read(struct driver *d, struct gpu_ctx *c, struct registered_file *h,
+               uint8_t *dst_base, uint64_t req_start, size_t size)
+{
+	struct nvme_device *dev = h->dev;
+	struct ds_gpu_op *op = c->op;
+	struct ds_extent *extents = NULL;
+	uint32_t extent_count = 0;
+	uint32_t lba_shift = dev->lba_shift;
+	uint32_t lba_mask = dev->lba_size - 1;
+	size_t chunk_max = dev->mdts_nbytes;
+	size_t bytes = 0;
+	uint64_t req_end;
+	int rc;
+
+	if (size > UINT64_MAX - req_start) {
+		return -EINVAL;
+	}
+	req_end = req_start + size;
+
+	/* One PRP list page per command bounds a chunk at 512 pages; so does
+	 * the 16-bit block count. */
+	chunk_max = XNVME_MIN_U64(chunk_max, (size_t)NVME_PRP_LIST_ENTRIES *
+	                                             NVME_PAGE_SIZE);
+	chunk_max = XNVME_MIN_U64(chunk_max, (size_t)NVME_MAX_NLB << lba_shift);
+	chunk_max &= ~(size_t)lba_mask;
+	if (chunk_max == 0) {
+		return -EINVAL;
+	}
+
+	op->n_cmds = 0;
+	op->status = 0;
+	op->tail_nbytes = 0;
+	op->tail_dst = 0;
+	op->tail_src = 0;
+	c->prp_pages = 0;
+
+	rc = resolve_extents(h, &extents, &extent_count);
+	if (rc < 0) {
+		return -EIO;
+	}
+
+	for (uint32_t i = 0; i < extent_count; i++) {
+		const struct ds_extent *e = &extents[i];
+		uint64_t ext_start = e->file_offset;
+		uint64_t ext_end = ext_start + e->length;
+		uint64_t span_start, span_end, off_in_ext, cur_slba;
+		uint8_t *abs_dst;
+		size_t remaining, tail_bytes, middle;
+
+		if (ext_start >= req_end) {
+			break;
+		}
+		span_start = max_u64(req_start, ext_start);
+		span_end = XNVME_MIN_U64(req_end, ext_end);
+		if (span_start >= span_end) {
+			continue;
+		}
+		off_in_ext = span_start - ext_start;
+		abs_dst = dst_base + (span_start - req_start);
+		cur_slba = e->slba + (off_in_ext >> lba_shift);
+		remaining = span_end - span_start;
+
+		/* As on the host path: a stream read starts on an LBA boundary
+		 * and only its tail may be partial, through the bounce slot. */
+		if (off_in_ext & lba_mask) {
+			rc = -EINVAL;
+			goto out;
+		}
+		tail_bytes = remaining & lba_mask;
+		middle = remaining - tail_bytes;
+		while (middle) {
+			size_t chunk = XNVME_MIN_U64(middle, chunk_max);
+
+			rc = gpu_add_read(d, c, cur_slba,
+			                  (uint32_t)(chunk >> lba_shift),
+			                  abs_dst, chunk);
+			if (rc < 0) {
+				goto out;
+			}
+			cur_slba += chunk >> lba_shift;
+			abs_dst += chunk;
+			middle -= chunk;
+			bytes += chunk;
+		}
+		if (tail_bytes) {
+			if (d->assume_aligned_only || op->tail_nbytes) {
+				rc = -EINVAL;
+				goto out;
+			}
+			rc = gpu_add_read(d, c, cur_slba, 1, c->bounce,
+			                  dev->lba_size);
+			if (rc < 0) {
+				goto out;
+			}
+			op->tail_nbytes = (uint32_t)tail_bytes;
+			op->tail_dst = (uint64_t)(uintptr_t)abs_dst;
+			op->tail_src = (uint64_t)(uintptr_t)c->bounce;
+			bytes += tail_bytes;
+		}
+	}
+	rc = 0;
+out:
+	free(extents);
+	c->bytes_total = bytes;
+	return rc;
+}
+
+struct gpu_report {
+	ssize_t *bytes_p;
+	ssize_t value;
+};
+
+/* Publishes a result decided at submit time, in stream order. */
+static void
+gpu_report_cb(void *arg)
+{
+	struct gpu_report *r = arg;
+
+	*r->bytes_p = r->value;
+	free(r);
+}
+
+static opends_error_t
+gpu_report(struct driver *d, ds_accel_stream_t cus, ssize_t *bytes_p,
+           ssize_t value)
+{
+	struct gpu_report *r = malloc(sizeof(*r));
+	int accel_rc;
+
+	if (!r) {
+		return opends_err(OPENDS_INTERNAL_ERROR);
+	}
+	r->bytes_p = bytes_p;
+	r->value = value;
+	accel_rc = ds_accel->launch_host_func(cus, gpu_report_cb, r);
+	if (accel_rc != 0) {
+		free(r);
+		return classify_accel_failure(d, accel_rc);
+	}
+	return opends_ok();
+}
+
+static void
+gpu_ctx_release(struct gpu_ctx *c)
+{
+	__atomic_store_n(&c->busy, 0, __ATOMIC_RELEASE);
+}
+
+/* Runs behind the kernel on the user's stream. */
+static void
+gpu_op_done_cb(void *arg)
+{
+	struct gpu_ctx *c = arg;
+	int status = (int)c->op->status;
+
+	*c->bytes_p = status ? -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR
+	                     : (ssize_t)c->bytes_total;
+	if (status == -EAGAIN) {
+		/* A timed-out round leaves the completion head out of step with
+		 * the controller, so the context is retired, not reused. */
+		fprintf(stderr,
+		        "aisio: a GPU-issued read on %s timed out; retiring "
+		        "its "
+		        "queues\n",
+		        c->dev->dev_uri);
+		__atomic_store_n(&c->broken, true, __ATOMIC_RELEASE);
+		return;
+	}
+	gpu_ctx_release(c);
+}
+
+/* Claim a context of the device, waiting for one in flight to come back.
+ * NULL when the device has none left to claim. */
+static struct gpu_ctx *
+gpu_ctx_claim(struct nvme_device *dev)
+{
+	for (;;) {
+		bool any = false;
+
+		for (int i = 0; i < dev->n_gpu_ctxs; i++) {
+			struct gpu_ctx *c = &dev->gpu_ctxs[i];
+			int expected = 0;
+
+			if (__atomic_load_n(&c->broken, __ATOMIC_ACQUIRE)) {
+				continue;
+			}
+			any = true;
+			if (__atomic_compare_exchange_n(&c->busy, &expected, 1,
+			                                false, __ATOMIC_ACQUIRE,
+			                                __ATOMIC_RELAXED)) {
+				return c;
+			}
+		}
+		if (!any) {
+			return NULL;
+		}
+		sched_yield();
+	}
+}
+
+/* Submit a stream read the GPU issues. Returns true when the op was taken,
+ * with *err the result of submitting it, or false to leave it to the host
+ * path. */
+static bool
+submit_stream_read_gpu(struct driver *d, struct registered_file *h,
+                       void *buf_base, size_t size, off_t file_offset,
+                       off_t buf_offset, ssize_t *bytes_p,
+                       ds_accel_stream_t cus, opends_error_t *err)
+{
+	struct gpu_ctx *c = gpu_ctx_claim(h->dev);
+	opends_op_error_t e;
+	int rc, accel_rc;
+
+	if (!c) {
+		return false;
+	}
+	rc = gpu_build_read(d, c, h, (uint8_t *)buf_base + buf_offset,
+	                    (uint64_t)file_offset, size);
+	if (rc == -E2BIG) {
+		gpu_ctx_release(c);
+		return false;
+	}
+	if (rc < 0) {
+		gpu_ctx_release(c);
+		e = rc == -EINVAL ? OPENDS_INVALID_VALUE
+		    : rc == -EIO  ? OPENDS_FS_SETUP_ERROR
+		                  : OPENDS_DEVICE_DRIVER_ERROR;
+		*err = gpu_report(d, cus, bytes_p, -(ssize_t)e);
+		return true;
+	}
+	if (c->op->n_cmds == 0) {
+		ssize_t n = (ssize_t)c->bytes_total;
+
+		gpu_ctx_release(c);
+		*err = gpu_report(d, cus, bytes_p, n);
+		return true;
+	}
+	c->bytes_p = bytes_p;
+
+	if (c->prp_pages) {
+		accel_rc = ds_accel->copy_async(
+		        c->prp_dev, c->prp_stage,
+		        (size_t)c->prp_pages * NVME_PAGE_SIZE, cus);
+		if (accel_rc != 0) {
+			goto fail;
+		}
+	}
+	accel_rc = ds_accel->gpu_io_launch(c->op_dptr, (uint32_t)c->nq,
+	                                   d->gpu_queue_depth, cus);
+	if (accel_rc != 0) {
+		goto fail;
+	}
+	accel_rc = ds_accel->launch_host_func(cus, gpu_op_done_cb, c);
+	if (accel_rc != 0) {
+		goto fail;
+	}
+	*err = opends_ok();
+	return true;
+
+fail:
+	/* Part of the op may be on the stream, so the context cannot be
+	 * taken back; retire it. */
+	__atomic_store_n(&c->broken, true, __ATOMIC_RELEASE);
+	*err = classify_accel_failure(d, accel_rc);
+	return true;
+}
+
 static opends_error_t
 submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
                  void *buf_base, size_t *size_p, off_t *file_offset_p,
@@ -1980,6 +2640,17 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	struct registered_file *h = (struct registered_file *)fh;
 	struct io_worker *w;
 	uint32_t head;
+
+	/* The GPU engine takes a read it has room for; the rest, and every
+	 * write, goes to an I/O thread. */
+	if (!is_write && d->gpu_ready) {
+		opends_error_t gerr;
+
+		if (submit_stream_read_gpu(d, h, buf_base, *size_p,
+		                           *file_offset_p, *buf_offset_p,
+		                           bytes_p, cus, &gerr))
+			return gerr;
+	}
 
 	pthread_mutex_lock(&d->submit_lock);
 	struct file_op *op = claim_slot_locked(d, h->dev, &w, &head);

@@ -133,6 +133,44 @@ is the only place they are named.
   every process in the group shares, so xNVMe's 1 GiB default is too large.
 - `OPENDS_AISIO_DEVICE_HEAP_MB`: GPU device heap for this process. Default 0,
   which leaves it at the xNVMe default.
+- `OPENDS_AISIO_CQ_MIRROR`: `1` places the I/O workers' completion queues in
+  GPU memory, mirrored to the host by a resident kernel
+  (`XNVME_QUEUE_P2P_CQ_MIRROR`). Default off.
+
+### GPU-initiated stream reads
+
+By default an I/O worker thread issues the NVMe commands of a stream read
+when the user's stream reaches the op. With `OPENDS_AISIO_GPU_INITIATED=1`
+the GPU issues them itself: `opends_stream_read` resolves the file's extents
+and builds the commands, PRP lists included, when it is called, and enqueues
+a kernel on the stream that submits them from GPU-resident NVMe queues and
+reaps the completions. No host thread is on the path once the stream reaches
+the op; a host callback behind the kernel publishes `bytes_read`.
+
+This fixes the shape of the read at call time: `size_p`, `file_offset_p` and
+`buf_offset_p` are dereferenced by `opends_stream_read`, not when the stream
+runs the op, and the file's extents are taken then as well. Stream writes,
+and reads too large for a context (see `OPENDS_AISIO_GPU_MAX_CMDS`), still
+go through the I/O workers. GPU-resident queues need the privileges xNVMe
+documents for GPU-issued I/O (the controller's BAR through sysfs, so root)
+and, behind a translating IOMMU, the `iommu_map_pa` module.
+
+- `OPENDS_AISIO_GPU_INITIATED`: `1` enables the GPU engine for stream reads.
+  Default off. Driver open fails when the GPU queues cannot be created.
+- `OPENDS_AISIO_GPU_QUEUE_DEPTH`: Depth of each GPU-resident queue, which is
+  also the size of the CUDA block that drives it. Default 64, at most 1023.
+- `OPENDS_AISIO_GPU_CTXS`: GPU contexts per device, each one op in flight
+  with its own queues, command array and PRP lists. A submit waits for a
+  free context. Default 4.
+- `OPENDS_AISIO_GPU_QUEUES_PER_OP`: Queues (CUDA blocks) an op is spread
+  over. Default 1, at most 8.
+- `OPENDS_AISIO_GPU_MAX_CMDS`: Commands a context holds; a read needing more
+  falls back to the I/O workers. Each command moves up to the smaller of the
+  device's MDTS and 2 MiB, and each costs a 4 KiB PRP list page in host and
+  GPU memory per context. Default 2048.
+- `OPENDS_AISIO_GPU_SQ_HOSTMEM`: `1` places the GPU queues' submission
+  queues in host memory (`XNVME_QUEUE_SQ_HOSTMEM`) instead of GPU memory.
+  Default off.
 
 ## Performance
 

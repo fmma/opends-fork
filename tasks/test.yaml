@@ -161,6 +161,16 @@ steps:
         '{{ config.test.build_dir }}/test_stream_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
+  - name: test_stream_read_gpu_aisio
+    run: |
+      # The GPU issues the reads itself from GPU-resident queues; the
+      # size and offsets are taken when the op is submitted.
+      OPENDS_XAL_SHM=/xal_dev0 \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        OPENDS_AISIO_GPU_INITIATED=1 \
+        '{{ config.test.build_dir }}/test_stream_read_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
+
   - name: test_sync_write_aisio
     run: |
       OPENDS_XAL_SHM=/xal_dev0 \

@@ -76,6 +76,9 @@ struct stream_test_env {
 	void (*buf_release)(void *buf);
 	const char *mode_label;
 	bool sub_lba_unsupported;
+	/* The backend reads size and offsets when the op is submitted, not
+	 * when the stream reaches it (aisio with GPU-initiated reads). */
+	bool fixed_shape;
 };
 
 static ssize_t
@@ -1044,6 +1047,7 @@ struct stream_test_entry {
 	int (*fn)(struct stream_test_env *);
 	bool needs_sub_lba;
 	bool needs_aligned_only;
+	bool needs_deferred_eval;
 };
 
 /* clang-format off */
@@ -1059,7 +1063,7 @@ static const struct stream_test_entry stream_read_tests[] = {
 	{"offset_size_sweep",   stream_test_offset_size_sweep},
 	{"stream_ordering",     stream_test_stream_ordering},
 	{"stream_consumer",     stream_test_stream_consumer},
-	{"deferred_eval",       stream_test_deferred_eval},
+	{"deferred_eval",       stream_test_deferred_eval, false, false, true},
 	{"concurrent_streams",      stream_test_concurrent_streams},
 	{"concurrent_short_reads",  stream_test_concurrent_short_reads, true},
 	{"unaligned_rejected",      stream_test_unaligned_rejected, false, true},
@@ -1093,7 +1097,9 @@ run_stream_read_tests(struct stream_test_env *env)
 		if ((stream_read_tests[i].needs_sub_lba &&
 		     env->sub_lba_unsupported) ||
 		    (stream_read_tests[i].needs_aligned_only &&
-		     !env->sub_lba_unsupported)) {
+		     !env->sub_lba_unsupported) ||
+		    (stream_read_tests[i].needs_deferred_eval &&
+		     env->fixed_shape)) {
 			fprintf(stderr, "  %-24s skip\n",
 			        stream_read_tests[i].name);
 			continue;
