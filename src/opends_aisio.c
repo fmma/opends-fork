@@ -1250,6 +1250,7 @@ workers_setup(struct driver *d)
 				w->queue = NULL;
 				goto fail;
 			}
+			pthread_setname_np(w->thread, "aisio-io");
 			pinned++;
 			dev->n_workers = i + 1;
 		}
