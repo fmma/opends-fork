@@ -65,6 +65,28 @@ env_int(const char *name, int def, int lo, int hi, int *out)
 static int
 mem_from_key(int gpu_ordinal, const char *key)
 {
+	if (strncmp(key, "cpu", 3) == 0) {
+		int node = 0;
+
+		if (key[3]) {
+			char *tail;
+
+			node = (int)strtol(key + 3, &tail, 10);
+			if (*tail || tail == key + 3) {
+				fprintf(stderr,
+				        "aisio: %s: unknown key \"%s\"\n",
+				        ENV_WORKERS_PER_DRIVE, key);
+				return -EINVAL;
+			}
+		}
+		if (node != 0) {
+			fprintf(stderr,
+			        "aisio: %s: only cpu0 is served, not cpu%d\n",
+			        ENV_WORKERS_PER_DRIVE, node);
+			return -EINVAL;
+		}
+		return OPENDS_MEM_CPU;
+	}
 	if (strncmp(key, "gpu", 3) == 0) {
 		int ord = gpu_ordinal;
 

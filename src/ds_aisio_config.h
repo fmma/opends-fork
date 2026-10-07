@@ -14,7 +14,7 @@
 #include "opends.h"
 
 /* The per-memory tables are indexed by enum opends_mem_kind. */
-#define MAX_MEMS 1
+#define MAX_MEMS 2
 
 struct aisio_config {
 	uint32_t homi_id; ///< Multi-process group the HOMI server is primary of
