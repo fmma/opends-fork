@@ -89,9 +89,8 @@ watchmode = 2
 EOF
 
 echo "starting xal-server"
+XAL_START=$(date +%s)
 setsid xal-server --config "$CONF" < /dev/null > /run/homi/xal-server.log 2>&1 &
-# The shm region appearing is enough; clients retry -EAGAIN/-ESTALE until the
-# first index completes.
 for _ in $(seq 1 120); do
 	[ -e "/dev/shm${XAL_SHM}_state" ] && break
 	if ! pgrep -x xal-server > /dev/null; then
@@ -102,5 +101,24 @@ done
 if [ ! -e "/dev/shm${XAL_SHM}_state" ]; then
 	die "xal-server did not publish $XAL_SHM" /run/homi/xal-server.log
 fi
+
+# the shm exists before the first index is done; "published" in the syslog marks the end of it
+published() {
+	journalctl -t xal-server --since "@$XAL_START" -o cat 2>/dev/null |
+		grep -q "published .* at shm_name($XAL_SHM)" ||
+		grep -q "published .* at shm_name($XAL_SHM)" /run/homi/xal-server.log 2>/dev/null
+}
+echo "waiting for the first index of $MOUNT"
+for _ in $(seq 1 1800); do
+	published && break
+	if ! pgrep -x xal-server > /dev/null; then
+		die "xal-server exited while indexing" /run/homi/xal-server.log
+	fi
+	sleep 1
+done
+if ! published; then
+	die "xal-server did not finish the first index of $MOUNT within 30 min" /run/homi/xal-server.log
+fi
+echo "index of $MOUNT published after $(( $(date +%s) - XAL_START )) s"
 
 echo "HOMI stack up: homi + qublk ($UBLK) + xal-server mounted at $MOUNT"
