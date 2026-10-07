@@ -4,6 +4,7 @@
 
 #include "opends.h"
 
+#include <stdbool.h>
 #include <sys/types.h>
 
 /* Practical upper bound of the logical block size O_DIRECT aligns to. */
@@ -41,6 +42,14 @@ static inline opends_error_t
 opends_err_dev(opends_op_error_t e, opends_result_t dev_err)
 {
 	return (opends_error_t){e, dev_err};
+}
+
+/* True when mem_kind is a known memory and ordinal a possible index in it. */
+static inline bool
+opends_mem_valid(enum opends_mem_kind mem_kind, int ordinal)
+{
+	return (mem_kind == OPENDS_MEM_GPU || mem_kind == OPENDS_MEM_CPU) &&
+	       ordinal >= 0;
 }
 
 #endif /* OPENDS_INTERNAL_H_ */

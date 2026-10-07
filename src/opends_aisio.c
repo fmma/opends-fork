@@ -1634,30 +1634,45 @@ opends_handle_deregister(opends_handle_t fh)
 /*  Buffer allocation                                                 */
 /* ------------------------------------------------------------------ */
 
-void *
-opends_alloc(size_t size)
+opends_error_t
+opends_mem_alloc(size_t size, enum opends_mem_kind mem_kind, int ordinal,
+                 void **out)
 {
-	if (!drv || !mem_dev(drv))
-		return NULL;
+	struct buf_entry *e;
+	void *buf;
+
+	if (!drv) {
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
+	}
+	if (!mem_dev(drv)) {
+		return opends_err(OPENDS_DEVICE_NOT_FOUND);
+	}
+	if (!out || !size || !opends_mem_valid(mem_kind, ordinal)) {
+		return opends_err(OPENDS_INVALID_VALUE);
+	}
+	if (mem_kind != OPENDS_MEM_GPU) {
+		return opends_err(OPENDS_MEMORY_TYPE_INVALID);
+	}
 
 	pthread_mutex_lock(&drv->reg_lock);
 	if (drv->buf_count >= MAX_BUF_ENTRIES) {
 		pthread_mutex_unlock(&drv->reg_lock);
-		return NULL;
+		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
-	void *buf = buf_alloc_locked(drv, size);
+	buf = buf_alloc_locked(drv, size);
 	if (!buf) {
 		pthread_mutex_unlock(&drv->reg_lock);
-		return NULL;
+		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
-	struct buf_entry *e = &drv->bufs[drv->buf_count++];
+	e = &drv->bufs[drv->buf_count++];
 	e->base = buf;
 	e->length = size;
 	e->owned = true;
 	pthread_mutex_unlock(&drv->reg_lock);
-	return buf;
+	*out = buf;
+	return opends_ok();
 }
 
 void
