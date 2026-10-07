@@ -3,7 +3,7 @@
  * opends_aisio.c - aisio backend for raw-NVMe direct storage.
  *
  * Reads go straight from an NVMe device into GPU memory via xNVMe's upcie-cuda
- * backend (PCIe P2P DMA). The HOMI server (xnvme's "homi start") is the
+ * backend (PCIe P2P DMA). The HOMI server (xnvme's "homi serve") is the
  * primary of an xNVMe multi-process group and holds the controllers up; this
  * driver joins the same group as a secondary, takes its device set from the
  * group's runtime, and allocates its own I/O queues. A registered file's
@@ -1126,7 +1126,7 @@ workers_free(struct driver *d)
 static int
 workers_setup(struct driver *d)
 {
-	int qopts = d->cq_mirror ? XNVME_QUEUE_CQ_MIRROR : 0;
+	int qopts = d->cq_mirror ? XNVME_QUEUE_P2P_CQ_MIRROR : 0;
 	int rc = ds_accel->ctx_get(&d->accel_ctx);
 	if (rc != 0)
 		return rc;
