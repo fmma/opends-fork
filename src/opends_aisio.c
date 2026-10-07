@@ -222,7 +222,8 @@ struct driver {
 	bool busy_spin;
 	uint64_t cpu_mask;
 	bool assume_aligned_only;
-	bool cq_mirror; ///< CQ in GPU memory, warp-mirrored to host (upcie-cuda only)
+	bool cq_mirror; ///< CQ in GPU memory, warp-mirrored to host (upcie-cuda
+	                ///< only)
 	pthread_mutex_t submit_lock;
 	pthread_mutex_t reg_lock;
 	pthread_mutex_t alloc_lock;
