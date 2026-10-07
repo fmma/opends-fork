@@ -95,7 +95,7 @@ run_write_homi_tests(struct write_homi_env *e)
 {
 	int failed = 0;
 	size_t file_size = 0;
-	void *gpu = opends_alloc(FILE_SIZE);
+	void *gpu = cuda_alloc_acquire(FILE_SIZE);
 	unsigned char *host = malloc(FILE_SIZE);
 	unsigned char *image = malloc(WRITE_IMAGE_SIZE);
 	if (!gpu || !host || !image) {

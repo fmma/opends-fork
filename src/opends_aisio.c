@@ -1570,30 +1570,48 @@ opends_handle_deregister(opends_handle_t fh)
 /*  Buffer allocation                                                 */
 /* ------------------------------------------------------------------ */
 
-void *
-opends_alloc(size_t size)
+opends_error_t
+opends_mem_alloc(size_t size, int flags, int device, void **out)
 {
-	if (!drv || !mem_dev(drv))
-		return NULL;
+	int type = opends_mem_type(flags, device);
+	struct buf_entry *e;
+	void *buf;
+
+	if (!drv) {
+		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
+	}
+	if (!mem_dev(drv)) {
+		return opends_err(OPENDS_DEVICE_NOT_FOUND);
+	}
+	if (!out || !size || !type) {
+		return opends_err(OPENDS_INVALID_VALUE);
+	}
+	if (type != OPENDS_MEM_DEVICE) {
+		return opends_err(OPENDS_MEMORY_TYPE_INVALID);
+	}
+	if (device != OPENDS_DEVICE_CURRENT) {
+		return opends_err(OPENDS_DEVICE_NOT_FOUND);
+	}
 
 	pthread_mutex_lock(&drv->reg_lock);
 	if (drv->buf_count >= MAX_BUF_ENTRIES) {
 		pthread_mutex_unlock(&drv->reg_lock);
-		return NULL;
+		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
-	void *buf = buf_alloc_locked(drv, size);
+	buf = buf_alloc_locked(drv, size);
 	if (!buf) {
 		pthread_mutex_unlock(&drv->reg_lock);
-		return NULL;
+		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
-	struct buf_entry *e = &drv->bufs[drv->buf_count++];
+	e = &drv->bufs[drv->buf_count++];
 	e->base = buf;
 	e->length = size;
 	e->owned = true;
 	pthread_mutex_unlock(&drv->reg_lock);
-	return buf;
+	*out = buf;
+	return opends_ok();
 }
 
 void

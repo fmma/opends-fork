@@ -61,9 +61,10 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	void *gbuf = opends_alloc(size);
-	if (!gbuf) {
-		fprintf(stderr, "FAILED: opends_alloc(%zu)\n", size);
+	void *gbuf = NULL;
+	e = opends_mem_alloc(size, OPENDS_MEM_DEVICE, OPENDS_DEVICE_CURRENT, &gbuf);
+	if (e.err) {
+		fprintf(stderr, "FAILED: opends_mem_alloc(%zu) err=%d\n", size, e.err);
 		return 1;
 	}
 

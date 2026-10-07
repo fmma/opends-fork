@@ -174,18 +174,43 @@ opends_handle_deregister(opends_handle_t fh)
 /*  Buffer allocation                                                  */
 /* ------------------------------------------------------------------ */
 
-void *
-opends_alloc(size_t size)
+opends_error_t
+opends_mem_alloc(size_t size, int flags, int device, void **out)
 {
+	int type = opends_mem_type(flags, device);
 	void *ptr;
-	if (cudaMalloc(&ptr, size) != cudaSuccess)
-		return NULL;
-	CUfileError_t err = cuFileBufRegister(ptr, size, 0);
+	int dev;
+	cudaError_t crc;
+	CUfileError_t err;
+
+	if (!out || !size || !type) {
+		return opends_err(OPENDS_INVALID_VALUE);
+	}
+	if (type != OPENDS_MEM_DEVICE) {
+		return opends_err(OPENDS_MEMORY_TYPE_INVALID);
+	}
+	if (device != OPENDS_DEVICE_CURRENT) {
+		crc = cudaGetDevice(&dev);
+		if (crc != cudaSuccess) {
+			return opends_err_dev(OPENDS_DEVICE_DRIVER_ERROR,
+			                      (int)crc);
+		}
+		if (device != dev) {
+			return opends_err(OPENDS_DEVICE_NOT_FOUND);
+		}
+	}
+
+	crc = cudaMalloc(&ptr, size);
+	if (crc != cudaSuccess) {
+		return opends_err_dev(OPENDS_INTERNAL_ERROR, (int)crc);
+	}
+	err = cuFileBufRegister(ptr, size, 0);
 	if (err.err != CU_FILE_SUCCESS) {
 		cudaFree(ptr);
-		return NULL;
+		return from_cufile_error(err);
 	}
-	return ptr;
+	*out = ptr;
+	return opends_ok();
 }
 
 void
