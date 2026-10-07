@@ -111,16 +111,18 @@ is the only place they are named.
   one count per memory. Each worker owns one NVMe queue on its drive.
 
   ```
-  OPENDS_AISIO_WORKERS_PER_DRIVE=gpu0=2   # the default
-  OPENDS_AISIO_WORKERS_PER_DRIVE=gpu0=4
+  OPENDS_AISIO_WORKERS_PER_DRIVE=gpu0=2          # the default
+  OPENDS_AISIO_WORKERS_PER_DRIVE=gpu0=4,host=1
   ```
 
-  `gpu0` is CUDA device 0, the ordinal the process sees. The first line
-  runs two workers per drive for GPU buffers, so four drives are eight
-  threads and eight queues. `gpu` alone names the GPU of the context that
-  is current at open, for launchers that share one environment across
-  ranks. Any other ordinal fails the open until multi-GPU is supported. A
-  dual-port drive is two controllers to the group and runs the row twice.
+  `gpu0` is CUDA device 0, the ordinal the process sees, and `host` is
+  host memory. The second line runs four workers per drive for GPU buffers
+  and one for host buffers, so four drives are twenty threads and twenty
+  queues. Host buffers can only be allocated when `host` is given. `gpu`
+  alone names the GPU of the context that is current at open, for
+  launchers that share one environment across ranks. Any other ordinal
+  fails the open until multi-GPU is supported. A dual-port drive is two
+  controllers to the group and gets the workers twice.
 - `OPENDS_AISIO_QUEUE_DEPTH`: Depth of every queue, at most 1024. Default 8.
 - `OPENDS_AISIO_CPU_MASK`: Hex mask of CPUs for the workers (e.g. `0xf0`).
   Each worker gets a one-CPU affinity via `pthread_attr_setaffinity_np(3)`:
@@ -142,6 +144,13 @@ is the only place they are named.
   every process in the group shares, so xNVMe's 1 GiB default is too large.
 - `OPENDS_AISIO_DEVICE_HEAP_MB`: GPU device heap for this process. Default 0,
   which leaves it at the xNVMe default.
+
+Host buffers come from `opends_mem_alloc` at `OPENDS_MEM_HOST`. They live in
+the homi server's hugepage heap (`homi serve --host_heap_size`), which every
+process in the group also draws its queues from, so size it for both. A read
+into a host buffer is DMA on the controller's host-memory queues, under the
+same alignment rules as a GPU read; a write from one stages through memcpy on
+the kernel path.
 
 ## Performance
 

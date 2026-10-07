@@ -15,8 +15,9 @@
  * table. */
 enum mem_kind {
 	MEM_GPU = 0,
+	MEM_HOST = 1, ///< The HOMI server's hugepage heap
 };
-#define MAX_MEMS 1
+#define MAX_MEMS 2
 
 struct aisio_config {
 	uint32_t homi_id; ///< Multi-process group the HOMI server is primary of

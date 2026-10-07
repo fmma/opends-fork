@@ -65,6 +65,9 @@ env_int(const char *name, int def, int lo, int hi, int *out)
 static int
 mem_from_key(int gpu_ordinal, const char *key)
 {
+	if (strcmp(key, "host") == 0) {
+		return MEM_HOST;
+	}
 	if (strncmp(key, "gpu", 3) == 0) {
 		int ord = gpu_ordinal;
 
