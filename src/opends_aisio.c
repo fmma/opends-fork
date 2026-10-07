@@ -78,6 +78,7 @@
 /* A device with no worker cannot be read, so the workers bound the set. */
 #define MAX_DEVICES MAX_IO_THREADS
 #define MAX_BUF_ENTRIES 8192
+#define MAX_RESULT_RANGES 64
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
 #define NVME_PRP_OFFSET_ALIGN 4
@@ -130,6 +131,13 @@ struct buf_entry {
 	const void *base;
 	size_t length;
 	bool owned; /* true: xnvme_buf_alloc; false: xnvme_mem_map. */
+};
+
+/* A block from opends_result_alloc: pinned host memory the GPU can write. */
+struct result_range {
+	void *host;
+	ds_accel_devptr_t dptr;
+	size_t size;
 };
 
 struct nvme_device;
@@ -211,6 +219,7 @@ struct gpu_ctx {
 	struct nvme_device *dev;
 	int busy;
 	bool broken; ///< A timed-out round left the queue state unknown
+	bool fast;   ///< The kernel publishes the result; no callback behind it
 	int nq;
 	struct xnvme_cuda_queue *queues[DS_GPU_MAX_BLOCKS];
 	struct ds_gpu_op *op; ///< Host-mapped
@@ -260,6 +269,8 @@ struct driver {
 	uint32_t min_mdts_nbytes; ///< Smallest over the devices
 	struct buf_entry bufs[MAX_BUF_ENTRIES];
 	int buf_count;
+	struct result_range results[MAX_RESULT_RANGES];
+	int n_results;
 
 	bool workers_ready;
 	ds_accel_ctx_t accel_ctx;
@@ -1718,6 +1729,10 @@ opends_driver_close(void)
 			xnvme_mem_unmap(mem_dev(drv), (void *)e->base);
 	}
 	drv->buf_count = 0;
+	for (int i = 0; i < drv->n_results; i++) {
+		ds_accel->host_free(drv->results[i].host);
+	}
+	drv->n_results = 0;
 
 	close_devices(drv);
 
@@ -1919,6 +1934,72 @@ opends_free(void *buf)
 		}
 	}
 	pthread_mutex_unlock(&drv->reg_lock);
+}
+
+void *
+opends_result_alloc(size_t size)
+{
+	void *host = NULL;
+	ds_accel_devptr_t dptr = 0;
+
+	if (!drv || !size) {
+		return NULL;
+	}
+	pthread_mutex_lock(&drv->reg_lock);
+	if (drv->n_results >= MAX_RESULT_RANGES ||
+	    ds_accel->host_alloc_mapped(size, &host, &dptr) != 0) {
+		pthread_mutex_unlock(&drv->reg_lock);
+		return NULL;
+	}
+	drv->results[drv->n_results].host = host;
+	drv->results[drv->n_results].dptr = dptr;
+	drv->results[drv->n_results].size = size;
+	drv->n_results++;
+	pthread_mutex_unlock(&drv->reg_lock);
+	return host;
+}
+
+void
+opends_result_free(void *p)
+{
+	if (!drv || !p) {
+		return;
+	}
+	pthread_mutex_lock(&drv->reg_lock);
+	for (int i = 0; i < drv->n_results; i++) {
+		if (drv->results[i].host == p) {
+			ds_accel->host_free(p);
+			drv->results[i] = drv->results[drv->n_results - 1];
+			drv->n_results--;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&drv->reg_lock);
+}
+
+/* Device address of a result slot; 0 when p is not in a block from
+ * opends_result_alloc or is not aligned for the GPU's store. */
+static ds_accel_devptr_t
+result_dptr(struct driver *d, const ssize_t *p)
+{
+	ds_accel_devptr_t r = 0;
+
+	if ((uintptr_t)p & (sizeof(*p) - 1)) {
+		return 0;
+	}
+	pthread_mutex_lock(&d->reg_lock);
+	for (int i = 0; i < d->n_results; i++) {
+		const struct result_range *rr = &d->results[i];
+		uintptr_t off = (uintptr_t)p - (uintptr_t)rr->host;
+
+		if ((uintptr_t)p >= (uintptr_t)rr->host &&
+		    off + sizeof(*p) <= rr->size) {
+			r = rr->dptr + off;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&d->reg_lock);
+	return r;
 }
 
 opends_error_t
@@ -2258,8 +2339,9 @@ gpu_pool_teardown(struct driver *d)
 		return;
 	}
 	/* An op in flight owns its context. The kernel runs without the host,
-	 * so it finishes (or times out) on its own and the callback behind it
-	 * returns the context; wait for that before deleting the queues. */
+	 * so it finishes (or times out) on its own, and either its done word
+	 * or the callback behind it marks that; wait before deleting the
+	 * queues. */
 	for (int di = 0; di < d->n_devices; di++) {
 		struct nvme_device *dev = &d->devices[di];
 
@@ -2268,6 +2350,9 @@ gpu_pool_teardown(struct driver *d)
 
 			while (!__atomic_load_n(&c->broken, __ATOMIC_ACQUIRE) &&
 			       __atomic_load_n(&c->busy, __ATOMIC_ACQUIRE) &&
+			       !(__atomic_load_n(&c->fast, __ATOMIC_ACQUIRE) &&
+			         __atomic_load_n(&c->op->done,
+			                         __ATOMIC_ACQUIRE)) &&
 			       monotonic_ns() < deadline) {
 				struct timespec ts = {0, 1000000};
 
@@ -2411,6 +2496,8 @@ gpu_build_read(struct driver *d, struct gpu_ctx *c, struct registered_file *h,
 	op->tail_nbytes = 0;
 	op->tail_dst = 0;
 	op->tail_src = 0;
+	op->blocks_done = 0;
+	op->result = 0;
 	c->prp_pages = 0;
 
 	rc = resolve_extents(h, &extents, &extent_count);
@@ -2525,7 +2612,20 @@ gpu_ctx_release(struct gpu_ctx *c)
 	__atomic_store_n(&c->busy, 0, __ATOMIC_RELEASE);
 }
 
-/* Runs behind the kernel on the user's stream. */
+/* A timed-out round leaves the completion head out of step with the
+ * controller, so the context is retired, not reused. */
+static void
+gpu_ctx_retire(struct gpu_ctx *c)
+{
+	fprintf(stderr,
+	        "aisio: a GPU-issued read on %s timed out; retiring its "
+	        "queues\n",
+	        c->dev->dev_uri);
+	__atomic_store_n(&c->broken, true, __ATOMIC_RELEASE);
+}
+
+/* Runs behind the kernel on the user's stream, for a result the kernel
+ * could not write itself. */
 static void
 gpu_op_done_cb(void *arg)
 {
@@ -2535,17 +2635,19 @@ gpu_op_done_cb(void *arg)
 	*c->bytes_p = status ? -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR
 	                     : (ssize_t)c->bytes_total;
 	if (status == -EAGAIN) {
-		/* A timed-out round leaves the completion head out of step with
-		 * the controller, so the context is retired, not reused. */
-		fprintf(stderr,
-		        "aisio: a GPU-issued read on %s timed out; retiring "
-		        "its "
-		        "queues\n",
-		        c->dev->dev_uri);
-		__atomic_store_n(&c->broken, true, __ATOMIC_RELEASE);
+		gpu_ctx_retire(c);
 		return;
 	}
 	gpu_ctx_release(c);
+}
+
+/* The previous op's done word must be gone before this op can be seen as
+ * fast, or a claimer would take the context away under its owner. */
+static void
+gpu_ctx_take(struct gpu_ctx *c)
+{
+	__atomic_store_n(&c->fast, false, __ATOMIC_RELEASE);
+	__atomic_store_n(&c->op->done, 0, __ATOMIC_RELEASE);
 }
 
 /* Claim a context of the device, waiting for one in flight to come back.
@@ -2567,6 +2669,25 @@ gpu_ctx_claim(struct nvme_device *dev)
 			if (__atomic_compare_exchange_n(&c->busy, &expected, 1,
 			                                false, __ATOMIC_ACQUIRE,
 			                                __ATOMIC_RELAXED)) {
+				gpu_ctx_take(c);
+				return c;
+			}
+			/* An op the kernel completed on its own: the first
+			 * claimer to see it takes the context over through a
+			 * third state, so there is no free window for another
+			 * to race into. */
+			expected = 1;
+			if (__atomic_load_n(&c->fast, __ATOMIC_ACQUIRE) &&
+			    __atomic_load_n(&c->op->done, __ATOMIC_ACQUIRE) &&
+			    __atomic_compare_exchange_n(&c->busy, &expected, 2,
+			                                false, __ATOMIC_ACQUIRE,
+			                                __ATOMIC_RELAXED)) {
+				if ((int)c->op->status == -EAGAIN) {
+					gpu_ctx_retire(c);
+					continue;
+				}
+				gpu_ctx_take(c);
+				__atomic_store_n(&c->busy, 1, __ATOMIC_RELEASE);
 				return c;
 			}
 		}
@@ -2615,6 +2736,12 @@ submit_stream_read_gpu(struct driver *d, struct registered_file *h,
 		return true;
 	}
 	c->bytes_p = bytes_p;
+	c->op->result = result_dptr(d, bytes_p);
+	if (c->op->result) {
+		c->op->result_ok = (int64_t)c->bytes_total;
+		c->op->result_err = -(int64_t)OPENDS_DEVICE_DRIVER_ERROR;
+		__atomic_store_n(&c->fast, true, __ATOMIC_RELEASE);
+	}
 
 	if (c->prp_pages) {
 		accel_rc = ds_accel->copy_async(
@@ -2629,9 +2756,11 @@ submit_stream_read_gpu(struct driver *d, struct registered_file *h,
 	if (accel_rc != 0) {
 		goto fail;
 	}
-	accel_rc = ds_accel->launch_host_func(cus, gpu_op_done_cb, c);
-	if (accel_rc != 0) {
-		goto fail;
+	if (!c->fast) {
+		accel_rc = ds_accel->launch_host_func(cus, gpu_op_done_cb, c);
+		if (accel_rc != 0) {
+			goto fail;
+		}
 	}
 	*err = opends_ok();
 	return true;
