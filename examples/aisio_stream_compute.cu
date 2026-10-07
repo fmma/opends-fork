@@ -13,8 +13,10 @@
  * the GPU timeline.
  *
  * With several streams the ops go round-robin over them, each stream with a
- * buffer of its own, so the engines are also compared under concurrency. The
- * last line is a machine-readable summary.
+ * buffer of its own, so the engines are also compared under concurrency.
+ * AISIO_DEMO_COMPUTE_US=N puts N microseconds of GPU compute ahead of every
+ * read, so the reads are spaced out the way they would be between real
+ * kernels. The last line is a machine-readable summary.
  *
  * Usage: aisio_stream_compute <file-on-mount> [iters] [host-sleep-ms]
  *                             [read-bytes] [streams]
@@ -62,6 +64,18 @@ fill_kernel(uint64_t *p, size_t n, uint64_t v)
 	for (size_t i = blockIdx.x * (size_t)blockDim.x + threadIdx.x; i < n;
 	     i += stride)
 		p[i] = v;
+}
+
+/* Stands in for compute between reads: one thread busy-waits ns. */
+static __global__ void
+spin_kernel(uint64_t ns)
+{
+	uint64_t t0, t;
+
+	asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t0));
+	do {
+		asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));
+	} while (t - t0 < ns);
 }
 
 static __global__ void
@@ -227,6 +241,8 @@ main(int argc, char **argv)
 	const char *plain_env = getenv("AISIO_DEMO_PLAIN_RESULTS");
 	bool want_slots = !(plain_env && plain_env[0] && plain_env[0] != '0');
 	bool slots = false;
+	const char *compute_env = getenv("AISIO_DEMO_COMPUTE_US");
+	long compute_us = compute_env ? atol(compute_env) : 0;
 	CUdevice cudev;
 	CUcontext cuctx;
 	CUstream streams[MAX_STREAMS];
@@ -372,10 +388,11 @@ main(int argc, char **argv)
 	}
 
 	printf("aisio_stream_compute: %d x (fill, read %zu KiB, sum) on %d "
-	       "stream%s, GPU engine %s, results in %s\n",
+	       "stream%s, GPU engine %s, results in %s, %ld us of compute "
+	       "before each read\n",
 	       iters, nbytes >> 10, nstreams, nstreams > 1 ? "s" : "",
 	       gpu_engine ? "on" : "off",
-	       slots ? "a result block" : "plain memory");
+	       slots ? "a result block" : "plain memory", compute_us);
 
 	snapshot_cpu(&s0);
 	t0 = now_ms();
@@ -385,6 +402,9 @@ main(int argc, char **argv)
 
 		fill_kernel<<<grid, THREADS, 0, cs>>>((uint64_t *)buf, n_words,
 		                                      FILL_PATTERN);
+		if (compute_us > 0)
+			spin_kernel<<<1, 1, 0, cs>>>((uint64_t)compute_us *
+			                             1000);
 		stamp_kernel<<<1, 1, 0, cs>>>(&ts_dev[2 * i]);
 		sz[i] = nbytes;
 		err = opends_stream_read(
@@ -489,15 +509,16 @@ main(int argc, char **argv)
 		       lo, acc / iters, hi, nbytes / (acc / iters) / 1e6, chain,
 		       iters / (chain / 1e3),
 		       (double)nbytes * iters / chain / 1e6);
-		printf("SUMMARY engine=%s results=%s read_kib=%zu streams=%d "
+		printf("SUMMARY engine=%s results=%s compute_us=%ld "
+		       "read_kib=%zu streams=%d "
 		       "iters=%d "
 		       "avg_ms=%.3f max_ms=%.3f reads_per_s=%.0f gbps=%.2f "
 		       "wall_ms=%.1f cpu_ms=%.1f cpu_caller_ms=%.1f "
 		       "cpu_io_ms=%.1f "
 		       "cpu_pct=%.1f\n",
 		       gpu_engine ? "gpu" : "host", slots ? "slots" : "plain",
-		       nbytes >> 10, nstreams, iters, acc / iters, hi,
-		       iters / (chain / 1e3),
+		       compute_us, nbytes >> 10, nstreams, iters, acc / iters,
+		       hi, iters / (chain / 1e3),
 		       (double)nbytes * iters / chain / 1e6, t2 - t0, cpu_all,
 		       caller_ms, io_ms, 100.0 * cpu_all / (t2 - t0));
 	}
