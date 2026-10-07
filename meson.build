@@ -95,7 +95,7 @@ if accel_backend == 'cuda'
   have_cuda_h = accel_sys_inc_dirs.length() > 0 or cc.has_header('cuda.h')
 
   accel_deps = [cuda_dep, cuda_drv_dep]
-  accel_kernel_src = 'src/ds_bounce_kernel_cuda.cu'
+  accel_kernel_src = ['src/ds_bounce_kernel_cuda.cu', 'src/ds_gpu_io_cuda.cu']
   accel_runtime_found = cuda_dep.found() and cuda_drv_dep.found() and have_cuda_h
 else
   error('accel_backend=@0@ has no ds_accel implementation; only cuda is wired up (see docs/vendor-port.md).'.format(accel_backend))
