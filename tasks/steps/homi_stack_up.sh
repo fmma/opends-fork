@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Bring up the upstream HOMI/qublk/xal-server stack so the aisio backend can
 # join it and read files on a mounted filesystem. Hands the NVMe controller to
-# userspace (homi start), exposes it as a ublk block device (qublk), mounts
+# userspace (homi serve), exposes it as a ublk block device (qublk), mounts
 # the existing XFS over it at MOUNT, and publishes the mount's extent index
 # over shared memory (xal-server). The same XFS is what the ref/cufile phases
 # mounted via the kernel driver, so any file written there (e.g. the sync-read
@@ -44,7 +44,7 @@ ulimit -c unlimited 2>/dev/null || true
 # The server's host heap is the pool every secondary draws from; the aisio
 # driver alone asks for 256 MiB by default.
 echo "starting homi"
-setsid homi start "$BDF" --homi-id "$HOMI_ID" --be upcie \
+setsid homi serve "$BDF" --homi-id "$HOMI_ID" --be upcie \
 	--host_heap_size $((512 * 1024 * 1024)) \
 	< /dev/null > /run/homi/homi.log 2>&1 &
 # 'homi status' exits non-zero until the server is up and its devices ready.
