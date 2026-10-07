@@ -178,6 +178,17 @@ void *opends_alloc(size_t size);
 void opends_free(void *buf);
 
 /*
+ * Host memory a stream op's result may be published into without a host
+ * callback. When bytes_read_p / bytes_written_p points into a block from
+ * here, the aisio GPU engine writes the result from the device (the block
+ * is pinned and device-mapped); any other pointer still works, through a
+ * host callback behind the I/O. The other backends return ordinary memory.
+ * Free with opends_result_free before closing the driver.
+ */
+void *opends_result_alloc(size_t size);
+void opends_result_free(void *p);
+
+/*
  * Register an externally allocated buffer for use in I/O calls. The
  * caller retains ownership of the allocation, so deregister before
  * freeing. flags is forwarded to the backend (e.g. cuFileBufRegister
