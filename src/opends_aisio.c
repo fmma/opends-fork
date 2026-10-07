@@ -18,6 +18,10 @@
  * Writes go through the kernel-mounted filesystem: the source is staged to a
  * host buffer and pwritten via the fd, so XFS over qublk allocates blocks and
  * writes the data; the file's extents are then re-resolved for later P2P reads.
+ *
+ * A buffer can also live in host memory: the HOMI server's hugepage heap,
+ * reached through a second handle per controller on the host-memory upcie
+ * backend.
  */
 
 #define _GNU_SOURCE
@@ -49,6 +53,7 @@
 #include <libxnvme.h>
 
 #define MAX_DEVICES 16
+#define HOST_XNVME_BE "upcie"
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
@@ -72,6 +77,7 @@ struct buf_entry {
 	const void *base;
 	size_t length;
 	bool owned; /* true: xnvme_buf_alloc; false: xnvme_mem_map. */
+	enum opends_mem_kind mem_kind;
 };
 
 struct nvme_device;
@@ -121,6 +127,7 @@ struct bounce_slot {
 struct file_op {
 	enum file_op_mode mode;
 	bool is_write;
+	enum opends_mem_kind mem_kind;
 	enum file_op_state state;
 	struct registered_file *h;
 	void *buf_base;
@@ -130,7 +137,7 @@ struct file_op {
 	int err;
 	struct bounce_slot bounces[BOUNCE_SLOTS];
 	int n_bounces;
-	void *bounce_buf;
+	void *bounce_buf[MAX_MEMS];
 	union {
 		struct file_op_stream stream;
 		struct file_op_async async;
@@ -168,7 +175,7 @@ struct handle {
 	int n_workers;
 	uint32_t rr_next;
 };
-#define MAX_HANDLES 1
+#define MAX_HANDLES 2
 
 struct memory {
 	bool present;
@@ -198,6 +205,7 @@ struct driver {
 	uint32_t min_mdts_nbytes; ///< Smallest over the devices
 	struct buf_entry bufs[MAX_BUF_ENTRIES];
 	int buf_count;
+	int n_cpu_bufs;
 
 	bool workers_ready;
 	ds_accel_ctx_t accel_ctx;
@@ -256,7 +264,9 @@ alloc_dev(struct driver *d, enum opends_mem_kind mem_kind)
 static inline struct handle *
 handle_for(struct nvme_device *dev, enum opends_mem_kind mem_kind)
 {
-	return &dev->handles[dev->route[mem_kind]];
+	int i = dev->route[mem_kind];
+
+	return i < 0 ? NULL : &dev->handles[i];
 }
 
 static void *
@@ -281,6 +291,23 @@ async_future_complete(opends_async_future_t *fut, ssize_t result)
 {
 	fut->result = result;
 	__atomic_store_n(&fut->done, 1, __ATOMIC_RELEASE);
+}
+
+static int
+host_copy(void *dst, const void *src, size_t bytes)
+{
+	memcpy(dst, src, bytes);
+	return 0;
+}
+
+static int
+mem_copy(enum opends_mem_kind mem_kind, void *dst, const void *src,
+         size_t bytes)
+{
+	if (mem_kind == OPENDS_MEM_CPU) {
+		return host_copy(dst, src, bytes);
+	}
+	return ds_accel->copy(dst, src, bytes);
 }
 
 /* Allocate the tail-bounce slot and copy descriptor for a stream. GPU alloc
@@ -454,10 +481,11 @@ resolve_extents(struct registered_file *h, struct ds_extent **out,
 
 static ssize_t
 pwrite_op(struct registered_file *h, const void *src, size_t size,
-          off_t file_offset)
+          off_t file_offset, enum opends_mem_kind mem_kind)
 {
-	return opends_direct_pwrite(h->fd, h->oflags, src, size, file_offset,
-	                            ds_accel->copy);
+	return opends_direct_pwrite(
+	        h->fd, h->oflags, src, size, file_offset,
+	        mem_kind == OPENDS_MEM_CPU ? host_copy : ds_accel->copy);
 }
 
 static int
@@ -502,6 +530,7 @@ backend_of(enum opends_mem_kind mem_kind)
 {
 	switch (mem_kind) {
 	case OPENDS_MEM_GPU: return ds_accel->xnvme_be;
+	case OPENDS_MEM_CPU: return HOST_XNVME_BE;
 	default: return NULL;
 	}
 }
@@ -782,18 +811,20 @@ submit_stream_bounce(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
 }
 
 static int
-submit_host_bounce(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
-                   uint64_t slba, size_t src_off, size_t nbytes)
+submit_op_bounce(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
+                 uint64_t slba, size_t src_off, size_t nbytes)
 {
-	if (!op->bounce_buf)
-		op->bounce_buf = buf_alloc_locked(
-		        w->drv, OPENDS_MEM_GPU,
-		        BOUNCE_SLOTS * (size_t)w->dev->lba_size);
-	if (!op->bounce_buf) {
+	void **bounce = &op->bounce_buf[op->mem_kind];
+
+	if (!*bounce)
+		*bounce = buf_alloc_locked(w->drv, op->mem_kind,
+		                           BOUNCE_SLOTS *
+		                                   (size_t)w->dev->lba_size);
+	if (!*bounce) {
 		op->err = OPENDS_INTERNAL_ERROR;
 		return -1;
 	}
-	return submit_bounce_read(w, op, op->bounce_buf, abs_dst, slba, src_off,
+	return submit_bounce_read(w, op, *bounce, abs_dst, slba, src_off,
 	                          nbytes);
 }
 
@@ -810,9 +841,14 @@ submit_partial(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
 			op->err = OPENDS_INVALID_VALUE;
 			return -1;
 		}
-		return submit_stream_bounce(w, op, abs_dst, slba, nbytes);
+		/* A host tail needs no kernel: it is copied before the gate
+		 * opens. */
+		if (op->mem_kind == OPENDS_MEM_GPU) {
+			return submit_stream_bounce(w, op, abs_dst, slba,
+			                            nbytes);
+		}
 	}
-	return submit_host_bounce(w, op, abs_dst, slba, src_off, nbytes);
+	return submit_op_bounce(w, op, abs_dst, slba, src_off, nbytes);
 }
 
 static void
@@ -945,8 +981,8 @@ static int
 run_bounce_copies(struct file_op *op)
 {
 	for (int i = 0; i < op->n_bounces; i++) {
-		if (ds_accel->copy(op->bounces[i].dst, op->bounces[i].src,
-		                   op->bounces[i].nbytes) != 0)
+		if (mem_copy(op->mem_kind, op->bounces[i].dst,
+		             op->bounces[i].src, op->bounces[i].nbytes) != 0)
 			return -1;
 	}
 	return 0;
@@ -959,9 +995,17 @@ complete_read_op(struct file_op *op)
 
 	if (op->mode == FILE_OP_STREAM) {
 		struct opends_stream *s = op->u.stream.opends_stream;
-		uint32_t tail_bytes = (op->err || !op->n_bounces)
-		                              ? 0
-		                              : (uint32_t)op->bounces[0].nbytes;
+		uint32_t tail_bytes = 0;
+
+		/* A GPU tail is copied by the kernel behind the gate; a host
+		 * tail is copied here, before the gate opens. */
+		if (!op->err && op->n_bounces) {
+			if (op->mem_kind == OPENDS_MEM_GPU) {
+				tail_bytes = (uint32_t)op->bounces[0].nbytes;
+			} else if (run_bounce_copies(op) < 0) {
+				n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+			}
+		}
 
 		*op->u.stream.bytes_read_p = n;
 		s->bounce_desc_host->n_bytes = tail_bytes;
@@ -994,7 +1038,7 @@ dispatch_write(struct file_op *op)
 		file_offset = op->u.async.file_offset;
 	}
 
-	ssize_t n = pwrite_op(op->h, src, size, file_offset);
+	ssize_t n = pwrite_op(op->h, src, size, file_offset, op->mem_kind);
 	if (n >= 0)
 		xal_mark_dirty(op->h->dev->xal);
 	if (n < 0)
@@ -1170,10 +1214,12 @@ handle_free(struct driver *d, struct handle *h)
 		for (uint32_t s = 0; s < FILE_OP_QUEUE_SIZE; s++) {
 			struct file_op *op = &w->file_op_queue[s];
 
-			if (op->bounce_buf) {
-				buf_free_locked(d, OPENDS_MEM_GPU,
-				                op->bounce_buf);
-				op->bounce_buf = NULL;
+			for (int k = 0; k < MAX_MEMS; k++) {
+				if (op->bounce_buf[k]) {
+					buf_free_locked(d, k,
+					                op->bounce_buf[k]);
+					op->bounce_buf[k] = NULL;
+				}
 			}
 		}
 		if (w->queue) {
@@ -1575,12 +1621,13 @@ opends_driver_close(void)
 	for (int i = 0; i < drv->buf_count; i++) {
 		struct buf_entry *e = &drv->bufs[i];
 		if (e->owned)
-			buf_free_locked(drv, OPENDS_MEM_GPU, (void *)e->base);
+			buf_free_locked(drv, e->mem_kind, (void *)e->base);
 		else
 			xnvme_mem_unmap(alloc_dev(drv, OPENDS_MEM_GPU),
 			                (void *)e->base);
 	}
 	drv->buf_count = 0;
+	drv->n_cpu_bufs = 0;
 
 	close_devices(drv);
 
@@ -1738,6 +1785,27 @@ opends_handle_deregister(opends_handle_t fh)
 /*  Buffer allocation                                                 */
 /* ------------------------------------------------------------------ */
 
+/* The memory of a buffer by its registered base. An unknown base counts
+ * as GPU memory, which is what xNVMe rejects it as if it is not. */
+static enum opends_mem_kind
+buf_mem_kind(struct driver *d, const void *base)
+{
+	enum opends_mem_kind mem_kind = OPENDS_MEM_GPU;
+
+	if (!__atomic_load_n(&d->n_cpu_bufs, __ATOMIC_ACQUIRE)) {
+		return OPENDS_MEM_GPU;
+	}
+	pthread_mutex_lock(&d->reg_lock);
+	for (int i = 0; i < d->buf_count; i++) {
+		if (d->bufs[i].base == base) {
+			mem_kind = d->bufs[i].mem_kind;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&d->reg_lock);
+	return mem_kind;
+}
+
 opends_error_t
 opends_mem_alloc(size_t size, enum opends_mem_kind mem_kind, int ordinal,
                  void **out)
@@ -1748,16 +1816,16 @@ opends_mem_alloc(size_t size, enum opends_mem_kind mem_kind, int ordinal,
 	if (!drv) {
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	}
-	if (!alloc_dev(drv, OPENDS_MEM_GPU)) {
-		return opends_err(OPENDS_DEVICE_NOT_FOUND);
-	}
 	if (!out || !size || !opends_mem_valid(mem_kind, ordinal)) {
 		return opends_err(OPENDS_INVALID_VALUE);
 	}
-	if (mem_kind != OPENDS_MEM_GPU) {
+	if (!drv->memories[mem_kind].present) {
 		return opends_err(OPENDS_MEMORY_TYPE_INVALID);
 	}
-	if (ordinal != drv->memories[OPENDS_MEM_GPU].ordinal) {
+	if (ordinal != drv->memories[mem_kind].ordinal) {
+		return opends_err(OPENDS_DEVICE_NOT_FOUND);
+	}
+	if (!alloc_dev(drv, mem_kind)) {
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	}
 
@@ -1767,7 +1835,7 @@ opends_mem_alloc(size_t size, enum opends_mem_kind mem_kind, int ordinal,
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
-	buf = buf_alloc_locked(drv, OPENDS_MEM_GPU, size);
+	buf = buf_alloc_locked(drv, mem_kind, size);
 	if (!buf) {
 		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_err(OPENDS_INTERNAL_ERROR);
@@ -1777,6 +1845,10 @@ opends_mem_alloc(size_t size, enum opends_mem_kind mem_kind, int ordinal,
 	e->base = buf;
 	e->length = size;
 	e->owned = true;
+	e->mem_kind = mem_kind;
+	if (mem_kind == OPENDS_MEM_CPU) {
+		__atomic_fetch_add(&drv->n_cpu_bufs, 1, __ATOMIC_RELEASE);
+	}
 	pthread_mutex_unlock(&drv->reg_lock);
 	*out = buf;
 	return opends_ok();
@@ -1791,9 +1863,15 @@ opends_free(void *buf)
 	pthread_mutex_lock(&drv->reg_lock);
 	for (int i = 0; i < drv->buf_count; i++) {
 		if (drv->bufs[i].base == buf) {
+			enum opends_mem_kind mem_kind = drv->bufs[i].mem_kind;
+
 			if (!drv->bufs[i].owned)
 				break;
-			buf_free_locked(drv, OPENDS_MEM_GPU, buf);
+			buf_free_locked(drv, mem_kind, buf);
+			if (mem_kind == OPENDS_MEM_CPU) {
+				__atomic_fetch_sub(&drv->n_cpu_bufs, 1,
+				                   __ATOMIC_RELEASE);
+			}
 			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
 			drv->buf_count--;
 			break;
@@ -1840,6 +1918,7 @@ opends_buf_register(const void *buf_base, size_t size, int flags)
 	e->base = buf_base;
 	e->length = size;
 	e->owned = false;
+	e->mem_kind = OPENDS_MEM_GPU;
 	pthread_mutex_unlock(&drv->reg_lock);
 	return opends_ok();
 }
@@ -1896,11 +1975,17 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	struct io_worker *w;
 	uint32_t head;
 
+	enum opends_mem_kind mem_kind = buf_mem_kind(d, buf_base);
+	struct handle *hdl = handle_for(h->dev, mem_kind);
+
+	if (!hdl)
+		return opends_err(OPENDS_MEMORY_TYPE_INVALID);
+
 	pthread_mutex_lock(&d->submit_lock);
-	struct file_op *op = claim_slot_locked(
-	        d, handle_for(h->dev, OPENDS_MEM_GPU), &w, &head);
+	struct file_op *op = claim_slot_locked(d, hdl, &w, &head);
 	op->mode = FILE_OP_ASYNC;
 	op->is_write = is_write;
+	op->mem_kind = mem_kind;
 	op->h = h;
 	op->buf_base = buf_base;
 	op->u.async.size = size;
@@ -1982,12 +2067,18 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	struct io_worker *w;
 	uint32_t head;
 
+	enum opends_mem_kind mem_kind = buf_mem_kind(d, buf_base);
+	struct handle *hdl = handle_for(h->dev, mem_kind);
+
+	if (!hdl)
+		return opends_err(OPENDS_MEMORY_TYPE_INVALID);
+
 	pthread_mutex_lock(&d->submit_lock);
-	struct file_op *op = claim_slot_locked(
-	        d, handle_for(h->dev, OPENDS_MEM_GPU), &w, &head);
+	struct file_op *op = claim_slot_locked(d, hdl, &w, &head);
 	uint32_t seq = ++opends_stream->next_seq;
 	op->mode = FILE_OP_STREAM;
 	op->is_write = is_write;
+	op->mem_kind = mem_kind;
 	op->h = h;
 	op->buf_base = buf_base;
 	op->u.stream.size_p = size_p;
@@ -2046,8 +2137,10 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * resolve behind the gate, so the copy size is unknown here, and
 	 * copy_stream no-ops when it is zero. Enqueue after publishing so a
 	 * failed enqueue is still drained by the I/O thread (which releases the
-	 * gate); only this read is lost. */
-	if (!d->cfg.assume_aligned_only && !is_write) {
+	 * gate); only this read is lost. A host tail is copied before the gate
+	 * opens, so nothing is enqueued for it. */
+	if (!d->cfg.assume_aligned_only && !is_write &&
+	    mem_kind == OPENDS_MEM_GPU) {
 		accel_rc = ds_accel->copy_stream(opends_stream->bounce_desc_dev,
 		                                 cus);
 		if (accel_rc != 0)
