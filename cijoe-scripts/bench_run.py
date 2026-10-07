@@ -121,7 +121,7 @@ def main(args, cijoe):
     args.batches = _batches_override(args.data_dir, args.batches)
     if args.batches is None:
         return 1
-    io_threads = os.environ.get("OPENDS_AISIO_IO_THREADS")
+    workers = os.environ.get("OPENDS_AISIO_WORKERS_PER_DRIVE")
     queue_depth = os.environ.get("OPENDS_AISIO_QUEUE_DEPTH")
     cpu_mask = os.environ.get("OPENDS_AISIO_CPU_MASK")
     aligned = os.environ.get("OPENDS_AISIO_ASSUME_ALIGNED_ONLY")
@@ -129,7 +129,7 @@ def main(args, cijoe):
     spin = os.environ.get("OPENDS_AISIO_IDLE_SPIN")
     busy_spin = spin == "busy"
     idle_spin = None if busy_spin else spin
-    knobs = (f" io_threads={io_threads} queue_depth={queue_depth}"
+    knobs = (f" workers_per_drive={workers} queue_depth={queue_depth}"
              f" cpu_mask={cpu_mask}"
              f" assume_aligned_only={int(assume_aligned_only)}"
              f" idle_spin={spin}"
@@ -160,8 +160,8 @@ def main(args, cijoe):
         if not mnt:
             mnt = cijoe.getconf("test.mount_point")
         env = f"OPENDS_XAL_SHM='{shm}' OPENDS_HOMI_MNT='{mnt}' "
-        if io_threads:
-            env += f"OPENDS_AISIO_IO_THREADS='{io_threads}' "
+        if workers:
+            env += f"OPENDS_AISIO_WORKERS_PER_DRIVE='{workers}' "
         if queue_depth:
             env += f"OPENDS_AISIO_QUEUE_DEPTH='{queue_depth}' "
         if cpu_mask:

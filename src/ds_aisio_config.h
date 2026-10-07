@@ -11,9 +11,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* The memories a buffer can live in, and the index of every per-memory
+ * table. */
+enum mem_kind {
+	MEM_GPU = 0,
+};
+#define MAX_MEMS 1
+
 struct aisio_config {
 	uint32_t homi_id; ///< Multi-process group the HOMI server is primary of
-	int n_io_threads; ///< Process total, split over the devices
+	int n_workers[MAX_MEMS]; ///< Workers every drive runs, per memory
 	uint32_t queue_depth;
 	uint32_t idle_spin_us;
 	bool busy_spin;
@@ -29,8 +36,10 @@ struct aisio_config {
  * before the rest is read. */
 int aisio_config_homi_id(uint32_t *out);
 
-/* Everything else. Returns 0, or -EINVAL after a message on stderr. */
-int aisio_config_read(struct aisio_config *cfg, int n_devices);
+/* Everything else. gpu_ordinal is the accelerator of the current context,
+ * the only one a gpu<k> key may name. Returns 0, or -EINVAL after a message
+ * on stderr. */
+int aisio_config_read(struct aisio_config *cfg, int gpu_ordinal);
 
 /* The xal-server index name of device di: OPENDS_XAL_SHM's entry, or
  * /xal_dev<di>. */

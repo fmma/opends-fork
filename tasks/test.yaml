@@ -104,7 +104,7 @@ steps:
       # and serialized allocator paths.
       OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
-        OPENDS_AISIO_IO_THREADS=2 \
+        OPENDS_AISIO_WORKERS_PER_DRIVE='gpu0=2' \
         '{{ config.test.build_dir }}/test_async_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
@@ -114,7 +114,7 @@ steps:
       # ever napping. Each one holds a CPU until the driver closes.
       OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
-        OPENDS_AISIO_IO_THREADS=2 \
+        OPENDS_AISIO_WORKERS_PER_DRIVE='gpu0=2' \
         OPENDS_AISIO_IDLE_SPIN=busy \
         '{{ config.test.build_dir }}/test_async_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
@@ -125,7 +125,7 @@ steps:
       # backend.
       OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
-        OPENDS_AISIO_IO_THREADS=2 \
+        OPENDS_AISIO_WORKERS_PER_DRIVE='gpu0=2' \
         '{{ config.test.build_dir }}/test_batch_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 

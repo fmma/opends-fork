@@ -13,7 +13,7 @@
 #include <string.h>
 
 #define ENV_XAL_SHM "OPENDS_XAL_SHM"
-#define ENV_IO_THREADS "OPENDS_AISIO_IO_THREADS"
+#define ENV_WORKERS_PER_DRIVE "OPENDS_AISIO_WORKERS_PER_DRIVE"
 #define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
 #define ENV_ASSUME_ALIGNED_ONLY "OPENDS_AISIO_ASSUME_ALIGNED_ONLY"
@@ -24,15 +24,13 @@
 #define ENV_CQ_MIRROR "OPENDS_AISIO_CQ_MIRROR"
 #define DEFAULT_XAL_SHM_FMT "/xal_dev%d"
 #define DEFAULT_HOMI_ID 1
-#define DEFAULT_IO_THREADS 2
-#define MAX_IO_THREADS 15
+#define DEFAULT_GPU_WORKERS 2
+#define MAX_WORKERS_PER_MEM 16
 #define DEFAULT_QUEUE_DEPTH 8
 #define MAX_QUEUE_DEPTH 1024
 
-/* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, one set
- * per I/O thread. The heap is process-wide and the thread count does not grow
- * with the device count, so 256 MiB covers the largest configuration the knobs
- * allow (MAX_IO_THREADS queues at MAX_QUEUE_DEPTH). xNVMe would otherwise
+/* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, about
+ * 4 MiB per queue, so 256 MiB covers some sixty queues. xNVMe would otherwise
  * default to 1 GiB, which does not multiply across the processes sharing the
  * hugepages. */
 #define DEFAULT_HOST_HEAP_MB 256
@@ -63,6 +61,101 @@ env_int(const char *name, int def, int lo, int hi, int *out)
 	return 0;
 }
 
+/* The memory a key of OPENDS_AISIO_WORKERS_PER_DRIVE names. */
+static int
+mem_from_key(int gpu_ordinal, const char *key)
+{
+	if (strncmp(key, "gpu", 3) == 0) {
+		int ord = gpu_ordinal;
+
+		if (key[3]) {
+			char *tail;
+
+			ord = (int)strtol(key + 3, &tail, 10);
+			if (*tail || tail == key + 3) {
+				fprintf(stderr,
+				        "aisio: %s: unknown key \"%s\"\n",
+				        ENV_WORKERS_PER_DRIVE, key);
+				return -EINVAL;
+			}
+		}
+		if (ord != gpu_ordinal) {
+			fprintf(stderr,
+			        "aisio: %s: gpu%d is not the accelerator of "
+			        "the current context (gpu%d)\n",
+			        ENV_WORKERS_PER_DRIVE, ord, gpu_ordinal);
+			return -EINVAL;
+		}
+		return MEM_GPU;
+	}
+	fprintf(stderr, "aisio: %s: unknown key \"%s\"\n",
+	        ENV_WORKERS_PER_DRIVE, key);
+	return -EINVAL;
+}
+
+/* OPENDS_AISIO_WORKERS_PER_DRIVE, "key=value,...": the workers every drive runs
+ * for each memory. Unset, the current GPU gets DEFAULT_GPU_WORKERS. */
+static int
+read_workers_per_drive(struct aisio_config *cfg, int gpu_ordinal)
+{
+	const char *spec = getenv(ENV_WORKERS_PER_DRIVE);
+	const char *p = spec;
+
+	memset(cfg->n_workers, 0, sizeof(cfg->n_workers));
+	if (!spec || !spec[0]) {
+		cfg->n_workers[MEM_GPU] = DEFAULT_GPU_WORKERS;
+		return 0;
+	}
+	while (*p) {
+		const char *end = strchr(p, ',');
+		const char *eq;
+		char key[16];
+		char *tail;
+		size_t klen;
+		long val;
+		int mem;
+
+		if (!end) {
+			end = p + strlen(p);
+		}
+		eq = memchr(p, '=', (size_t)(end - p));
+		klen = eq ? (size_t)(eq - p) : 0;
+		if (!klen || klen >= sizeof(key)) {
+			fprintf(stderr,
+			        "aisio: %s: expected key=value at \"%.*s\"\n",
+			        ENV_WORKERS_PER_DRIVE, (int)(end - p), p);
+			return -EINVAL;
+		}
+		memcpy(key, p, klen);
+		key[klen] = '\0';
+		val = strtol(eq + 1, &tail, 10);
+		if (tail == eq + 1 || tail != end || val < 1) {
+			fprintf(stderr,
+			        "aisio: %s: %s needs a positive count\n",
+			        ENV_WORKERS_PER_DRIVE, key);
+			return -EINVAL;
+		}
+		mem = mem_from_key(gpu_ordinal, key);
+		if (mem < 0) {
+			return mem;
+		}
+		if (val > MAX_WORKERS_PER_MEM) {
+			fprintf(stderr, "aisio: %s: %s is at most %d workers\n",
+			        ENV_WORKERS_PER_DRIVE, key,
+			        MAX_WORKERS_PER_MEM);
+			return -EINVAL;
+		}
+		cfg->n_workers[mem] = (int)val;
+		p = *end ? end + 1 : end;
+	}
+	if (!cfg->n_workers[MEM_GPU]) {
+		fprintf(stderr, "aisio: %s must give gpu%d a worker count\n",
+		        ENV_WORKERS_PER_DRIVE, gpu_ordinal);
+		return -EINVAL;
+	}
+	return 0;
+}
+
 int
 aisio_config_homi_id(uint32_t *out)
 {
@@ -76,26 +169,13 @@ aisio_config_homi_id(uint32_t *out)
 }
 
 int
-aisio_config_read(struct aisio_config *cfg, int n_devices)
+aisio_config_read(struct aisio_config *cfg, int gpu_ordinal)
 {
 	int n;
-	int thr_def;
 
-	/* One worker per device at least, since a device with no worker cannot
-	 * be read. The threads are the total, not a per-device count. */
-	thr_def =
-	        DEFAULT_IO_THREADS < n_devices ? n_devices : DEFAULT_IO_THREADS;
-	if (env_int(ENV_IO_THREADS, thr_def, 1, MAX_IO_THREADS, &n) < 0) {
+	if (read_workers_per_drive(cfg, gpu_ordinal) < 0) {
 		return -EINVAL;
 	}
-	if (n < n_devices) {
-		fprintf(stderr,
-		        "aisio: %s=%d leaves some of the %d devices without a "
-		        "worker\n",
-		        ENV_IO_THREADS, n, n_devices);
-		return -EINVAL;
-	}
-	cfg->n_io_threads = n;
 
 	if (env_int(ENV_QUEUE_DEPTH, DEFAULT_QUEUE_DEPTH, 1, MAX_QUEUE_DEPTH,
 	            &n) < 0) {
