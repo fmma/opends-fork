@@ -57,6 +57,24 @@ aisio_gpu_io_kernel(struct ds_gpu_op *op)
 		for (uint32_t off = tid; off < nbytes; off += depth)
 			dst[off] = src[off];
 	}
+
+	/* The last block to finish publishes the result and the done word. */
+	__syncthreads();
+	if (tid == 0) {
+		__threadfence();
+		if (atomicAdd((unsigned int *)&op->blocks_done, 1u) ==
+		    gridDim.x - 1) {
+			uint32_t st;
+
+			__threadfence();
+			st = *(volatile uint32_t *)&op->status;
+			if (op->result)
+				*(volatile long long *)(uintptr_t)op->result =
+				        st ? op->result_err : op->result_ok;
+			__threadfence_system();
+			*(volatile uint32_t *)&op->done = 1;
+		}
+	}
 }
 
 extern "C" int

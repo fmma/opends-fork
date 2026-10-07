@@ -28,6 +28,15 @@ struct ds_gpu_op {
 	uint32_t n_cmds;
 	/* Out: 0, or the first xnvme_cuda_cmd_io() error. */
 	uint32_t status;
+	/* Kernel: blocks that finished; the last one publishes the result. */
+	uint32_t blocks_done;
+	/* Result slot the kernel writes, device-visible, 0 = none, with the
+	 * value on success and on failure. */
+	uint64_t result;
+	int64_t result_ok;
+	int64_t result_err;
+	/* Kernel: set once the op has completed and the result is written. */
+	uint32_t done;
 	uint32_t _pad;
 };
 

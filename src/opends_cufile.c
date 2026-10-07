@@ -175,6 +175,18 @@ opends_handle_deregister(opends_handle_t fh)
 /* ------------------------------------------------------------------ */
 
 void *
+opends_result_alloc(size_t size)
+{
+	return malloc(size);
+}
+
+void
+opends_result_free(void *p)
+{
+	free(p);
+}
+
+void *
 opends_alloc(size_t size)
 {
 	void *ptr;
