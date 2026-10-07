@@ -23,6 +23,7 @@
 #define _GNU_SOURCE
 
 #include "ds_accel.h"
+#include "ds_aisio_config.h"
 #include "ds_stream_map.h"
 #include "ds_bounce_kernel.h"
 #include "opends_internal.h"
@@ -47,40 +48,15 @@
 #include <libxal.h>
 #include <libxnvme.h>
 
-#define ENV_XAL_SHM "OPENDS_XAL_SHM"
-#define ENV_IO_THREADS "OPENDS_AISIO_IO_THREADS"
-#define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
-#define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
-#define ENV_ASSUME_ALIGNED_ONLY "OPENDS_AISIO_ASSUME_ALIGNED_ONLY"
-#define ENV_IDLE_SPIN "OPENDS_AISIO_IDLE_SPIN"
-#define ENV_HOMI_ID "OPENDS_AISIO_HOMI_ID"
-#define ENV_HOST_HEAP_MB "OPENDS_AISIO_HOST_HEAP_MB"
-#define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
-#define ENV_CQ_MIRROR "OPENDS_AISIO_CQ_MIRROR"
-#define DEFAULT_XAL_SHM_FMT "/xal_dev%d"
-#define DEFAULT_HOMI_ID 1
-#define DEFAULT_IO_THREADS 2
-#define MAX_IO_THREADS 15
-/* A device with no worker cannot be read, so the workers bound the set. */
-#define MAX_DEVICES MAX_IO_THREADS
+/* No more than the workers (ds_aisio_config.c), since a device with no
+ * worker cannot be read. */
+#define MAX_DEVICES 15
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
 #define NVME_PRP_OFFSET_ALIGN 4
 #define BOUNCE_SLOTS 2
-#define DEFAULT_QUEUE_DEPTH 8
-#define MAX_QUEUE_DEPTH 1024
 
-/* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, one set
- * per I/O thread. The heap is process-wide and the thread count does not grow
- * with the device count, so 256 MiB covers the largest configuration the knobs
- * allow (MAX_IO_THREADS queues at MAX_QUEUE_DEPTH). xNVMe would otherwise
- * default to 1 GiB, which does not multiply across the processes sharing the
- * hugepages. */
-#define DEFAULT_HOST_HEAP_MB 256
-#define MAX_HEAP_MB (64 * 1024)
-#define DEFAULT_IDLE_SPIN_US 200
-#define MAX_IDLE_SPIN_US 1000000
 #define MAX_STREAMS 8192
 #define STREAM_WORDS_BYTES (MAX_STREAMS * sizeof(uint32_t))
 #define FILE_OP_QUEUE_SIZE 1024
@@ -198,9 +174,7 @@ struct nvme_device {
 struct driver {
 	struct nvme_device devices[MAX_DEVICES];
 	int n_devices;
-	uint32_t homi_id; ///< Multi-process group the HOMI server is primary of
-	size_t host_heap_nbytes;
-	size_t device_heap_nbytes;
+	struct aisio_config cfg;
 	uint32_t max_lba_size;    ///< Largest over the devices
 	uint32_t min_mdts_nbytes; ///< Smallest over the devices
 	struct buf_entry bufs[MAX_BUF_ENTRIES];
@@ -216,14 +190,6 @@ struct driver {
 
 	struct ds_stream_map_entry stream_map[STREAM_MAP_SIZE];
 
-	int n_io_threads;
-	uint32_t queue_depth;
-	uint32_t idle_spin_us;
-	bool busy_spin;
-	uint64_t cpu_mask;
-	bool assume_aligned_only;
-	bool cq_mirror; ///< CQ in GPU memory, warp-mirrored to host (upcie-cuda
-	                ///< only)
 	pthread_mutex_t submit_lock;
 	pthread_mutex_t reg_lock;
 	pthread_mutex_t alloc_lock;
@@ -476,16 +442,16 @@ open_device(struct driver *d, struct nvme_device *dev)
 	 * homi_id 1 by convention unless overridden. */
 	struct xnvme_opts opts = xnvme_opts_default();
 	opts.be = ds_accel->xnvme_be;
-	opts.homi_id = d->homi_id;
-	opts.host_heap_size = d->host_heap_nbytes;
-	opts.device_heap_size = d->device_heap_nbytes;
+	opts.homi_id = d->cfg.homi_id;
+	opts.host_heap_size = d->cfg.host_heap_nbytes;
+	opts.device_heap_size = d->cfg.device_heap_nbytes;
 
 	dev->xdev = xnvme_dev_open(dev->dev_uri, &opts);
 	if (!dev->xdev) {
 		fprintf(stderr,
 		        "aisio open_device: xnvme_dev_open(%s, be=%s, "
 		        "homi_id=%u) failed\n",
-		        dev->dev_uri, opts.be, d->homi_id);
+		        dev->dev_uri, opts.be, d->cfg.homi_id);
 		return -EIO;
 	}
 
@@ -728,7 +694,7 @@ static int
 submit_partial(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
                uint64_t slba, size_t src_off, size_t nbytes)
 {
-	if (w->drv->assume_aligned_only) {
+	if (w->drv->cfg.assume_aligned_only) {
 		op->err = OPENDS_INVALID_VALUE;
 		return -1;
 	}
@@ -984,9 +950,9 @@ io_thread_main(void *arg)
 {
 	struct io_worker *w = arg;
 	struct driver *d = w->drv;
-	uint64_t idle_spin_ns = (uint64_t)d->idle_spin_us * 1000;
+	uint64_t idle_spin_ns = (uint64_t)d->cfg.idle_spin_us * 1000;
 	uint64_t spin_until_ns = 0;
-	bool busy_spin = d->busy_spin;
+	bool busy_spin = d->cfg.busy_spin;
 	bool stay_hot = true;
 
 	ds_accel->ctx_set(d->accel_ctx);
@@ -1073,9 +1039,9 @@ mask_nth_cpu(uint64_t mask, int n)
 static int
 workers_of_device(const struct driver *d, int di)
 {
-	int base = d->n_io_threads / d->n_devices;
+	int base = d->cfg.n_io_threads / d->n_devices;
 
-	return base + (di < d->n_io_threads % d->n_devices ? 1 : 0);
+	return base + (di < d->cfg.n_io_threads % d->n_devices ? 1 : 0);
 }
 
 static void
@@ -1127,7 +1093,7 @@ workers_free(struct driver *d)
 static int
 workers_setup(struct driver *d)
 {
-	int qopts = d->cq_mirror ? XNVME_QUEUE_P2P_CQ_MIRROR : 0;
+	int qopts = d->cfg.cq_mirror ? XNVME_QUEUE_P2P_CQ_MIRROR : 0;
 	int rc = ds_accel->ctx_get(&d->accel_ctx);
 	if (rc != 0)
 		return rc;
@@ -1144,7 +1110,7 @@ workers_setup(struct driver *d)
 	d->stream_words_dptr = dptr;
 
 	d->stop = false;
-	int mask_cpus = __builtin_popcountll(d->cpu_mask);
+	int mask_cpus = __builtin_popcountll(d->cfg.cpu_mask);
 	int pinned = 0;
 	for (int di = 0; di < d->n_devices; di++) {
 		struct nvme_device *dev = &d->devices[di];
@@ -1158,8 +1124,8 @@ workers_setup(struct driver *d)
 			struct io_worker *w = &dev->workers[i];
 			w->drv = d;
 			w->dev = dev;
-			if (xnvme_queue_init(dev->xdev, d->queue_depth, qopts,
-			                     &w->queue) < 0) {
+			if (xnvme_queue_init(dev->xdev, d->cfg.queue_depth,
+			                     qopts, &w->queue) < 0) {
 				w->queue = NULL;
 				goto fail;
 			}
@@ -1168,7 +1134,7 @@ workers_setup(struct driver *d)
 			if (mask_cpus) {
 				cpu_set_t set;
 				CPU_ZERO(&set);
-				CPU_SET(mask_nth_cpu(d->cpu_mask,
+				CPU_SET(mask_nth_cpu(d->cfg.cpu_mask,
 				                     pinned % mask_cpus),
 				        &set);
 				pthread_attr_init(&attr);
@@ -1230,114 +1196,6 @@ opends_stream_get(struct driver *d, ds_accel_stream_t stream)
 	return &d->streams[idx];
 }
 
-static int
-env_int(const char *name, int def, int lo, int hi, int *out)
-{
-	const char *v = getenv(name);
-	if (!v || !v[0]) {
-		*out = def;
-		return 0;
-	}
-	char *end;
-	long n = strtol(v, &end, 10);
-	if (end == v || *end) {
-		fprintf(stderr, "aisio: %s=%s is not a number\n", name, v);
-		return -EINVAL;
-	}
-	if (n < lo || n > hi) {
-		fprintf(stderr, "aisio: %s=%s out of range [%d, %d]\n", name, v,
-		        lo, hi);
-		return -EINVAL;
-	}
-	*out = (int)n;
-	return 0;
-}
-
-static int
-read_env_config(struct driver *d)
-{
-	int n;
-	int thr_def;
-
-	/* One worker per device at least, since a device with no worker cannot
-	 * be read. The threads are the total, not a per-device count. */
-	thr_def = DEFAULT_IO_THREADS < d->n_devices ? d->n_devices
-	                                            : DEFAULT_IO_THREADS;
-	if (env_int(ENV_IO_THREADS, thr_def, 1, MAX_IO_THREADS, &n) < 0)
-		return -EINVAL;
-	if (n < d->n_devices) {
-		fprintf(stderr,
-		        "aisio: %s=%d leaves some of the %d devices without a "
-		        "worker\n",
-		        ENV_IO_THREADS, n, d->n_devices);
-		return -EINVAL;
-	}
-	d->n_io_threads = n;
-
-	if (env_int(ENV_QUEUE_DEPTH, DEFAULT_QUEUE_DEPTH, 1, MAX_QUEUE_DEPTH,
-	            &n) < 0)
-		return -EINVAL;
-	d->queue_depth = (uint32_t)n;
-
-	const char *spin = getenv(ENV_IDLE_SPIN);
-	d->busy_spin = spin && !strcmp(spin, "busy");
-	if (d->busy_spin) {
-		d->idle_spin_us = DEFAULT_IDLE_SPIN_US;
-	} else {
-		if (env_int(ENV_IDLE_SPIN, DEFAULT_IDLE_SPIN_US, 0,
-		            MAX_IDLE_SPIN_US, &n) < 0) {
-			fprintf(stderr,
-			        "aisio: %s takes microseconds, or \"busy\"\n",
-			        ENV_IDLE_SPIN);
-			return -EINVAL;
-		}
-		d->idle_spin_us = (uint32_t)n;
-	}
-
-	const char *mask = getenv(ENV_CPU_MASK);
-	d->cpu_mask = mask && mask[0] ? strtoull(mask, NULL, 0) : 0;
-
-	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
-	d->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
-
-	const char *cqm = getenv(ENV_CQ_MIRROR);
-	d->cq_mirror = cqm && cqm[0] && cqm[0] != '0';
-
-	if (env_int(ENV_HOST_HEAP_MB, DEFAULT_HOST_HEAP_MB, 1, MAX_HEAP_MB,
-	            &n) < 0)
-		return -EINVAL;
-	d->host_heap_nbytes = (size_t)n << 20;
-
-	/* 0 leaves the device heap at the xNVMe default; GPU memory is not the
-	 * scarce resource the host hugepages are. */
-	if (env_int(ENV_DEVICE_HEAP_MB, 0, 0, MAX_HEAP_MB, &n) < 0)
-		return -EINVAL;
-	d->device_heap_nbytes = (size_t)n << 20;
-
-	/* The tail mode picks the async gate mechanism, and the vendor ops it
-	 * drives are required only for that mode (see ds_accel.h). A partial
-	 * port may leave the other mode's ops NULL; fail open instead of
-	 * crashing on the first submission. */
-	if (d->assume_aligned_only && !ds_accel->launch_host_func) {
-		fprintf(stderr,
-		        "aisio: %s=1 needs launch_host_func, which the vendor "
-		        "ops table does not provide\n",
-		        ENV_ASSUME_ALIGNED_ONLY);
-		return -EINVAL;
-	}
-	if (!d->assume_aligned_only && (!ds_accel->stream_write_value32 ||
-	                                !ds_accel->stream_wait_value32_geq)) {
-		fprintf(stderr,
-		        "aisio: the vendor ops table does not provide the "
-		        "stream gate ops; set %s=1 to gate via "
-		        "launch_host_func\n",
-		        ENV_ASSUME_ALIGNED_ONLY);
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
 static struct io_worker *
 route_op(struct nvme_device *dev)
 {
@@ -1383,17 +1241,15 @@ static int
 discover_devices(struct driver *d)
 {
 	struct xnvme_cplane_info info;
-	int n;
 	int err;
 
-	if (env_int(ENV_HOMI_ID, DEFAULT_HOMI_ID, 0, INT_MAX, &n) < 0) {
+	if (aisio_config_homi_id(&d->cfg.homi_id) < 0) {
 		return -EINVAL;
 	}
-	d->homi_id = (uint32_t)n;
 
 	err = -ENOENT;
 	for (int i = 0; i < ATTACH_RETRIES; i++) {
-		err = xnvme_cplane_get_info(d->homi_id, &info);
+		err = xnvme_cplane_get_info(d->cfg.homi_id, &info);
 		if (err == 0 && info.nctrlrs > 0) {
 			break;
 		}
@@ -1406,20 +1262,20 @@ discover_devices(struct driver *d)
 		fprintf(stderr,
 		        "aisio: xnvme_cplane_get_info(homi_id=%u) failed; "
 		        "err(%d)\n",
-		        d->homi_id, err);
+		        d->cfg.homi_id, err);
 		return err;
 	}
 	if (info.nctrlrs == 0) {
 		fprintf(stderr,
 		        "aisio: the homi group (homi_id=%u) serves no device\n",
-		        d->homi_id);
+		        d->cfg.homi_id);
 		return -ENODEV;
 	}
 	if (info.nctrlrs > MAX_DEVICES) {
 		fprintf(stderr,
 		        "aisio: the homi group (homi_id=%u) serves %u devices; "
 		        "the driver takes at most %d\n",
-		        d->homi_id, info.nctrlrs, MAX_DEVICES);
+		        d->cfg.homi_id, info.nctrlrs, MAX_DEVICES);
 		return -EINVAL;
 	}
 
@@ -1428,51 +1284,6 @@ discover_devices(struct driver *d)
 		         "%s", info.ctrlrs[i]);
 	}
 	d->n_devices = (int)info.nctrlrs;
-
-	return 0;
-}
-
-/* OPENDS_XAL_SHM optionally overrides the index names as a comma-separated
- * list, paired with the runtime's device order. Default: /xal_dev<i>. */
-static int
-xal_shm_name(int di, int n_devices, char *out, size_t out_len)
-{
-	const char *spec = getenv(ENV_XAL_SHM);
-	const char *p;
-	const char *end;
-	size_t len;
-	int n;
-
-	if (!spec || !spec[0]) {
-		snprintf(out, out_len, DEFAULT_XAL_SHM_FMT, di);
-		return 0;
-	}
-
-	n = 1;
-	for (p = spec; *p; p++) {
-		if (*p == ',') {
-			n++;
-		}
-	}
-	if (n != n_devices) {
-		fprintf(stderr, "aisio: %s names %d indexes for %d devices\n",
-		        ENV_XAL_SHM, n, n_devices);
-		return -EINVAL;
-	}
-
-	p = spec;
-	for (int i = 0; i < di; i++) {
-		p = strchr(p, ',') + 1;
-	}
-	end = strchr(p, ',');
-	len = end ? (size_t)(end - p) : strlen(p);
-	if (len == 0 || len >= out_len) {
-		fprintf(stderr, "aisio: %s entry %d is empty or too long\n",
-		        ENV_XAL_SHM, di);
-		return -EINVAL;
-	}
-	memcpy(out, p, len);
-	out[len] = '\0';
 
 	return 0;
 }
@@ -1501,7 +1312,7 @@ xal_attach(struct driver *d)
 	int err;
 
 	for (int di = 0; di < d->n_devices; di++) {
-		err = xal_shm_name(di, d->n_devices, shm, sizeof(shm));
+		err = aisio_config_xal_shm(di, d->n_devices, shm, sizeof(shm));
 		if (err < 0) {
 			xal_detach(d);
 			return err;
@@ -1540,7 +1351,8 @@ opends_driver_open(void)
 
 	/* The thread-count default follows the device count, so discovery
 	 * comes before the rest of the environment. */
-	if (discover_devices(d) < 0 || read_env_config(d) < 0) {
+	if (discover_devices(d) < 0 ||
+	    aisio_config_read(&d->cfg, d->n_devices) < 0) {
 		free(d);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
@@ -2015,7 +1827,7 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * stream in seq order; an enqueue that blocks (a full stream queue)
 	 * stalls all submission. */
 	int accel_rc;
-	if (d->assume_aligned_only) {
+	if (d->cfg.assume_aligned_only) {
 		accel_rc = ds_accel->launch_host_func(cus, park_gate_cb, op);
 		if (accel_rc != 0) {
 			pthread_mutex_unlock(&d->submit_lock);
@@ -2045,7 +1857,7 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * copy_stream no-ops when it is zero. Enqueue after publishing so a
 	 * failed enqueue is still drained by the I/O thread (which releases the
 	 * gate); only this read is lost. */
-	if (!d->assume_aligned_only && !is_write) {
+	if (!d->cfg.assume_aligned_only && !is_write) {
 		accel_rc = ds_accel->copy_stream(opends_stream->bounce_desc_dev,
 		                                 cus);
 		if (accel_rc != 0)
