@@ -185,9 +185,14 @@ checked against the host's, and GPU timestamps bound each read.
 
 ```bash
 export OPENDS_XAL_SHM=/xal_dev0 OPENDS_HOMI_MNT=/mnt/datasets
+# <file> [iters] [host-sleep-ms] [read-bytes] [streams]
 aisio_stream_compute /mnt/datasets/opends_tests/gpu_demo.bin 20 1500
 OPENDS_AISIO_GPU_INITIATED=1 aisio_stream_compute /mnt/datasets/opends_tests/gpu_demo.bin 20 1500
+OPENDS_AISIO_GPU_INITIATED=1 aisio_stream_compute /mnt/datasets/opends_tests/gpu_demo.bin 4000 200 4096 8
 ```
+
+The last line of the output is a machine-readable summary, so a sweep over
+sizes and stream counts can be tabulated.
 
 With the host engine the two I/O workers use about one core for as long as
 the chain runs; with the GPU engine the host spends a few percent of a core,

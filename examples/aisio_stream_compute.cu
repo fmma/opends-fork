@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /*
- * Compute kernels and stream reads on one CUDA stream, with the host's part
- * measured.
+ * Compute kernels and stream reads on one or more CUDA streams, with the
+ * host's part measured.
  *
  * Each iteration enqueues: a kernel that overwrites the buffer, a stamp of the
  * GPU clock, opends_stream_read of the file into the buffer, another stamp,
@@ -12,7 +12,12 @@
  * host threads took part while the chain ran; the stamps bound each read on
  * the GPU timeline.
  *
+ * With several streams the ops go round-robin over them, each stream with a
+ * buffer of its own, so the engines are also compared under concurrency. The
+ * last line is a machine-readable summary.
+ *
  * Usage: aisio_stream_compute <file-on-mount> [iters] [host-sleep-ms]
+ *                             [read-bytes] [streams]
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -33,6 +38,7 @@
 #include <unistd.h>
 
 #define MAX_READ_BYTES (256u << 20)
+#define MAX_STREAMS 32
 #define MAX_THREADS 64
 #define THREADS 256
 #define FILL_PATTERN 0xA5A5A5A5A5A5A5A5ull
@@ -214,11 +220,13 @@ main(int argc, char **argv)
 	const char *path;
 	int iters = 20;
 	long host_sleep_ms = 1500;
+	size_t read_bytes = 0;
+	int nstreams = 1;
 	const char *gpu_env = getenv("OPENDS_AISIO_GPU_INITIATED");
 	bool gpu_engine = gpu_env && gpu_env[0] && gpu_env[0] != '0';
 	CUdevice cudev;
 	CUcontext cuctx;
-	CUstream stream;
+	CUstream streams[MAX_STREAMS];
 	CUresult cres;
 	opends_error_t err;
 	opends_handle_t fh = NULL;
@@ -226,20 +234,21 @@ main(int argc, char **argv)
 	size_t nbytes, n_words;
 	unsigned grid;
 	unsigned long long ref = 0;
-	void *buf;
+	void *bufs[MAX_STREAMS];
 	uint64_t *ts_dev, *ts;
 	unsigned long long *sums_dev, *sums;
 	size_t *sz;
 	off_t *foff, *boff;
 	ssize_t *bytes;
 	struct cpu_snapshot s0, s1, s2;
-	double t0, t1, t_wake, t2;
+	double t0, t1, t_wake, t2, cpu_enq, cpu_run;
 	bool done_asleep;
-	int polls = 0, bad = 0, fd, rc = 1;
+	int polls = 0, bad = 0, fd, rc = 1, created = 0;
 
-	if (argc < 2 || argc > 4) {
+	if (argc < 2 || argc > 6) {
 		fprintf(stderr,
-		        "usage: %s <file-on-mount> [iters] [host-sleep-ms]\n",
+		        "usage: %s <file-on-mount> [iters] [host-sleep-ms] "
+		        "[read-bytes] [streams]\n",
 		        argv[0]);
 		return 2;
 	}
@@ -248,8 +257,13 @@ main(int argc, char **argv)
 		iters = atoi(argv[2]);
 	if (argc > 3)
 		host_sleep_ms = atol(argv[3]);
-	if (iters < 1 || host_sleep_ms < 0) {
-		fprintf(stderr, "bad iters or sleep\n");
+	if (argc > 4)
+		read_bytes = strtoull(argv[4], NULL, 0);
+	if (argc > 5)
+		nstreams = atoi(argv[5]);
+	if (iters < 1 || host_sleep_ms < 0 || nstreams < 1 ||
+	    nstreams > MAX_STREAMS) {
+		fprintf(stderr, "bad iters, sleep or streams\n");
 		return 2;
 	}
 
@@ -281,6 +295,8 @@ main(int argc, char **argv)
 	nbytes = (size_t)st.st_size;
 	if (nbytes > MAX_READ_BYTES)
 		nbytes = MAX_READ_BYTES;
+	if (read_bytes && read_bytes < nbytes)
+		nbytes = read_bytes;
 	nbytes &= ~(size_t)4095;
 	if (!nbytes) {
 		fprintf(stderr, "%s: too small\n", path);
@@ -302,20 +318,27 @@ main(int argc, char **argv)
 		goto out_handle;
 	}
 
-	buf = opends_alloc(nbytes);
-	if (!buf) {
-		fprintf(stderr, "opends_alloc(%zu) failed\n", nbytes);
-		goto out_handle;
+	memset(bufs, 0, sizeof(bufs));
+	for (int s = 0; s < nstreams; s++) {
+		bufs[s] = opends_alloc(nbytes);
+		if (!bufs[s]) {
+			fprintf(stderr, "opends_alloc(%zu) failed\n", nbytes);
+			goto out_buf;
+		}
 	}
-	if (cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING) != CUDA_SUCCESS) {
-		fprintf(stderr, "cuStreamCreate failed\n");
-		goto out_buf;
-	}
-	err = opends_stream_register(stream, 0);
-	if (err.err != OPENDS_SUCCESS) {
-		fprintf(stderr, "stream_register: %s\n",
-		        opends_op_status_error(err.err));
-		goto out_stream;
+	for (int s = 0; s < nstreams; s++) {
+		if (cuStreamCreate(&streams[s], CU_STREAM_NON_BLOCKING) !=
+		    CUDA_SUCCESS) {
+			fprintf(stderr, "cuStreamCreate failed\n");
+			goto out_stream;
+		}
+		created = s + 1;
+		err = opends_stream_register(streams[s], 0);
+		if (err.err != OPENDS_SUCCESS) {
+			fprintf(stderr, "stream_register: %s\n",
+			        opends_op_status_error(err.err));
+			goto out_stream;
+		}
 	}
 	if (cudaMalloc((void **)&ts_dev, 2 * iters * sizeof(*ts_dev)) ||
 	    cudaMalloc((void **)&sums_dev, iters * sizeof(*sums_dev)) ||
@@ -334,41 +357,49 @@ main(int argc, char **argv)
 		goto out_stream;
 	}
 
-	printf("aisio_stream_compute: %d x (fill, read %zu MiB, sum) on one "
-	       "stream, GPU engine %s\n",
-	       iters, nbytes >> 20, gpu_engine ? "on" : "off");
+	printf("aisio_stream_compute: %d x (fill, read %zu KiB, sum) on %d "
+	       "stream%s, GPU engine %s\n",
+	       iters, nbytes >> 10, nstreams, nstreams > 1 ? "s" : "",
+	       gpu_engine ? "on" : "off");
 
 	snapshot_cpu(&s0);
 	t0 = now_ms();
 	for (int i = 0; i < iters; i++) {
-		fill_kernel<<<grid, THREADS, 0, (cudaStream_t)stream>>>(
-		        (uint64_t *)buf, n_words, FILL_PATTERN);
-		stamp_kernel<<<1, 1, 0, (cudaStream_t)stream>>>(&ts_dev[2 * i]);
+		cudaStream_t cs = (cudaStream_t)streams[i % nstreams];
+		void *buf = bufs[i % nstreams];
+
+		fill_kernel<<<grid, THREADS, 0, cs>>>((uint64_t *)buf, n_words,
+		                                      FILL_PATTERN);
+		stamp_kernel<<<1, 1, 0, cs>>>(&ts_dev[2 * i]);
 		sz[i] = nbytes;
-		err = opends_stream_read(fh, buf, &sz[i], &foff[i], &boff[i],
-		                         &bytes[i], (opends_stream_t)stream);
+		err = opends_stream_read(
+		        fh, buf, &sz[i], &foff[i], &boff[i], &bytes[i],
+		        (opends_stream_t)streams[i % nstreams]);
 		if (err.err != OPENDS_SUCCESS) {
 			fprintf(stderr, "stream_read %d: %s\n", i,
 			        opends_op_status_error(err.err));
 			goto out_stream;
 		}
-		stamp_kernel<<<1, 1, 0, (cudaStream_t)stream>>>(
-		        &ts_dev[2 * i + 1]);
-		sum_kernel<<<grid, THREADS, 0, (cudaStream_t)stream>>>(
-		        (const uint64_t *)buf, n_words, &sums_dev[i]);
+		stamp_kernel<<<1, 1, 0, cs>>>(&ts_dev[2 * i + 1]);
+		sum_kernel<<<grid, THREADS, 0, cs>>>((const uint64_t *)buf,
+		                                     n_words, &sums_dev[i]);
 	}
 	t1 = now_ms();
 	snapshot_cpu(&s1);
 
 	/* Nothing on this thread drives the chain from here on. */
 	sleep_ms(host_sleep_ms);
-	cres = cuStreamQuery(stream);
+	cres = CUDA_SUCCESS;
+	for (int s = 0; s < nstreams && cres == CUDA_SUCCESS; s++)
+		cres = cuStreamQuery(streams[s]);
 	done_asleep = cres == CUDA_SUCCESS;
 	t_wake = now_ms();
 	while (cres == CUDA_ERROR_NOT_READY) {
 		sleep_ms(1);
 		polls++;
-		cres = cuStreamQuery(stream);
+		cres = CUDA_SUCCESS;
+		for (int s = 0; s < nstreams && cres == CUDA_SUCCESS; s++)
+			cres = cuStreamQuery(streams[s]);
 	}
 	t2 = now_ms();
 	snapshot_cpu(&s2);
@@ -393,7 +424,7 @@ main(int argc, char **argv)
 	                             "bytes_read is the full size");
 
 	printf("  enqueue: %.1f ms wall\n", t1 - t0);
-	report_cpu(&s0, &s1, t1 - t0);
+	cpu_enq = report_cpu(&s0, &s1, t1 - t0);
 
 	printf("  run: host slept %ld ms, chain %s while it slept%s\n",
 	       host_sleep_ms, done_asleep ? "finished" : "was still running",
@@ -403,10 +434,12 @@ main(int argc, char **argv)
 		       t2 - t_wake, polls);
 	printf("  run: %.1f ms wall from the last enqueue to completion\n",
 	       t2 - t1);
-	report_cpu(&s1, &s2, t2 - t1);
+	cpu_run = report_cpu(&s1, &s2, t2 - t1);
 
 	{
-		double lo = 1e300, hi = 0, acc = 0, gap = 0;
+		double lo = 1e300, hi = 0, acc = 0, chain, caller_ms = 0,
+		       io_ms = 0, cpu_all = cpu_enq + cpu_run;
+		uint64_t first = UINT64_MAX, last = 0;
 
 		for (int i = 0; i < iters; i++) {
 			double w = (ts[2 * i + 1] - ts[2 * i]) / 1e6;
@@ -416,24 +449,50 @@ main(int argc, char **argv)
 			if (w > hi)
 				hi = w;
 			acc += w;
-			if (i)
-				gap += (ts[2 * i] - ts[2 * i - 1]) / 1e6;
+			if (ts[2 * i] < first)
+				first = ts[2 * i];
+			if (ts[2 * i + 1] > last)
+				last = ts[2 * i + 1];
 		}
-		printf("  GPU timeline: read window min/avg/max %.2f/%.2f/%.2f "
+		chain = (last - first) / 1e6;
+		/* The caller's thread and the aisio I/O workers over the whole
+		 * interval. */
+		for (int i = 0; i < s2.n; i++) {
+			double ms =
+			        (s2.t[i].run_ns - run_ns_of(&s0, s2.t[i].tid)) /
+			        1e6;
+
+			if (s2.t[i].tid == getpid())
+				caller_ms = ms;
+			else if (!strcmp(s2.t[i].comm, "aisio-io"))
+				io_ms += ms;
+		}
+		printf("  GPU timeline: read window min/avg/max %.3f/%.3f/%.3f "
 		       "ms "
-		       "(%.2f GB/s avg); sum + next fill %.2f ms avg; whole "
-		       "chain "
-		       "%.1f ms\n",
-		       lo, acc / iters, hi, nbytes / (acc / iters) / 1e6,
-		       iters > 1 ? gap / (iters - 1) : 0.0,
-		       (ts[2 * iters - 1] - ts[0]) / 1e6);
+		       "(%.2f GB/s per read); all reads span %.1f ms: %.0f "
+		       "reads/s, %.2f GB/s aggregate\n",
+		       lo, acc / iters, hi, nbytes / (acc / iters) / 1e6, chain,
+		       iters / (chain / 1e3),
+		       (double)nbytes * iters / chain / 1e6);
+		printf("SUMMARY engine=%s read_kib=%zu streams=%d iters=%d "
+		       "avg_ms=%.3f max_ms=%.3f reads_per_s=%.0f gbps=%.2f "
+		       "wall_ms=%.1f cpu_ms=%.1f cpu_caller_ms=%.1f "
+		       "cpu_io_ms=%.1f "
+		       "cpu_pct=%.1f\n",
+		       gpu_engine ? "gpu" : "host", nbytes >> 10, nstreams,
+		       iters, acc / iters, hi, iters / (chain / 1e3),
+		       (double)nbytes * iters / chain / 1e6, t2 - t0, cpu_all,
+		       caller_ms, io_ms, 100.0 * cpu_all / (t2 - t0));
 	}
 	rc = bad ? 1 : 0;
 
 out_stream:
-	cuStreamDestroy(stream);
+	for (int s = 0; s < created; s++)
+		cuStreamDestroy(streams[s]);
 out_buf:
-	opends_free(buf);
+	for (int s = 0; s < nstreams; s++)
+		if (bufs[s])
+			opends_free(bufs[s]);
 out_handle:
 	opends_handle_deregister(fh);
 out_fd:
