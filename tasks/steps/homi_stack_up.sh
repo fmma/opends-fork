@@ -20,6 +20,8 @@ HERE=$(dirname "$0")
 HOMI_ID=1
 XAL_SHM=/xal_dev0
 CONF=/run/homi/xal-server.conf
+# xal-server watch mode: 2 re-indexes on every change, 3 indexes once and pins the extents with reflink clones
+XAL_WATCHMODE=${XAL_WATCHMODE:-2}
 # optional subtree of MOUNT to index instead of the whole filesystem
 XAL_SUBTREE=${XAL_SUBTREE:-}
 
@@ -86,8 +88,6 @@ echo "$UBLK" > /run/homi/ublk_dev
 mkdir -p "$MOUNT"
 mount "$UBLK" "$MOUNT"
 
-# watchmode 2 = extent update: the server re-indexes on filesystem changes,
-# which is what makes the extents of freshly written files resolvable.
 cat > "$CONF" <<EOF
 log_level = 2
 devices = [
@@ -95,7 +95,7 @@ devices = [
 ]
 
 [xal]
-watchmode = 2
+watchmode = $XAL_WATCHMODE
 EOF
 
 echo "starting xal-server"
