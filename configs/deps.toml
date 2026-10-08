@@ -6,7 +6,7 @@ ref = "860c9fb86599bc087507053984659aa0b1131cca"
 
 [xal.repository]
 remote = "https://github.com/xnvme/xal"
-ref = "0785db883a81f80a0be4e8edce13bb57cb667278"
+ref = "c7525b493b50e7ef26ebdc2aae81184fbd482451"
 
 [fil.repository]
 remote = "https://github.com/fmma/fil"
