@@ -125,7 +125,8 @@ is the only place they are named.
 - `OPENDS_AISIO_ASSUME_ALIGNED_ONLY`: `1` declares that every read is
   LBA-aligned. Reads that start or end off an LBA boundary fail with
   `OPENDS_INVALID_VALUE`, and the stream path stops enqueueing the bounce
-  kernel.
+  kernel. A single stream makes the same declaration with the
+  `OPENDS_STREAM_PAGE_ALIGNED_INPUTS` registration flag.
 - `OPENDS_AISIO_HOMI_ID`: xNVMe multi-process group to join. Default 1, which
   the test tasks also pass to homi, so both sides agree.
 - `OPENDS_AISIO_HOST_HEAP_MB`: Host DMA heap for this process, holding its own
@@ -140,23 +141,25 @@ is the only place they are named.
 ### GPU-initiated stream reads
 
 By default an I/O worker thread issues the NVMe commands of a stream read
-when the user's stream reaches the op. With `OPENDS_AISIO_GPU_INITIATED=1`
-the GPU issues them itself: `opends_stream_read` resolves the file's extents
-and builds the commands, PRP lists included, when it is called, and enqueues
-a kernel on the stream that submits them from GPU-resident NVMe queues and
-reaps the completions. No host thread is on the path once the stream reaches
-the op; a host callback behind the kernel publishes `bytes_read`.
+when the user's stream reaches the op, and reads `size_p`, `file_offset_p`
+and `buf_offset_p` then. With `OPENDS_AISIO_GPU_INITIATED=1` the GPU issues
+them itself on every stream registered with `OPENDS_STREAM_FIXED_SHAPE`:
+`opends_stream_read` resolves the file's extents and builds the commands,
+PRP lists included, when it is called, and enqueues a kernel on the stream
+that submits them from GPU-resident NVMe queues and reaps the completions.
+No host thread is on the path once the stream reaches the op.
 
-This fixes the shape of the read at call time: `size_p`, `file_offset_p` and
-`buf_offset_p` are dereferenced by `opends_stream_read`, not when the stream
-runs the op, and the file's extents are taken then as well. Stream writes,
-and reads too large for a context (see `OPENDS_AISIO_GPU_MAX_CMDS`), still
-go through the I/O workers. GPU-resident queues need the privileges xNVMe
+The flags fix the shape of the read at call time, which is what lets the
+commands be built there; a stream registered without them keeps the I/O
+workers and deferred evaluation while the engine is on. Stream writes, and
+reads too large for a context (see `OPENDS_AISIO_GPU_MAX_CMDS`), still go
+through the I/O workers. GPU-resident queues need the privileges xNVMe
 documents for GPU-issued I/O (the controller's BAR through sysfs, so root)
 and, behind a translating IOMMU, the `iommu_map_pa` module.
 
-- `OPENDS_AISIO_GPU_INITIATED`: `1` enables the GPU engine for stream reads.
-  Default off. Driver open fails when the GPU queues cannot be created.
+- `OPENDS_AISIO_GPU_INITIATED`: `1` enables the GPU engine for the reads of
+  fixed-shape streams. Default off. Driver open fails when the GPU queues
+  cannot be created.
 - `OPENDS_AISIO_GPU_QUEUE_DEPTH`: Depth of each GPU-resident queue, which is
   also the size of the CUDA block that drives it. A read with more commands
   than the depth goes in several rounds, each waiting for the slowest
@@ -181,7 +184,9 @@ and, behind a translating IOMMU, the `iommu_map_pa` module.
 in each engine. Per iteration it enqueues a fill kernel, a stream read and a
 checksum kernel on one stream, then the host sleeps while the chain runs and
 samples every thread's CPU time from `/proc` before and after; the sums are
-checked against the host's, and GPU timestamps bound each read.
+checked against the host's, and GPU timestamps bound each read. Its streams
+are registered with `OPENDS_STREAM_FIXED_SHAPE`, so the GPU engine takes the
+reads when it is enabled.
 
 ```bash
 export OPENDS_XAL_SHM=/xal_dev0 OPENDS_HOMI_MNT=/mnt/datasets
