@@ -163,8 +163,9 @@ steps:
 
   - name: test_stream_read_gpu_aisio
     run: |
-      # The GPU issues the reads itself from GPU-resident queues; the
-      # size and offsets are taken when the op is submitted.
+      # The GPU issues the reads itself from GPU-resident queues; the test
+      # registers its streams with OPENDS_STREAM_FIXED_SHAPE, which the
+      # engine requires.
       OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_GPU_INITIATED=1 \

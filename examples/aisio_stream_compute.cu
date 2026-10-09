@@ -352,7 +352,8 @@ main(int argc, char **argv)
 			goto out_stream;
 		}
 		created = s + 1;
-		err = opends_stream_register(streams[s], 0);
+		err = opends_stream_register(streams[s],
+		                             OPENDS_STREAM_FIXED_SHAPE);
 		if (err.err != OPENDS_SUCCESS) {
 			fprintf(stderr, "stream_register: %s\n",
 			        opends_op_status_error(err.err));
