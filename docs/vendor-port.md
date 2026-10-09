@@ -33,8 +33,9 @@ are published after it is enqueued, by host stores the I/O thread makes
 while the stream is parked in the callback. CUDA needs a kernel for that,
 shipped in `ds_bounce_kernel_cuda.cu`; a vendor whose runtime can defer a
 stream copy may not need a separate kernel translation unit at all. Setting
-`OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` drops the bounce path entirely
-(unaligned reads then fail with `OPENDS_INVALID_VALUE`).
+`OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1`, or registering a stream with
+`OPENDS_STREAM_PAGE_ALIGNED_INPUTS`, drops the bounce path for the process
+or the stream (unaligned reads then fail with `OPENDS_INVALID_VALUE`).
 Driver open validates the ops the chosen mode drives and fails cleanly when
 one is missing, so a partial table may leave the other mode's ops NULL.
 

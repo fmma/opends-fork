@@ -285,7 +285,9 @@ opends_error_t
 opends_stream_register(opends_stream_t stream, unsigned flags)
 {
 	(void)stream;
-	(void)flags;
+	if (flags & ~OPENDS_STREAM_FLAGS_ALL) {
+		return opends_err(OPENDS_INVALID_VALUE);
+	}
 	return opends_ok();
 }
 

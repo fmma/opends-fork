@@ -20,11 +20,11 @@
  * writes the data; the file's extents are then re-resolved for later P2P reads.
  *
  * Stream reads have two engines. By default an I/O thread issues the NVMe
- * commands when the user's stream reaches the op. With
- * OPENDS_AISIO_GPU_INITIATED=1 the GPU issues them itself from GPU-resident
- * queues: the commands are built when the op is submitted, so the size and
- * offsets are read then rather than at stream time, and a kernel on the
- * user's stream submits and reaps them.
+ * commands when the user's stream reaches the op, reading the size and
+ * offsets then. With OPENDS_AISIO_GPU_INITIATED=1 the GPU issues them itself
+ * from GPU-resident queues on a stream registered with
+ * OPENDS_STREAM_FIXED_SHAPE: those flags let the commands be built when the
+ * op is submitted, and a kernel on the user's stream submits and reaps them.
  */
 
 #define _GNU_SOURCE
@@ -155,6 +155,8 @@ struct opends_stream {
 	void *bounce_buf;
 	struct ds_bounce_copy *bounce_desc_host;
 	ds_accel_devptr_t bounce_desc_dev;
+	unsigned flags; ///< opends_stream_register flags
+	bool aligned;   ///< Sub-LBA tails rejected (flag or the global knob)
 };
 
 enum file_op_mode {
@@ -804,7 +806,11 @@ static int
 submit_partial(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
                uint64_t slba, size_t src_off, size_t nbytes)
 {
-	if (w->drv->assume_aligned_only) {
+	bool aligned = op->mode == FILE_OP_STREAM
+	                       ? op->u.stream.opends_stream->aligned
+	                       : w->drv->assume_aligned_only;
+
+	if (aligned) {
 		op->err = OPENDS_INVALID_VALUE;
 		return -1;
 	}
@@ -2463,7 +2469,7 @@ gpu_add_read(struct driver *d, struct gpu_ctx *c, uint64_t slba, uint32_t nlbas,
  * not resolve, or -EFAULT when a buffer does not translate. */
 static int
 gpu_build_read(struct driver *d, struct gpu_ctx *c, struct registered_file *h,
-               uint8_t *dst_base, uint64_t req_start, size_t size)
+               uint8_t *dst_base, uint64_t req_start, size_t size, bool aligned)
 {
 	struct nvme_device *dev = h->dev;
 	struct ds_gpu_op *op = c->op;
@@ -2549,7 +2555,7 @@ gpu_build_read(struct driver *d, struct gpu_ctx *c, struct registered_file *h,
 			bytes += chunk;
 		}
 		if (tail_bytes) {
-			if (d->assume_aligned_only || op->tail_nbytes) {
+			if (aligned || op->tail_nbytes) {
 				rc = -EINVAL;
 				goto out;
 			}
@@ -2704,7 +2710,7 @@ gpu_ctx_claim(struct nvme_device *dev)
 static bool
 submit_stream_read_gpu(struct driver *d, struct registered_file *h,
                        void *buf_base, size_t size, off_t file_offset,
-                       off_t buf_offset, ssize_t *bytes_p,
+                       off_t buf_offset, ssize_t *bytes_p, bool aligned,
                        ds_accel_stream_t cus, opends_error_t *err)
 {
 	struct gpu_ctx *c = gpu_ctx_claim(h->dev);
@@ -2715,7 +2721,7 @@ submit_stream_read_gpu(struct driver *d, struct registered_file *h,
 		return false;
 	}
 	rc = gpu_build_read(d, c, h, (uint8_t *)buf_base + buf_offset,
-	                    (uint64_t)file_offset, size);
+	                    (uint64_t)file_offset, size, aligned);
 	if (rc == -E2BIG) {
 		gpu_ctx_release(c);
 		return false;
@@ -2797,14 +2803,18 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	struct io_worker *w;
 	uint32_t head;
 
-	/* The GPU engine takes a read it has room for; the rest, and every
-	 * write, goes to an I/O thread. */
-	if (!is_write && d->gpu_ready) {
+	/* The GPU engine takes a read it has room for when the stream's flags
+	 * fix the shape at submit; the rest, and every write, goes to an I/O
+	 * thread, which reads the size and offsets at stream time. */
+	if (!is_write && d->gpu_ready &&
+	    (opends_stream->flags & OPENDS_STREAM_FIXED_SHAPE) ==
+	            OPENDS_STREAM_FIXED_SHAPE) {
 		opends_error_t gerr;
 
 		if (submit_stream_read_gpu(d, h, buf_base, *size_p,
 		                           *file_offset_p, *buf_offset_p,
-		                           bytes_p, cus, &gerr))
+		                           bytes_p, opends_stream->aligned, cus,
+		                           &gerr))
 			return gerr;
 	}
 
@@ -2836,13 +2846,13 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * process using the GPU delays them by orders of magnitude. The
 	 * callback runs on the CPU and never waits. A copy kernel waits for
 	 * the GPU regardless, so once one is enqueued the callback wins
-	 * nothing. Hence the coupling to assume_aligned_only.
+	 * nothing. Hence the coupling to the stream's alignment.
 	 *
 	 * The gate enqueues run under submit_lock so gate values reach the
 	 * stream in seq order; an enqueue that blocks (a full stream queue)
 	 * stalls all submission. */
 	int accel_rc;
-	if (d->assume_aligned_only) {
+	if (opends_stream->aligned && ds_accel->launch_host_func) {
 		accel_rc = ds_accel->launch_host_func(cus, park_gate_cb, op);
 		if (accel_rc != 0) {
 			pthread_mutex_unlock(&d->submit_lock);
@@ -2872,7 +2882,7 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * copy_stream no-ops when it is zero. Enqueue after publishing so a
 	 * failed enqueue is still drained by the I/O thread (which releases the
 	 * gate); only this read is lost. */
-	if (!d->assume_aligned_only && !is_write) {
+	if (!opends_stream->aligned && !is_write) {
 		accel_rc = ds_accel->copy_stream(opends_stream->bounce_desc_dev,
 		                                 cus);
 		if (accel_rc != 0)
@@ -2903,22 +2913,24 @@ opends_stream_write(opends_handle_t fh, void *buf_base, size_t *size_p,
 opends_error_t
 opends_stream_register(opends_stream_t stream, unsigned flags)
 {
-	(void)flags;
-
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
-	if (!stream)
+	if (!stream || (flags & ~OPENDS_STREAM_FLAGS_ALL))
 		return opends_err(OPENDS_INVALID_VALUE);
 
 	if (!drv->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
 	ds_accel_stream_t cus = (ds_accel_stream_t)stream;
+	int idx;
 
 	pthread_mutex_lock(&drv->reg_lock);
-	if (ds_stream_map_get(drv->stream_map, STREAM_MAP_MASK, cus) >= 0) {
+	idx = ds_stream_map_get(drv->stream_map, STREAM_MAP_MASK, cus);
+	if (idx >= 0) {
+		bool same = drv->streams[idx].flags == flags;
+
 		pthread_mutex_unlock(&drv->reg_lock);
-		return opends_ok();
+		return same ? opends_ok() : opends_err(OPENDS_INVALID_VALUE);
 	}
 	if (drv->n_streams >= MAX_STREAMS) {
 		pthread_mutex_unlock(&drv->reg_lock);
@@ -2933,6 +2945,9 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 	        drv->stream_words_dptr + (size_t)n * sizeof(uint32_t);
 	*opends_stream->gate = 0;
 	opends_stream->next_seq = 0;
+	opends_stream->flags = flags;
+	opends_stream->aligned = drv->assume_aligned_only ||
+	                         (flags & OPENDS_STREAM_PAGE_ALIGNED_INPUTS);
 
 	int rc = stream_bounce_alloc(opends_stream, drv);
 	if (rc != 0) {

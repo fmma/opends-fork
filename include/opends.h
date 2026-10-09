@@ -251,13 +251,37 @@ ssize_t opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
  * associated with a stream (e.g. a CUDA stream) and complete in stream
  * order. The size, offset, and byte count parameters are pointers so
  * the values can be read at stream execution time rather than
- * submission time.
+ * submission time, unless the stream's registration flags say a value
+ * is final at submission.
+ *
+ * Stream registration flags, with the values of cuFile's
+ * cuFileStreamRegister flags (the cufile backend forwards them). Each
+ * OPENDS_STREAM_FIXED_* bit lets the backend read that parameter when
+ * the op is submitted. On a stream registered with all three
+ * (OPENDS_STREAM_FIXED_SHAPE) the aisio GPU engine, when enabled,
+ * issues the reads from the GPU itself; see README.md.
+ * OPENDS_STREAM_PAGE_ALIGNED_INPUTS declares the size and both offsets
+ * of every op 4 KiB aligned, so the backend skips its sub-page tail
+ * handling on the stream; an op that is not aligned then fails with
+ * OPENDS_INVALID_VALUE through its byte count. Unknown bits are
+ * rejected with OPENDS_INVALID_VALUE, as is registering a stream again
+ * with different flags.
  *
  * Backend limits (aisio): at most 8192 streams may be registered at
  * once; opends_stream_register returns OPENDS_INTERNAL_ERROR past that.
  * Each I/O worker holds at most 1024 operations in flight; a full queue
  * applies back-pressure rather than failing.
  */
+#define OPENDS_STREAM_FIXED_BUF_OFFSET 0x1u
+#define OPENDS_STREAM_FIXED_FILE_OFFSET 0x2u
+#define OPENDS_STREAM_FIXED_SIZE 0x4u
+#define OPENDS_STREAM_PAGE_ALIGNED_INPUTS 0x8u
+#define OPENDS_STREAM_FIXED_SHAPE                                              \
+	(OPENDS_STREAM_FIXED_BUF_OFFSET | OPENDS_STREAM_FIXED_FILE_OFFSET |    \
+	 OPENDS_STREAM_FIXED_SIZE)
+#define OPENDS_STREAM_FLAGS_ALL                                                \
+	(OPENDS_STREAM_FIXED_SHAPE | OPENDS_STREAM_PAGE_ALIGNED_INPUTS)
+
 typedef void *opends_stream_t;
 
 opends_error_t opends_stream_read(opends_handle_t fh, void *buf_base,
