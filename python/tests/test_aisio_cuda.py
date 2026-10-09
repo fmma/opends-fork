@@ -275,6 +275,25 @@ def check_external_buffer(f, cuda, expected):
         opends.deregister_buffer(ext)
     finally:
         cuda.rt.cudaFree(ext)
+    # Buffers cudaMalloc packs behind a 4 KiB spacer: off the device page
+    # and sharing one allocation chunk, which outlives the first to leave.
+    spacer = cuda.malloc(PAGE)
+    a, b = cuda.malloc(size), cuda.malloc(size)
+    try:
+        opends.register_buffer(a, size)
+        opends.register_buffer(b, size)
+        for buf in (a, b):
+            cuda.zero(buf.value, size)
+            assert f.read_sync(buf, size=size) == size
+            assert cuda.d2h(buf.value, size) == expected
+        opends.deregister_buffer(a)
+        cuda.zero(b.value, size)
+        assert f.read_sync(b, size=size) == size
+        assert cuda.d2h(b.value, size) == expected
+        opends.deregister_buffer(b)
+    finally:
+        for p in (b, a, spacer):
+            cuda.rt.cudaFree(p)
 
 
 def check_dio_not_set():
