@@ -16,6 +16,15 @@
 /* The per-memory tables are indexed by enum opends_mem_kind. */
 #define MAX_MEMS 2
 
+/* One NVMe-oF target of OPENDS_AISIO_FABRICS: the addr:port the SPDK backend
+ * takes as the device URI, and the subsystem NQN to connect. */
+#define AISIO_TRADDR_LEN 64
+#define AISIO_NQN_LEN 256
+struct aisio_fabrics_target {
+	char traddr[AISIO_TRADDR_LEN];
+	char subnqn[AISIO_NQN_LEN];
+};
+
 struct aisio_config {
 	uint32_t homi_id; ///< Multi-process group the HOMI server is primary of
 	int n_workers[MAX_MEMS]; ///< Workers every drive runs, per memory
@@ -34,10 +43,16 @@ struct aisio_config {
  * before the rest is read. */
 int aisio_config_homi_id(uint32_t *out);
 
+/* Read the NVMe-oF targets from OPENDS_AISIO_FABRICS into out, up to max
+ * entries. Unset leaves *n_out at 0, and the drives then come from the homi
+ * group. Returns 0, or -EINVAL after a message on stderr. */
+int aisio_config_fabrics(struct aisio_fabrics_target *out, int max, int *n_out);
+
 /* Everything else. gpu_ordinal is the accelerator of the current context,
- * the only one a gpu<k> key may name. Returns 0, or -EINVAL after a message
- * on stderr. */
-int aisio_config_read(struct aisio_config *cfg, int gpu_ordinal);
+ * the only one a gpu<k> key may name. fabrics drives serve host memory
+ * only, so the workers must be given, with a count for cpu0 and none for
+ * the GPU. Returns 0, or -EINVAL after a message on stderr. */
+int aisio_config_read(struct aisio_config *cfg, int gpu_ordinal, bool fabrics);
 
 /* The xal-server index name of device di: OPENDS_XAL_SHM's entry, or
  * /xal_dev<di>. */

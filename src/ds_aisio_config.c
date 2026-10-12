@@ -22,6 +22,7 @@
 #define ENV_HOST_HEAP_MB "OPENDS_AISIO_HOST_HEAP_MB"
 #define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
 #define ENV_CQ_MIRROR "OPENDS_AISIO_CQ_MIRROR"
+#define ENV_FABRICS "OPENDS_AISIO_FABRICS"
 #define DEFAULT_XAL_SHM_FMT "/xal_dev%d"
 #define DEFAULT_HOMI_ID 1
 #define DEFAULT_GPU_WORKERS 2
@@ -116,15 +117,24 @@ mem_from_key(int gpu_ordinal, const char *key)
 }
 
 /* OPENDS_AISIO_WORKERS_PER_DRIVE, "key=value,...": the workers every drive runs
- * for each memory. Unset, the current GPU gets DEFAULT_GPU_WORKERS. */
+ * for each memory. Unset, the current GPU gets DEFAULT_GPU_WORKERS. Over
+ * fabrics it is required, and must give cpu0 a count and the GPU none. */
 static int
-read_workers_per_drive(struct aisio_config *cfg, int gpu_ordinal)
+read_workers_per_drive(struct aisio_config *cfg, int gpu_ordinal, bool fabrics)
 {
 	const char *spec = getenv(ENV_WORKERS_PER_DRIVE);
 	const char *p = spec;
 
 	memset(cfg->n_workers, 0, sizeof(cfg->n_workers));
 	if (!spec || !spec[0]) {
+		if (fabrics) {
+			fprintf(stderr,
+			        "aisio: %s is required with %s; give cpu0 a "
+			        "count "
+			        "and the GPU none, e.g. cpu0=2\n",
+			        ENV_WORKERS_PER_DRIVE, ENV_FABRICS);
+			return -EINVAL;
+		}
 		cfg->n_workers[OPENDS_MEM_GPU] = DEFAULT_GPU_WORKERS;
 		return 0;
 	}
@@ -151,9 +161,8 @@ read_workers_per_drive(struct aisio_config *cfg, int gpu_ordinal)
 		memcpy(key, p, klen);
 		key[klen] = '\0';
 		val = strtol(eq + 1, &tail, 10);
-		if (tail == eq + 1 || tail != end || val < 1) {
-			fprintf(stderr,
-			        "aisio: %s: %s needs a positive count\n",
+		if (tail == eq + 1 || tail != end || val < 0) {
+			fprintf(stderr, "aisio: %s: %s needs a count\n",
 			        ENV_WORKERS_PER_DRIVE, key);
 			return -EINVAL;
 		}
@@ -170,11 +179,83 @@ read_workers_per_drive(struct aisio_config *cfg, int gpu_ordinal)
 		cfg->n_workers[mem] = (int)val;
 		p = *end ? end + 1 : end;
 	}
+	if (fabrics) {
+		if (cfg->n_workers[OPENDS_MEM_GPU]) {
+			fprintf(stderr,
+			        "aisio: %s: GPU memory is not served over "
+			        "fabrics (%s); give the GPU no workers\n",
+			        ENV_WORKERS_PER_DRIVE, ENV_FABRICS);
+			return -EINVAL;
+		}
+		if (!cfg->n_workers[OPENDS_MEM_CPU]) {
+			fprintf(stderr,
+			        "aisio: %s must give cpu0 a worker count over "
+			        "fabrics (%s)\n",
+			        ENV_WORKERS_PER_DRIVE, ENV_FABRICS);
+			return -EINVAL;
+		}
+		return 0;
+	}
 	if (!cfg->n_workers[OPENDS_MEM_GPU]) {
 		fprintf(stderr, "aisio: %s must give gpu%d a worker count\n",
 		        ENV_WORKERS_PER_DRIVE, gpu_ordinal);
 		return -EINVAL;
 	}
+	return 0;
+}
+
+/* OPENDS_AISIO_FABRICS, "addr:port/subnqn,...": one NVMe-oF target per
+ * drive, in device order. */
+int
+aisio_config_fabrics(struct aisio_fabrics_target *out, int max, int *n_out)
+{
+	const char *spec = getenv(ENV_FABRICS);
+	const char *p = spec;
+	int n = 0;
+
+	*n_out = 0;
+	if (!spec || !spec[0]) {
+		return 0;
+	}
+	while (*p) {
+		const char *end = strchr(p, ',');
+		const char *slash;
+		size_t alen;
+		size_t nlen;
+
+		if (!end) {
+			end = p + strlen(p);
+		}
+		slash = memchr(p, '/', (size_t)(end - p));
+		alen = slash ? (size_t)(slash - p) : 0;
+		nlen = slash ? (size_t)(end - slash - 1) : 0;
+		if (!alen || !nlen) {
+			fprintf(stderr,
+			        "aisio: %s: expected addr:port/subnqn at "
+			        "\"%.*s\"\n",
+			        ENV_FABRICS, (int)(end - p), p);
+			return -EINVAL;
+		}
+		if (n >= max) {
+			fprintf(stderr,
+			        "aisio: %s names more than %d targets\n",
+			        ENV_FABRICS, max);
+			return -EINVAL;
+		}
+		if (alen >= sizeof(out[n].traddr) ||
+		    nlen >= sizeof(out[n].subnqn)) {
+			fprintf(stderr, "aisio: %s: entry %d is too long\n",
+			        ENV_FABRICS, n);
+			return -EINVAL;
+		}
+		memcpy(out[n].traddr, p, alen);
+		out[n].traddr[alen] = '\0';
+		memcpy(out[n].subnqn, slash + 1, nlen);
+		out[n].subnqn[nlen] = '\0';
+		n++;
+		p = *end ? end + 1 : end;
+	}
+	*n_out = n;
 	return 0;
 }
 
@@ -191,11 +272,11 @@ aisio_config_homi_id(uint32_t *out)
 }
 
 int
-aisio_config_read(struct aisio_config *cfg, int gpu_ordinal)
+aisio_config_read(struct aisio_config *cfg, int gpu_ordinal, bool fabrics)
 {
 	int n;
 
-	if (read_workers_per_drive(cfg, gpu_ordinal) < 0) {
+	if (read_workers_per_drive(cfg, gpu_ordinal, fabrics) < 0) {
 		return -EINVAL;
 	}
 
