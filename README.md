@@ -102,7 +102,8 @@ The AiSIO backend reads its configuration from environment variables at
 `opends_driver_open`. Values that are out of range, or not a number, fail
 the open. The devices are not configured here: the driver takes them from
 the multi-process runtime the homi server created, so the homi command line
-is the only place they are named.
+is the only place they are named. The exception is `OPENDS_AISIO_FABRICS`,
+which names NVMe-oF targets instead of a homi group.
 
 - `OPENDS_XAL_SHM`: Shared-memory names of the xal-server extent indexes, a
   comma-separated list paired with the runtime's device order. Default
@@ -119,7 +120,8 @@ is the only place they are named.
   host memory on NUMA node 0, the only node served for now. The second
   line runs four workers per drive for GPU buffers
   and one for host buffers, so four drives are twenty threads and twenty
-  queues. Host buffers can only be allocated when `cpu0` is given. `gpu`
+  queues. A count of 0 gives that memory no workers. Host buffers can only
+  be allocated when `host` is given. `gpu`
   alone names the GPU of the context that is current at open, for
   launchers that share one environment across ranks. Any other ordinal
   fails the open until multi-GPU is supported. A dual-port drive is two
@@ -140,6 +142,26 @@ is the only place they are named.
   kernel.
 - `OPENDS_AISIO_HOMI_ID`: xNVMe multi-process group to join. Default 1, which
   the test tasks also pass to homi, so both sides agree.
+- `OPENDS_AISIO_FABRICS`: NVMe-oF targets in place of the homi group, a
+  comma-separated list of `addr:port/subnqn`, one per drive in device order.
+
+  ```
+  OPENDS_AISIO_FABRICS=172.16.16.8:4420/nqn.2014-08.org.nvmexpress:uuid:3f9d2e6c-0c5b-4b1e-9b7a-6d2f1c8a4e10
+  ```
+
+  Each target is opened through xNVMe's SPDK backend, which probes TCP and
+  then RDMA at that address, as a controller of this process alone; no homi
+  server is involved and the homi and heap variables are ignored. The index
+  still comes from an xal-server, run against a kernel mount of the same
+  namespace (`nvme connect`), as `tasks/steps/fabrics_loop_up.sh` does on a
+  single host over Soft-RoCE. SPDK reaches the RDMA device through
+  userspace libibverbs, so the host needs the matching provider library
+  (`RDMAV_DRIVERS=<dir>/librxe` names one that is not installed). Only host
+  memory is served, so `OPENDS_AISIO_WORKERS_PER_DRIVE` is required and
+  must give `cpu0` a count and the GPU none (`cpu0=2`, or `gpu0=0,cpu0=2`);
+  anything else fails the open. The host buffers come from SPDK's hugepages
+  rather than the homi heap. This is a prototype of the fabrics path ahead
+  of xNVMe's native fabrics backend.
 - `OPENDS_AISIO_HOST_HEAP_MB`: Host DMA heap for this process, holding its own
   queue rings and PRP lists. Default 256. The heap comes out of the hugepages
   every process in the group shares, so xNVMe's 1 GiB default is too large.
