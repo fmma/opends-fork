@@ -158,17 +158,25 @@ struct io_worker {
 	pthread_t thread;
 };
 
+/* An xnvme_dev on a controller, and the workers that submit on it. */
+struct handle {
+	const char *be;
+	struct xnvme_dev *xdev;
+	struct io_worker *workers;
+	int n_workers;
+	uint32_t rr_next;
+};
+#define MAX_HANDLES 1
+
 struct nvme_device {
 	char dev_uri[XNVME_IDENT_URI_LEN];
 	struct xal *xal; ///< Attach to the index xal-server publishes
-	struct xnvme_dev *xdev;
 	uint32_t nsid;
 	uint32_t lba_size;
 	uint32_t lba_shift;
 	uint32_t mdts_nbytes;
-	struct io_worker *workers;
-	int n_workers;
-	uint32_t rr_next;
+	struct handle handles[MAX_HANDLES];
+	int n_handles;
 };
 
 struct driver {
@@ -229,7 +237,7 @@ cpu_relax(void)
 static inline struct xnvme_dev *
 mem_dev(struct driver *d)
 {
-	return d->devices[0].xdev;
+	return d->devices[0].handles[0].xdev;
 }
 
 static void *
@@ -434,29 +442,60 @@ pwrite_op(struct registered_file *h, const void *src, size_t size,
 }
 
 static int
-open_device(struct driver *d, struct nvme_device *dev)
+open_handle(struct driver *d, struct nvme_device *dev, struct handle *h)
 {
 	/* Joins the group the HOMI server is primary of. Whoever opens first
 	 * wins the role election, so a homi_id the server does not serve would
 	 * silently make this process the controller owner; both sides use
 	 * homi_id 1 by convention unless overridden. */
 	struct xnvme_opts opts = xnvme_opts_default();
-	opts.be = ds_accel->xnvme_be;
+	opts.be = h->be;
 	opts.homi_id = d->cfg.homi_id;
 	opts.host_heap_size = d->cfg.host_heap_nbytes;
 	opts.device_heap_size = d->cfg.device_heap_nbytes;
 
-	dev->xdev = xnvme_dev_open(dev->dev_uri, &opts);
-	if (!dev->xdev) {
+	h->xdev = xnvme_dev_open(dev->dev_uri, &opts);
+	if (!h->xdev) {
 		fprintf(stderr,
 		        "aisio open_device: xnvme_dev_open(%s, be=%s, "
 		        "homi_id=%u) failed\n",
 		        dev->dev_uri, opts.be, d->cfg.homi_id);
 		return -EIO;
 	}
+	return 0;
+}
 
-	const struct xnvme_geo *geo = xnvme_dev_get_geo(dev->xdev);
-	dev->nsid = xnvme_dev_get_nsid(dev->xdev);
+static void
+close_device(struct nvme_device *dev)
+{
+	for (int i = dev->n_handles - 1; i >= 0; i--) {
+		if (dev->handles[i].xdev) {
+			xnvme_dev_close(dev->handles[i].xdev);
+			dev->handles[i].xdev = NULL;
+		}
+	}
+}
+
+static int
+open_device(struct driver *d, struct nvme_device *dev)
+{
+	const struct xnvme_geo *geo;
+	struct xnvme_dev *xdev;
+	int err;
+
+	dev->handles[0].be = ds_accel->xnvme_be;
+	dev->n_handles = 1;
+	for (int i = 0; i < dev->n_handles; i++) {
+		err = open_handle(d, dev, &dev->handles[i]);
+		if (err < 0) {
+			close_device(dev);
+			return err;
+		}
+	}
+
+	xdev = dev->handles[0].xdev;
+	geo = xnvme_dev_get_geo(xdev);
+	dev->nsid = xnvme_dev_get_nsid(xdev);
 	dev->lba_size = geo->lba_nbytes ? geo->lba_nbytes : geo->nbytes;
 	dev->mdts_nbytes =
 	        geo->mdts_nbytes ? geo->mdts_nbytes : DEFAULT_BOUNCE_SIZE;
@@ -469,8 +508,7 @@ open_device(struct driver *d, struct nvme_device *dev)
 		        "before this open\n",
 		        dev->dev_uri, geo->lba_nbytes, geo->nbytes,
 		        geo->mdts_nbytes);
-		xnvme_dev_close(dev->xdev);
-		dev->xdev = NULL;
+		close_device(dev);
 		return -EIO;
 	}
 	if (dev->lba_size & (dev->lba_size - 1)) {
@@ -478,8 +516,7 @@ open_device(struct driver *d, struct nvme_device *dev)
 		        "aisio open_device(%s): lba_size=%u is not a power of "
 		        "2\n",
 		        dev->dev_uri, dev->lba_size);
-		xnvme_dev_close(dev->xdev);
-		dev->xdev = NULL;
+		close_device(dev);
 		return -EIO;
 	}
 	dev->lba_shift = (uint32_t)__builtin_ctz(dev->lba_size);
@@ -491,10 +528,7 @@ static void
 close_devices(struct driver *d)
 {
 	for (int i = 0; i < d->n_devices; i++) {
-		if (d->devices[i].xdev) {
-			xnvme_dev_close(d->devices[i].xdev);
-			d->devices[i].xdev = NULL;
-		}
+		close_device(&d->devices[i]);
 	}
 }
 
@@ -1051,10 +1085,41 @@ workers_stop(struct driver *d)
 	for (int di = 0; di < d->n_devices; di++) {
 		struct nvme_device *dev = &d->devices[di];
 
-		for (int i = 0; i < dev->n_workers; i++) {
-			pthread_join(dev->workers[i].thread, NULL);
+		for (int hi = 0; hi < dev->n_handles; hi++) {
+			struct handle *h = &dev->handles[hi];
+
+			for (int i = 0; i < h->n_workers; i++) {
+				pthread_join(h->workers[i].thread, NULL);
+			}
 		}
 	}
+}
+
+static void
+handle_free(struct driver *d, struct handle *h)
+{
+	if (!h->workers) {
+		return;
+	}
+	for (int i = 0; i < h->n_workers; i++) {
+		struct io_worker *w = &h->workers[i];
+
+		for (uint32_t s = 0; s < FILE_OP_QUEUE_SIZE; s++) {
+			struct file_op *op = &w->file_op_queue[s];
+
+			if (op->bounce_buf) {
+				buf_free_locked(d, op->bounce_buf);
+				op->bounce_buf = NULL;
+			}
+		}
+		if (w->queue) {
+			xnvme_queue_term(w->queue);
+			w->queue = NULL;
+		}
+	}
+	free(h->workers);
+	h->workers = NULL;
+	h->n_workers = 0;
 }
 
 static void
@@ -1063,29 +1128,62 @@ workers_free(struct driver *d)
 	for (int di = 0; di < d->n_devices; di++) {
 		struct nvme_device *dev = &d->devices[di];
 
-		if (!dev->workers) {
-			continue;
+		for (int hi = 0; hi < dev->n_handles; hi++) {
+			handle_free(d, &dev->handles[hi]);
 		}
-		for (int i = 0; i < dev->n_workers; i++) {
-			struct io_worker *w = &dev->workers[i];
-
-			for (uint32_t s = 0; s < FILE_OP_QUEUE_SIZE; s++) {
-				struct file_op *op = &w->file_op_queue[s];
-
-				if (op->bounce_buf) {
-					buf_free_locked(d, op->bounce_buf);
-					op->bounce_buf = NULL;
-				}
-			}
-			if (w->queue) {
-				xnvme_queue_term(w->queue);
-				w->queue = NULL;
-			}
-		}
-		free(dev->workers);
-		dev->workers = NULL;
-		dev->n_workers = 0;
 	}
+}
+
+/* Start nw workers on h. Returns 0, or -1 with what was started left for
+ * workers_stop and workers_free. */
+static int
+handle_start(struct driver *d, struct nvme_device *dev, struct handle *h,
+             int nw, int *pinned)
+{
+	int qopts = d->cfg.cq_mirror ? XNVME_QUEUE_P2P_CQ_MIRROR : 0;
+	int mask_cpus = __builtin_popcountll(d->cfg.cpu_mask);
+	int err;
+
+	h->workers = calloc((size_t)nw, sizeof(*h->workers));
+	if (!h->workers) {
+		return -1;
+	}
+	for (int i = 0; i < nw; i++) {
+		struct io_worker *w = &h->workers[i];
+		pthread_attr_t attr;
+		pthread_attr_t *attrp = NULL;
+
+		w->drv = d;
+		w->dev = dev;
+		err = xnvme_queue_init(h->xdev, d->cfg.queue_depth, qopts,
+		                       &w->queue);
+		if (err < 0) {
+			w->queue = NULL;
+			return -1;
+		}
+		if (mask_cpus) {
+			cpu_set_t set;
+			CPU_ZERO(&set);
+			CPU_SET(mask_nth_cpu(d->cfg.cpu_mask,
+			                     *pinned % mask_cpus),
+			        &set);
+			pthread_attr_init(&attr);
+			pthread_attr_setaffinity_np(&attr, sizeof(set), &set);
+			attrp = &attr;
+		}
+		err = pthread_create(&w->thread, attrp, io_thread_main, w);
+		if (attrp) {
+			pthread_attr_destroy(&attr);
+		}
+		if (err != 0) {
+			xnvme_queue_term(w->queue);
+			w->queue = NULL;
+			return -1;
+		}
+		(*pinned)++;
+		h->n_workers = i + 1;
+	}
+	return 0;
 }
 
 /* Returns 0 on success; on failure, the dev_err to report (vendor code or
@@ -1093,7 +1191,6 @@ workers_free(struct driver *d)
 static int
 workers_setup(struct driver *d)
 {
-	int qopts = d->cfg.cq_mirror ? XNVME_QUEUE_P2P_CQ_MIRROR : 0;
 	int rc = ds_accel->ctx_get(&d->accel_ctx);
 	if (rc != 0)
 		return rc;
@@ -1110,49 +1207,16 @@ workers_setup(struct driver *d)
 	d->stream_words_dptr = dptr;
 
 	d->stop = false;
-	int mask_cpus = __builtin_popcountll(d->cfg.cpu_mask);
 	int pinned = 0;
 	for (int di = 0; di < d->n_devices; di++) {
 		struct nvme_device *dev = &d->devices[di];
 		int nw = workers_of_device(d, di);
 
-		dev->workers = calloc((size_t)nw, sizeof(*dev->workers));
-		if (!dev->workers)
-			goto fail;
-
-		for (int i = 0; i < nw; i++) {
-			struct io_worker *w = &dev->workers[i];
-			w->drv = d;
-			w->dev = dev;
-			if (xnvme_queue_init(dev->xdev, d->cfg.queue_depth,
-			                     qopts, &w->queue) < 0) {
-				w->queue = NULL;
+		for (int hi = 0; hi < dev->n_handles; hi++) {
+			if (handle_start(d, dev, &dev->handles[hi], nw,
+			                 &pinned) < 0) {
 				goto fail;
 			}
-			pthread_attr_t attr;
-			pthread_attr_t *attrp = NULL;
-			if (mask_cpus) {
-				cpu_set_t set;
-				CPU_ZERO(&set);
-				CPU_SET(mask_nth_cpu(d->cfg.cpu_mask,
-				                     pinned % mask_cpus),
-				        &set);
-				pthread_attr_init(&attr);
-				pthread_attr_setaffinity_np(&attr, sizeof(set),
-				                            &set);
-				attrp = &attr;
-			}
-			int rc = pthread_create(&w->thread, attrp,
-			                        io_thread_main, w);
-			if (attrp)
-				pthread_attr_destroy(&attr);
-			if (rc != 0) {
-				xnvme_queue_term(w->queue);
-				w->queue = NULL;
-				goto fail;
-			}
-			pinned++;
-			dev->n_workers = i + 1;
 		}
 	}
 
@@ -1197,17 +1261,17 @@ opends_stream_get(struct driver *d, ds_accel_stream_t stream)
 }
 
 static struct io_worker *
-route_op(struct nvme_device *dev)
+route_op(struct handle *h)
 {
-	return &dev->workers[dev->rr_next++ % (uint32_t)dev->n_workers];
+	return &h->workers[h->rr_next++ % (uint32_t)h->n_workers];
 }
 
 static struct file_op *
-claim_slot_locked(struct driver *d, struct nvme_device *dev,
-                  struct io_worker **wp, uint32_t *headp)
+claim_slot_locked(struct driver *d, struct handle *h, struct io_worker **wp,
+                  uint32_t *headp)
 {
 	for (;;) {
-		struct io_worker *w = route_op(dev);
+		struct io_worker *w = route_op(h);
 		uint32_t head = w->queue_head;
 
 		if (head - __atomic_load_n(&w->queue_tail, __ATOMIC_ACQUIRE) <
@@ -1709,7 +1773,8 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	uint32_t head;
 
 	pthread_mutex_lock(&d->submit_lock);
-	struct file_op *op = claim_slot_locked(d, h->dev, &w, &head);
+	struct file_op *op =
+	        claim_slot_locked(d, &h->dev->handles[0], &w, &head);
 	op->mode = FILE_OP_ASYNC;
 	op->is_write = is_write;
 	op->h = h;
@@ -1794,7 +1859,8 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	uint32_t head;
 
 	pthread_mutex_lock(&d->submit_lock);
-	struct file_op *op = claim_slot_locked(d, h->dev, &w, &head);
+	struct file_op *op =
+	        claim_slot_locked(d, &h->dev->handles[0], &w, &head);
 	uint32_t seq = ++opends_stream->next_seq;
 	op->mode = FILE_OP_STREAM;
 	op->is_write = is_write;
