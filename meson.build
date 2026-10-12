@@ -204,6 +204,11 @@ if aisio_test_enabled
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep],
   )
+  executable('test_sync_read_host_aisio',
+    'tests/test_sync_read_host_aisio.c',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_dep, cuda_dep],
+  )
   executable('test_mt_read_aisio',
     'tests/test_mt_read_aisio.c',
     include_directories : aisio_test_inc_dirs,
@@ -257,6 +262,7 @@ if aisio_test_enabled
   )
 else
   executable('test_sync_read_aisio', 'tests/skip.c')
+  executable('test_sync_read_host_aisio', 'tests/skip.c')
   executable('test_mt_read_aisio', 'tests/skip.c')
   executable('test_async_read_aisio', 'tests/skip.c')
   executable('test_batch_read_aisio', 'tests/skip.c')
