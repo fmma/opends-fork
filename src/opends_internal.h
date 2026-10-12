@@ -5,10 +5,18 @@
 #include "opends.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <sys/types.h>
 
 /* Practical upper bound of the logical block size O_DIRECT aligns to. */
 #define OPENDS_DIRECT_ALIGN 4096
+
+static inline bool
+opends_direct_aligned(const void *p, size_t size, off_t off)
+{
+	return (((uintptr_t)p | size | (uintptr_t)off) &
+	        (OPENDS_DIRECT_ALIGN - 1)) == 0;
+}
 
 /* O_DIRECT pwrite of size bytes at off, from src through copy(). The edge
  * blocks are completed by read-modify-write when off or size is unaligned.

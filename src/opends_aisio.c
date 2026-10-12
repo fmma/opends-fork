@@ -483,6 +483,12 @@ static ssize_t
 pwrite_op(struct registered_file *h, const void *src, size_t size,
           off_t file_offset, enum opends_mem_kind mem_kind)
 {
+	if (mem_kind == OPENDS_MEM_CPU &&
+	    opends_direct_aligned(src, size, file_offset)) {
+		ssize_t w = pwrite(h->fd, src, size, file_offset);
+
+		return w < 0 ? -errno : w;
+	}
 	return opends_direct_pwrite(
 	        h->fd, h->oflags, src, size, file_offset,
 	        mem_kind == OPENDS_MEM_CPU ? host_copy : ds_accel->copy);

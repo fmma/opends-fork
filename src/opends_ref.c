@@ -192,13 +192,6 @@ host_copy(void *dst, const void *src, size_t bytes)
 	return 0;
 }
 
-static bool
-direct_aligned(const void *p, size_t size, off_t off)
-{
-	return (((uintptr_t)p | size | (uintptr_t)off) &
-	        (OPENDS_DIRECT_ALIGN - 1)) == 0;
-}
-
 static opends_error_t
 ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
                  off_t file_offset, off_t buf_offset,
@@ -211,7 +204,7 @@ ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
 
 	struct ref_handle *h = fh;
 	char *p = (char *)buf_base + buf_offset;
-	bool aligned = direct_aligned(p, size, file_offset);
+	bool aligned = opends_direct_aligned(p, size, file_offset);
 	ssize_t result;
 	if (is_write && aligned)
 		result = pwrite(h->fd, p, size, file_offset);
