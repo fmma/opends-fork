@@ -54,6 +54,7 @@
 
 #define MAX_DEVICES 16
 #define HOST_XNVME_BE "upcie"
+#define FABRICS_XNVME_BE "spdk"
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
@@ -168,6 +169,8 @@ struct io_worker {
 /* An xnvme_dev on a controller, and the workers that submit on it. */
 struct handle {
 	const char *be;
+	/* The subsystem to connect, or NULL to join the homi group. */
+	const char *subnqn;
 	unsigned kinds; ///< KIND_BIT of every memory it serves
 	int ordinal;    ///< GPU index or NUMA node of its memory
 	struct xnvme_dev *xdev;
@@ -185,6 +188,7 @@ struct memory {
 
 struct nvme_device {
 	char dev_uri[XNVME_IDENT_URI_LEN];
+	char subnqn[AISIO_NQN_LEN]; ///< The subsystem on a fabrics target
 	struct xal *xal; ///< Attach to the index xal-server publishes
 	uint32_t nsid;
 	uint32_t lba_size;
@@ -200,6 +204,7 @@ struct driver {
 	int n_devices;
 	struct memory memories[MAX_MEMS];
 	int gpu_ordinal;
+	bool fabrics; ///< The drives are NVMe-oF targets, host memory only
 	struct aisio_config cfg;
 	uint32_t max_lba_size;    ///< Largest over the devices
 	uint32_t min_mdts_nbytes; ///< Smallest over the devices
@@ -321,6 +326,9 @@ stream_bounce_alloc(struct opends_stream *s, struct driver *d)
 	s->bounce_buf = NULL;
 	s->bounce_desc_host = NULL;
 	s->bounce_desc_dev = 0;
+	if (!d->memories[OPENDS_MEM_GPU].present) {
+		return -1;
+	}
 
 	/* DEVICEMAP'd so the I/O thread fills it via host stores and the
 	 * kernel reads it on the GPU. Zero-init keeps a bounce-free op
@@ -497,23 +505,38 @@ pwrite_op(struct registered_file *h, const void *src, size_t size,
 static int
 open_handle(struct driver *d, struct nvme_device *dev, struct handle *h)
 {
-	/* Joins the group the HOMI server is primary of. Whoever opens first
-	 * wins the role election, so a homi_id the server does not serve would
-	 * silently make this process the controller owner; both sides use
-	 * homi_id 1 by convention unless overridden. */
 	struct xnvme_opts opts = xnvme_opts_default();
+
 	opts.be = h->be;
-	opts.homi_id = d->cfg.homi_id;
-	opts.gpu_id = (uint32_t)h->ordinal;
-	opts.host_heap_size = d->cfg.host_heap_nbytes;
-	opts.device_heap_size = d->cfg.device_heap_nbytes;
+	if (h->subnqn) {
+		/* A fabrics controller is this process's own; there is no
+		 * group to join and no heap to size. */
+		opts.subnqn = h->subnqn;
+	} else {
+		/* Joins the group the HOMI server is primary of. Whoever opens
+		 * first wins the role election, so a homi_id the server does
+		 * not serve would silently make this process the controller
+		 * owner; both sides use homi_id 1 by convention unless
+		 * overridden. */
+		opts.homi_id = d->cfg.homi_id;
+		opts.gpu_id = (uint32_t)h->ordinal;
+		opts.host_heap_size = d->cfg.host_heap_nbytes;
+		opts.device_heap_size = d->cfg.device_heap_nbytes;
+	}
 
 	h->xdev = xnvme_dev_open(dev->dev_uri, &opts);
 	if (!h->xdev) {
-		fprintf(stderr,
-		        "aisio open_device: xnvme_dev_open(%s, be=%s, "
-		        "homi_id=%u) failed\n",
-		        dev->dev_uri, opts.be, d->cfg.homi_id);
+		if (h->subnqn) {
+			fprintf(stderr,
+			        "aisio open_device: xnvme_dev_open(%s, be=%s, "
+			        "subnqn=%s) failed\n",
+			        dev->dev_uri, opts.be, h->subnqn);
+		} else {
+			fprintf(stderr,
+			        "aisio open_device: xnvme_dev_open(%s, be=%s, "
+			        "homi_id=%u) failed\n",
+			        dev->dev_uri, opts.be, d->cfg.homi_id);
+		}
 		return -EIO;
 	}
 	return 0;
@@ -530,10 +553,13 @@ close_device(struct nvme_device *dev)
 	}
 }
 
-/* The xnvme backend that serves a memory on a local drive. */
+/* The xnvme backend that serves a memory on the driver's drives. */
 static const char *
-backend_of(enum opends_mem_kind mem_kind)
+backend_of(const struct driver *d, enum opends_mem_kind mem_kind)
 {
+	if (d->fabrics) {
+		return mem_kind == OPENDS_MEM_CPU ? FABRICS_XNVME_BE : NULL;
+	}
 	switch (mem_kind) {
 	case OPENDS_MEM_GPU: return ds_accel->xnvme_be;
 	case OPENDS_MEM_CPU: return HOST_XNVME_BE;
@@ -573,6 +599,7 @@ open_device(struct driver *d, struct nvme_device *dev)
 {
 	const struct xnvme_geo *geo;
 	struct xnvme_dev *xdev;
+	const char *be;
 	int err;
 
 	dev->n_handles = 0;
@@ -581,12 +608,22 @@ open_device(struct driver *d, struct nvme_device *dev)
 		if (!d->memories[k].present) {
 			continue;
 		}
-		err = add_handle(dev, backend_of(k), k, d->memories[k].ordinal);
+		be = backend_of(d, k);
+		if (!be) {
+			fprintf(stderr,
+			        "aisio open_device(%s): no backend serves "
+			        "memory "
+			        "kind %d here\n",
+			        dev->dev_uri, k);
+			return -EINVAL;
+		}
+		err = add_handle(dev, be, k, d->memories[k].ordinal);
 		if (err < 0) {
 			return err;
 		}
 	}
 	for (int i = 0; i < dev->n_handles; i++) {
+		dev->handles[i].subnqn = d->fabrics ? dev->subnqn : NULL;
 		err = open_handle(d, dev, &dev->handles[i]);
 		if (err < 0) {
 			close_device(dev);
@@ -1395,7 +1432,7 @@ opends_stream_get(struct driver *d, ds_accel_stream_t stream)
 static int
 read_config(struct driver *d)
 {
-	if (aisio_config_read(&d->cfg, d->gpu_ordinal) < 0) {
+	if (aisio_config_read(&d->cfg, d->gpu_ordinal, d->fabrics) < 0) {
 		return -EINVAL;
 	}
 	d->memories[OPENDS_MEM_GPU].ordinal = d->gpu_ordinal;
@@ -1445,12 +1482,34 @@ claim_slot_locked(struct driver *d, struct handle *h, struct io_worker **wp,
  * runtime's order. -ENOENT (no runtime yet), -EAGAIN (mid-creation) and a
  * group that holds no controller yet all mean the server is still starting,
  * so retry on them.
+ *
+ * OPENDS_AISIO_FABRICS replaces the group with NVMe-oF targets, each its own
+ * controller to this process.
  */
 static int
 discover_devices(struct driver *d)
 {
+	struct aisio_fabrics_target targets[MAX_DEVICES];
 	struct xnvme_cplane_info info;
+	int n_targets;
 	int err;
+
+	if (aisio_config_fabrics(targets, MAX_DEVICES, &n_targets) < 0) {
+		return -EINVAL;
+	}
+	if (n_targets > 0) {
+		for (int i = 0; i < n_targets; i++) {
+			snprintf(d->devices[i].dev_uri,
+			         sizeof(d->devices[i].dev_uri), "%s",
+			         targets[i].traddr);
+			snprintf(d->devices[i].subnqn,
+			         sizeof(d->devices[i].subnqn), "%s",
+			         targets[i].subnqn);
+		}
+		d->n_devices = n_targets;
+		d->fabrics = true;
+		return 0;
+	}
 
 	if (aisio_config_homi_id(&d->cfg.homi_id) < 0) {
 		return -EINVAL;
