@@ -267,6 +267,14 @@ if aisio_test_enabled
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
     cuda_args : accel_kernel_args,
   )
+  # A KV cache retrieve shaped like LMCache's, chunkwise or layerwise, for
+  # comparing the engines on chains of reads and compute.
+  executable('aisio_kv_retrieve',
+    'examples/aisio_kv_retrieve.cu',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
+    cuda_args : accel_kernel_args,
+  )
 else
   executable('test_sync_read_aisio', 'tests/skip.c')
   executable('test_mt_read_aisio', 'tests/skip.c')
