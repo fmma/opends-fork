@@ -67,7 +67,8 @@ One-time setup on the hardware machine, as an unprivileged user:
    `localhost` as the hostname. Use a `repo_path` and a `build_dir`
    dedicated to CI. The workflow copies the files into the checkout.
 5. Install cijoe and the python dependencies of `scripts/` for the
-   runner user.
+   runner user. `config.sh` records the PATH of the shell that runs it
+   in the runner's `.path`, so configure from a shell that finds them.
 6. Check that rsync on the machine is 3.2.3 or newer: `scripts/rsync.py`
    passes `--mkpath`.
 7. Install [labgrid](https://labgrid.readthedocs.io/), run
