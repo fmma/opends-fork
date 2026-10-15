@@ -6,12 +6,14 @@ hardware machine. It is opt-in per PR.
 A maintainer puts the `test-full` label on the PR. The label starts a
 `ci / test-full` check. The check waits for the hosted `lint` and
 `test-ref` jobs. When they pass, the job runs on the hardware
-machine's persistent runner. If the runner service is stopped, a
-labeled run queues until it starts again. A job that stays queued for
-more than 24 hours fails. The check is required, so a labeled PR
-cannot merge before the suite passes. A new push or a label change
-cancels the superseded run, queued or mid-suite, and starts a fresh
-one.
+machine's persistent runner. The job's first step on the machine
+checks that the stack is down: no HOMI process running, nothing
+mounted over ublk, and the NVMe controller on the kernel driver.
+Otherwise the job fails before it installs anything, names what is in
+the way, and leaves the machine alone. Re-run the job once the stack
+is down. The check is required, so a labeled PR cannot merge before
+the suite passes. A new push or a label change cancels the superseded
+run, queued or mid-suite, and starts a fresh one.
 
 The job runs the PR's own workflow and scripts as root on the machine.
 The label is the only gate, and it stays on the PR, so later pushes by
@@ -51,7 +53,10 @@ One-time setup on the hardware machine, as an unprivileged user:
    CIJOE" in the README). Populate the reference datasets for bench.
 2. Install the GitHub Actions runner under `~/actions-runner`.
    Register it with an extra `nvme-cuda` label. Install it as a
-   service (`sudo ./svc.sh install <user> && sudo ./svc.sh start`).
+   service (`sudo ./svc.sh install <user> && sudo ./svc.sh start`) and
+   leave it running: GitHub deletes the registration of a runner that
+   has not connected for 14 days. The stack check, not a stopped
+   service, is what keeps a labeled run off a machine in use.
 3. Create the local SSH loop: Make a passphrase-less key pair for the
    runner user and authorize it for `root@localhost`.
 4. Copy `configs/{test,transport}.toml.example` to
