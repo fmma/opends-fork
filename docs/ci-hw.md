@@ -6,14 +6,17 @@ hardware machine. It is opt-in per PR.
 A maintainer puts the `test-full` label on the PR. The label starts a
 `ci / test-full` check. The check waits for the hosted `lint` and
 `test-ref` jobs. When they pass, the job runs on the hardware
-machine's persistent runner. The job's first step on the machine
-checks that the stack is down: no HOMI process running, nothing
-mounted over ublk, and the NVMe controller on the kernel driver.
-Otherwise the job fails before it installs anything, names what is in
-the way, and leaves the machine alone. Re-run the job once the stack
-is down. The check is required, so a labeled PR cannot merge before
-the suite passes. A new push or a label change cancels the superseded
-run, queued or mid-suite, and starts a fresh one.
+machine's persistent runner. The job first takes the machine's
+labgrid place, as `gh-run-<run id>`, and fails naming the holder if
+someone else has it. It then checks that the stack is down: no HOMI
+process running, nothing mounted over ublk, and the NVMe controller
+on the kernel driver. Otherwise the job fails before it installs
+anything, names what is in the way, and leaves the machine alone. The
+place is given back when the job ends, cancelled or not. Re-run the
+job once the machine is free. The check is required, so a labeled PR
+cannot merge before the suite passes. A new push or a label change
+cancels the superseded run, queued or mid-suite, and starts a fresh
+one.
 
 The job runs the PR's own workflow and scripts as root on the machine.
 The label is the only gate, and it stays on the PR, so later pushes by
@@ -67,3 +70,8 @@ One-time setup on the hardware machine, as an unprivileged user:
    runner user.
 6. Check that rsync on the machine is 3.2.3 or newer: `scripts/rsync.py`
    passes `--mkpath`.
+7. Install [labgrid](https://labgrid.readthedocs.io/), run
+   `labgrid-coordinator` as a service bound to localhost, and create a
+   place for the machine. Put `LG_PLACE=<place>` in the runner's
+   `.env`. Everyone who uses the machine acquires that place first;
+   the job holds it with `labgrid-client acquire` and `release-from`.

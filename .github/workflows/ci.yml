@@ -47,10 +47,15 @@ jobs:
     needs: [lint, test-ref]
     runs-on: nvme-cuda
     timeout-minutes: 120
+    env:
+      LG_USERNAME: gh-run-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - name: Install target configs
         run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - name: Take the machine
+        id: lease
+        run: labgrid-client acquire
       - run: scripts/rsync.py
       - name: Check the stack is down
         id: check
@@ -61,16 +66,24 @@ jobs:
       - name: Tear the stack down
         if: always() && steps.check.outcome == 'success'
         run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/test.yaml homi_stack_down
+      - name: Give the machine back
+        if: always() && steps.lease.outcome == 'success'
+        run: labgrid-client release-from "$(hostname)/$LG_USERNAME"
 
   bench:
     if: success() && contains(github.event.pull_request.labels.*.name, 'bench')
     needs: [lint, test-ref]
     runs-on: nvme-cuda
     timeout-minutes: 60
+    env:
+      LG_USERNAME: gh-run-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - name: Install target configs
         run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - name: Take the machine
+        id: lease
+        run: labgrid-client acquire
       - run: scripts/rsync.py
       - name: Check the stack is down
         id: check
@@ -92,16 +105,24 @@ jobs:
           path: |
             cijoe-output-bench
             cijoe-output-teardown
+      - name: Give the machine back
+        if: always() && steps.lease.outcome == 'success'
+        run: labgrid-client release-from "$(hostname)/$LG_USERNAME"
 
   bench-sweep:
     if: success() && contains(github.event.pull_request.labels.*.name, 'bench-sweep')
     needs: [lint, test-ref]
     runs-on: nvme-cuda
     timeout-minutes: 720
+    env:
+      LG_USERNAME: gh-run-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - name: Install target configs
         run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - name: Take the machine
+        id: lease
+        run: labgrid-client acquire
       - run: scripts/rsync.py
       - name: Check the stack is down
         id: check
@@ -123,16 +144,24 @@ jobs:
           path: |
             cijoe-output-bench
             cijoe-output-teardown
+      - name: Give the machine back
+        if: always() && steps.lease.outcome == 'success'
+        run: labgrid-client release-from "$(hostname)/$LG_USERNAME"
 
   bench-full-sweep:
     if: success() && contains(github.event.pull_request.labels.*.name, 'bench-full-sweep')
     needs: [lint, test-ref]
     runs-on: nvme-cuda
     timeout-minutes: 2880
+    env:
+      LG_USERNAME: gh-run-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - name: Install target configs
         run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - name: Take the machine
+        id: lease
+        run: labgrid-client acquire
       - run: scripts/rsync.py
       - name: Check the stack is down
         id: check
@@ -154,3 +183,6 @@ jobs:
           path: |
             cijoe-output-bench
             cijoe-output-teardown
+      - name: Give the machine back
+        if: always() && steps.lease.outcome == 'success'
+        run: labgrid-client release-from "$(hostname)/$LG_USERNAME"
