@@ -138,6 +138,7 @@ def main(args, cijoe):
           f"(batches={args.batches} batch_size={args.batch_size}{knobs}) ---",
           flush=True)
     bdf = cijoe.getconf("test.nvme_bdf")
+    prefix = cijoe.getconf("deps.prefix", "/usr/local")
     env = ""
     mnt = args.mnt
     if args.backend == "gds":
@@ -177,7 +178,7 @@ def main(args, cijoe):
         target = bdf
 
     filperf = [
-        f"{env}prlimit --nofile={NOFILE}:{NOFILE} --",
+        f"PATH={prefix}/bin:$PATH {env}prlimit --nofile={NOFILE}:{NOFILE} --",
         f"filperf '{target}'",
         f"--backend {args.backend}",
         f"--data-dir {args.data_dir}",

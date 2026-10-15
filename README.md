@@ -274,7 +274,10 @@ memory. The stack is then torn down and nvme rebound.
    cp configs/test.toml.example configs/test.toml
    ```
 
-   `configs/deps.toml` is tracked and needs no editing.
+   `configs/deps.toml` is tracked and needs no editing. `deps.prefix` in
+   `test.toml` is where the dependencies and OpenDS install; the default
+   `/usr/local` suits a target of your own, a private prefix leaves a shared
+   one untouched.
 
 2. Bootstrap (first run only):
 

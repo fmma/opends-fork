@@ -85,7 +85,8 @@ steps:
 
   - name: homi_stack_up
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/homi_stack_up.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+      PATH='{{ config.deps.prefix | default("/usr/local") }}'/bin:"$PATH" \
+        '{{ config.test.repo_path }}/tasks/steps/homi_stack_up.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: test_sync_read_aisio
     run: |
