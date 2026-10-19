@@ -21,12 +21,13 @@
  * host buffer and pwritten via the fd, so XFS over qublk allocates and writes
  * it; the index is then marked dirty and re-resolved for later P2P I/O.
  *
- * Stream reads have two engines. By default an I/O thread issues the NVMe
+ * Stream I/O has two engines. By default an I/O thread issues the NVMe
  * commands when the user's stream reaches the op, reading the size and
  * offsets then. With OPENDS_AISIO_GPU_INITIATED=1 the GPU issues them itself
  * from GPU-resident queues on a stream registered with
- * OPENDS_STREAM_FIXED_SHAPE: those flags let the commands be built when the
- * op is submitted, and a kernel on the user's stream submits and reaps them.
+ * OPENDS_STREAM_FIXED_SHAPE, for every read and for the writes the in-place
+ * DMA rules allow: those flags let the commands be built when the op is
+ * submitted, and a kernel on the user's stream submits and reaps them.
  */
 
 #define _GNU_SOURCE
@@ -2314,17 +2315,19 @@ classify_accel_failure(struct driver *d, int accel_rc)
 }
 
 /* ------------------------------------------------------------------ */
-/*  GPU-initiated reads                                               */
+/*  GPU-initiated I/O                                                 */
 /* ------------------------------------------------------------------ */
 
 /*
- * A stream read the GPU issues itself. The submitting thread resolves the
- * extents and builds one NVMe read per chunk, PRP lists included, into a GPU
- * context claimed for the op. A kernel on the user's stream then submits the
- * commands from the context's GPU-resident queues and reaps them, and a host
- * callback behind it publishes bytes_read and returns the context. The shape
- * (size and offsets) is read when the op is submitted, not when the stream
- * reaches it.
+ * A stream op the GPU issues itself. The submitting thread resolves the
+ * extents and builds one NVMe command per chunk, PRP lists included, into a
+ * GPU context claimed for the op. A kernel on the user's stream then submits
+ * the commands from the context's GPU-resident queues and reaps them, and a
+ * host callback behind it publishes the byte count and returns the context.
+ * The shape (size and offsets) is read when the op is submitted, not when the
+ * stream reaches it. Every read qualifies; a write only when it is in place
+ * (classify_write), whole LBAs and from a registered buffer, the same rules
+ * as the I/O threads' DMA write path.
  */
 
 static void
@@ -2587,9 +2590,39 @@ gpu_set_prps(struct gpu_ctx *c, uint32_t k, uint8_t *dst, size_t len,
 	return 1;
 }
 
+static void
+gpu_op_reset(struct gpu_ctx *c)
+{
+	struct ds_gpu_op *op = c->op;
+
+	op->n_cmds = 0;
+	op->status = 0;
+	op->tail_nbytes = 0;
+	op->tail_dst = 0;
+	op->tail_src = 0;
+	op->blocks_done = 0;
+	op->result = 0;
+	c->prp_pages = 0;
+	c->bytes_total = 0;
+}
+
+/* Bytes one command moves at most: one PRP list page bounds a chunk at 512
+ * pages, so does the 16-bit block count, and so does MDTS. Whole LBAs. */
+static size_t
+gpu_chunk_max(const struct nvme_device *dev)
+{
+	size_t chunk_max = dev->mdts_nbytes;
+
+	chunk_max = XNVME_MIN_U64(chunk_max, (size_t)NVME_PRP_LIST_ENTRIES *
+	                                             NVME_PAGE_SIZE);
+	chunk_max = XNVME_MIN_U64(chunk_max,
+	                          (size_t)NVME_MAX_NLB << dev->lba_shift);
+	return chunk_max & ~(size_t)(dev->lba_size - 1);
+}
+
 static int
-gpu_add_read(struct driver *d, struct gpu_ctx *c, uint64_t slba, uint32_t nlbas,
-             uint8_t *dst, size_t len)
+gpu_add_cmd(struct driver *d, struct gpu_ctx *c, uint8_t opcode, uint64_t slba,
+            uint32_t nlbas, uint8_t *buf, size_t len)
 {
 	struct ds_gpu_op *op = c->op;
 	struct xnvme_spec_cmd *cmd;
@@ -2600,11 +2633,11 @@ gpu_add_read(struct driver *d, struct gpu_ctx *c, uint64_t slba, uint32_t nlbas,
 	}
 	cmd = &c->cmds[op->n_cmds];
 	memset(cmd, 0, sizeof(*cmd));
-	cmd->common.opcode = XNVME_SPEC_NVM_OPC_READ;
+	cmd->common.opcode = opcode;
 	cmd->common.nsid = c->dev->nsid;
 	cmd->nvm.slba = slba;
 	cmd->nvm.nlb = nlbas - 1;
-	rc = gpu_set_prps(c, op->n_cmds, dst, len, cmd);
+	rc = gpu_set_prps(c, op->n_cmds, buf, len, cmd);
 	if (rc < 0) {
 		return rc;
 	}
@@ -2629,7 +2662,7 @@ gpu_build_read(struct driver *d, struct gpu_ctx *c, struct registered_file *h,
 	uint32_t extent_count = 0;
 	uint32_t lba_shift = dev->lba_shift;
 	uint32_t lba_mask = dev->lba_size - 1;
-	size_t chunk_max = dev->mdts_nbytes;
+	size_t chunk_max = gpu_chunk_max(dev);
 	size_t bytes = 0;
 	uint64_t req_end;
 	int rc;
@@ -2638,25 +2671,10 @@ gpu_build_read(struct driver *d, struct gpu_ctx *c, struct registered_file *h,
 		return -EINVAL;
 	}
 	req_end = req_start + size;
-
-	/* One PRP list page per command bounds a chunk at 512 pages; so does
-	 * the 16-bit block count. */
-	chunk_max = XNVME_MIN_U64(chunk_max, (size_t)NVME_PRP_LIST_ENTRIES *
-	                                             NVME_PAGE_SIZE);
-	chunk_max = XNVME_MIN_U64(chunk_max, (size_t)NVME_MAX_NLB << lba_shift);
-	chunk_max &= ~(size_t)lba_mask;
 	if (chunk_max == 0) {
 		return -EINVAL;
 	}
-
-	op->n_cmds = 0;
-	op->status = 0;
-	op->tail_nbytes = 0;
-	op->tail_dst = 0;
-	op->tail_src = 0;
-	op->blocks_done = 0;
-	op->result = 0;
-	c->prp_pages = 0;
+	gpu_op_reset(c);
 
 	rc = resolve_extents(h, &extents, &extent_count);
 	if (rc < 0) {
@@ -2695,9 +2713,9 @@ gpu_build_read(struct driver *d, struct gpu_ctx *c, struct registered_file *h,
 		while (middle) {
 			size_t chunk = XNVME_MIN_U64(middle, chunk_max);
 
-			rc = gpu_add_read(d, c, cur_slba,
-			                  (uint32_t)(chunk >> lba_shift),
-			                  abs_dst, chunk);
+			rc = gpu_add_cmd(
+			        d, c, XNVME_SPEC_NVM_OPC_READ, cur_slba,
+			        (uint32_t)(chunk >> lba_shift), abs_dst, chunk);
 			if (rc < 0) {
 				goto out;
 			}
@@ -2711,8 +2729,8 @@ gpu_build_read(struct driver *d, struct gpu_ctx *c, struct registered_file *h,
 				rc = -EINVAL;
 				goto out;
 			}
-			rc = gpu_add_read(d, c, cur_slba, 1, c->bounce,
-			                  dev->lba_size);
+			rc = gpu_add_cmd(d, c, XNVME_SPEC_NVM_OPC_READ,
+			                 cur_slba, 1, c->bounce, dev->lba_size);
 			if (rc < 0) {
 				goto out;
 			}
@@ -2725,6 +2743,74 @@ gpu_build_read(struct driver *d, struct gpu_ctx *c, struct registered_file *h,
 	rc = 0;
 out:
 	free(extents);
+	c->bytes_total = bytes;
+	return rc;
+}
+
+/* Build the commands for an in-place write of size bytes at req_start from
+ * src_base, over a snapshot that covers the range (classify_write). Extents
+ * start on LBA boundaries and the range is whole LBAs, so every span is too.
+ * Returns 0, -E2BIG when the op does not fit the context (the host path
+ * takes it), -EINVAL for a span that is not whole LBAs, or -EFAULT when the
+ * buffer does not translate. */
+static int
+gpu_build_write(struct driver *d, struct gpu_ctx *c, uint8_t *src_base,
+                uint64_t req_start, size_t size,
+                const struct ds_extent *extents, uint32_t extent_count)
+{
+	struct nvme_device *dev = c->dev;
+	uint32_t lba_shift = dev->lba_shift;
+	uint32_t lba_mask = dev->lba_size - 1;
+	size_t chunk_max = gpu_chunk_max(dev);
+	size_t bytes = 0;
+	uint64_t req_end = req_start + size;
+	int rc = 0;
+
+	if (chunk_max == 0) {
+		return -EINVAL;
+	}
+	gpu_op_reset(c);
+
+	for (uint32_t i = 0; i < extent_count; i++) {
+		const struct ds_extent *e = &extents[i];
+		uint64_t ext_start = e->file_offset;
+		uint64_t ext_end = ext_start + e->length;
+		uint64_t span_start, span_end, off_in_ext, cur_slba;
+		uint8_t *abs_src;
+		size_t span;
+
+		if (ext_start >= req_end) {
+			break;
+		}
+		span_start = max_u64(req_start, ext_start);
+		span_end = XNVME_MIN_U64(req_end, ext_end);
+		if (span_start >= span_end) {
+			continue;
+		}
+		off_in_ext = span_start - ext_start;
+		span = span_end - span_start;
+		if ((off_in_ext | span) & lba_mask) {
+			rc = -EINVAL;
+			break;
+		}
+		abs_src = src_base + (span_start - req_start);
+		cur_slba = e->slba + (off_in_ext >> lba_shift);
+		while (span) {
+			size_t chunk = XNVME_MIN_U64(span, chunk_max);
+
+			rc = gpu_add_cmd(
+			        d, c, XNVME_SPEC_NVM_OPC_WRITE, cur_slba,
+			        (uint32_t)(chunk >> lba_shift), abs_src, chunk);
+			if (rc < 0) {
+				goto out;
+			}
+			cur_slba += chunk >> lba_shift;
+			abs_src += chunk;
+			span -= chunk;
+			bytes += chunk;
+		}
+	}
+out:
 	c->bytes_total = bytes;
 	return rc;
 }
@@ -2776,7 +2862,7 @@ static void
 gpu_ctx_retire(struct gpu_ctx *c)
 {
 	fprintf(stderr,
-	        "aisio: a GPU-issued read on %s timed out; retiring its "
+	        "aisio: a GPU-issued op on %s timed out; retiring its "
 	        "queues\n",
 	        c->dev->dev_uri);
 	__atomic_store_n(&c->broken, true, __ATOMIC_RELEASE);
@@ -2856,43 +2942,15 @@ gpu_ctx_claim(struct nvme_device *dev)
 	}
 }
 
-/* Submit a stream read the GPU issues. Returns true when the op was taken,
- * with *err the result of submitting it, or false to leave it to the host
- * path. */
-static bool
-submit_stream_read_gpu(struct driver *d, struct registered_file *h,
-                       void *buf_base, size_t size, off_t file_offset,
-                       off_t buf_offset, ssize_t *bytes_p, bool aligned,
-                       ds_accel_stream_t cus, opends_error_t *err)
+/* Put a built op on the stream: the PRP lists, the kernel, and behind it the
+ * callback that publishes the result when the kernel cannot. On failure part
+ * of the op may be on the stream, so the context is retired, not released. */
+static opends_error_t
+gpu_launch(struct driver *d, struct gpu_ctx *c, ssize_t *bytes_p,
+           ds_accel_stream_t cus)
 {
-	struct gpu_ctx *c = gpu_ctx_claim(h->dev);
-	opends_op_error_t e;
-	int rc, accel_rc;
+	int accel_rc;
 
-	if (!c) {
-		return false;
-	}
-	rc = gpu_build_read(d, c, h, (uint8_t *)buf_base + buf_offset,
-	                    (uint64_t)file_offset, size, aligned);
-	if (rc == -E2BIG) {
-		gpu_ctx_release(c);
-		return false;
-	}
-	if (rc < 0) {
-		gpu_ctx_release(c);
-		e = rc == -EINVAL ? OPENDS_INVALID_VALUE
-		    : rc == -EIO  ? OPENDS_FS_SETUP_ERROR
-		                  : OPENDS_DEVICE_DRIVER_ERROR;
-		*err = gpu_report(d, cus, bytes_p, -(ssize_t)e);
-		return true;
-	}
-	if (c->op->n_cmds == 0) {
-		ssize_t n = (ssize_t)c->bytes_total;
-
-		gpu_ctx_release(c);
-		*err = gpu_report(d, cus, bytes_p, n);
-		return true;
-	}
 	c->bytes_p = bytes_p;
 	c->op->result = result_dptr(d, bytes_p);
 	if (c->op->result) {
@@ -2920,14 +2978,109 @@ submit_stream_read_gpu(struct driver *d, struct registered_file *h,
 			goto fail;
 		}
 	}
-	*err = opends_ok();
-	return true;
+	return opends_ok();
 
 fail:
-	/* Part of the op may be on the stream, so the context cannot be
-	 * taken back; retire it. */
 	__atomic_store_n(&c->broken, true, __ATOMIC_RELEASE);
-	*err = classify_accel_failure(d, accel_rc);
+	return classify_accel_failure(d, accel_rc);
+}
+
+/* Submit a stream read the GPU issues. Returns true when the op was taken,
+ * with *err the result of submitting it, or false to leave it to the host
+ * path. */
+static bool
+submit_stream_read_gpu(struct driver *d, struct registered_file *h,
+                       void *buf_base, size_t size, off_t file_offset,
+                       off_t buf_offset, ssize_t *bytes_p, bool aligned,
+                       ds_accel_stream_t cus, opends_error_t *err)
+{
+	struct gpu_ctx *c = gpu_ctx_claim(h->dev);
+	opends_op_error_t e;
+	int rc;
+
+	if (!c) {
+		return false;
+	}
+	rc = gpu_build_read(d, c, h, (uint8_t *)buf_base + buf_offset,
+	                    (uint64_t)file_offset, size, aligned);
+	if (rc == -E2BIG) {
+		gpu_ctx_release(c);
+		return false;
+	}
+	if (rc < 0) {
+		gpu_ctx_release(c);
+		e = rc == -EINVAL ? OPENDS_INVALID_VALUE
+		    : rc == -EIO  ? OPENDS_FS_SETUP_ERROR
+		                  : OPENDS_DEVICE_DRIVER_ERROR;
+		*err = gpu_report(d, cus, bytes_p, -(ssize_t)e);
+		return true;
+	}
+	if (c->op->n_cmds == 0) {
+		ssize_t n = (ssize_t)c->bytes_total;
+
+		gpu_ctx_release(c);
+		*err = gpu_report(d, cus, bytes_p, n);
+		return true;
+	}
+	*err = gpu_launch(d, c, bytes_p, cus);
+	return true;
+}
+
+/* Submit a stream write the GPU issues: one the in-place DMA rules allow,
+ * decided from the shape at submit. Returns true when the op was taken, with
+ * *err the result of submitting it, or false to leave it to the host path,
+ * which carries an in-place write by DMA from an I/O thread and stages every
+ * other write through the kernel. */
+static bool
+submit_stream_write_gpu(struct driver *d, struct registered_file *h,
+                        void *buf_base, size_t size, off_t file_offset,
+                        off_t buf_offset, ssize_t *bytes_p,
+                        ds_accel_stream_t cus, opends_error_t *err)
+{
+	struct nvme_device *dev = h->dev;
+	uint8_t *src = (uint8_t *)buf_base + buf_offset;
+	uint64_t start = (uint64_t)file_offset;
+	struct ds_extent *extents = NULL;
+	uint32_t extent_count = 0;
+	struct gpu_ctx *c;
+	opends_op_error_t e;
+	int rc;
+
+	if (!size || file_offset < 0 || size > UINT64_MAX - start ||
+	    ((start | size) & (dev->lba_size - 1)) ||
+	    !buf_registered(d, src, size)) {
+		return false;
+	}
+	if (classify_write(h, start, start + size, &extents, &extent_count) !=
+	    WRITE_IN_PLACE) {
+		return false;
+	}
+	c = gpu_ctx_claim(dev);
+	if (!c) {
+		free(extents);
+		return false;
+	}
+	rc = gpu_build_write(d, c, src, start, size, extents, extent_count);
+	free(extents);
+	if (rc == -E2BIG) {
+		gpu_ctx_release(c);
+		return false;
+	}
+	if (rc < 0) {
+		gpu_ctx_release(c);
+		e = rc == -EINVAL ? OPENDS_INVALID_VALUE
+		                  : OPENDS_DEVICE_DRIVER_ERROR;
+		*err = gpu_report(d, cus, bytes_p, -(ssize_t)e);
+		return true;
+	}
+	if (c->op->n_cmds == 0) {
+		ssize_t n = (ssize_t)c->bytes_total;
+
+		gpu_ctx_release(c);
+		*err = gpu_report(d, cus, bytes_p, n);
+		return true;
+	}
+	*err = gpu_launch(d, c, bytes_p, cus);
 	return true;
 }
 
@@ -2955,18 +3108,26 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	struct io_worker *w;
 	uint32_t head;
 
-	/* The GPU engine takes a read it has room for when the stream's flags
-	 * fix the shape at submit; the rest, and every write, goes to an I/O
-	 * thread, which reads the size and offsets at stream time. */
-	if (!is_write && d->gpu_ready &&
+	/* The GPU engine takes an op it has room for when the stream's flags
+	 * fix the shape at submit: any read, and a write the in-place DMA
+	 * rules allow. The rest goes to an I/O thread, which reads the size
+	 * and offsets at stream time. */
+	if (d->gpu_ready &&
 	    (opends_stream->flags & OPENDS_STREAM_FIXED_SHAPE) ==
 	            OPENDS_STREAM_FIXED_SHAPE) {
 		opends_error_t gerr;
+		bool taken;
 
-		if (submit_stream_read_gpu(d, h, buf_base, *size_p,
-		                           *file_offset_p, *buf_offset_p,
-		                           bytes_p, opends_stream->aligned, cus,
-		                           &gerr))
+		if (is_write)
+			taken = submit_stream_write_gpu(
+			        d, h, buf_base, *size_p, *file_offset_p,
+			        *buf_offset_p, bytes_p, cus, &gerr);
+		else
+			taken = submit_stream_read_gpu(
+			        d, h, buf_base, *size_p, *file_offset_p,
+			        *buf_offset_p, bytes_p, opends_stream->aligned,
+			        cus, &gerr);
+		if (taken)
 			return gerr;
 	}
 

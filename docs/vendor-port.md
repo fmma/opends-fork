@@ -4,7 +4,7 @@ The aisio backend reads NVMe straight into GPU memory over xNVMe P2P DMA.
 Its only GPU dependency is a narrow runtime surface, `struct ds_accel_ops`
 in `src/ds_accel.h`: context capture and binding, pinned-mapped host
 allocation, a host/device copy, a stream-ordered host callback, a
-deferred stream-ordered copy, and, for GPU-initiated reads, a
+deferred stream-ordered copy, and, for GPU-initiated I/O, a
 stream-ordered host/device copy and the launch of the GPU I/O kernel. The
 NVMe and extent code calls only through the active-ops pointer
 `ds_accel`, never a vendor symbol.

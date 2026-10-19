@@ -15,7 +15,7 @@
 /* The copy_stream kernel launcher, defined in the nvcc TU
  * (ds_bounce_kernel_cuda.cu). */
 int cuda_copy_stream(uint64_t desc_dev, void *stream);
-/* The GPU-initiated read kernel launcher, defined in the nvcc TU
+/* The GPU-initiated I/O kernel launcher, defined in the nvcc TU
  * (ds_gpu_io_cuda.cu). */
 int cuda_gpu_io_launch(uint64_t op_dev, uint32_t nblocks, uint32_t depth,
                        void *stream);

@@ -71,12 +71,12 @@ struct ds_accel_ops {
 
 	/* Copy between pinned host memory and device memory in stream order
 	 * (direction inferred from the pointers). Required only for
-	 * GPU-initiated reads. */
+	 * GPU-initiated I/O. */
 	int (*copy_async)(void *dst, const void *src, size_t bytes,
 	                  ds_accel_stream_t stream);
-	/* Launch the GPU-initiated read kernel over the ds_gpu_op at desc:
+	/* Launch the GPU-initiated I/O kernel over the ds_gpu_op at desc:
 	 * nblocks blocks of depth threads, one GPU-resident queue per block,
-	 * ordered on the stream. Required only for GPU-initiated reads. */
+	 * ordered on the stream. Required only for GPU-initiated I/O. */
 	int (*gpu_io_launch)(ds_accel_devptr_t desc, uint32_t nblocks,
 	                     uint32_t depth, ds_accel_stream_t stream);
 };

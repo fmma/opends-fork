@@ -22,7 +22,8 @@ TESTS_BY_BACKEND = {
               "async_read", "async_read_busy_spin", "batch_read",
               "stream_read", "stream_read_busy_spin", "stream_read_gpu",
               "sync_write",
-              "stream_write", "block_alloc", "p2p_write"],
+              "stream_write", "stream_write_gpu", "block_alloc",
+              "p2p_write"],
 }
 ALL_TESTS = sorted({t for ts in TESTS_BY_BACKEND.values() for t in ts})
 
