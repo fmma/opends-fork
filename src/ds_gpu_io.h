@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * ds_gpu_io.h - GPU-initiated read descriptor shared between opends_aisio.c
+ * ds_gpu_io.h - GPU-initiated I/O descriptor shared between opends_aisio.c
  * (host) and the vendor kernel TU (device).
  *
  * The host builds the NVMe commands and PRP lists when the op is submitted

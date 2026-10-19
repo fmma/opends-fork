@@ -139,32 +139,35 @@ is the only place they are named.
   GPU memory, mirrored to the host by a resident kernel
   (`XNVME_QUEUE_P2P_CQ_MIRROR`). Default off.
 
-### GPU-initiated stream reads
+### GPU-initiated stream I/O
 
 By default an I/O worker thread issues the NVMe commands of a stream read
-when the user's stream reaches the op, and reads `size_p`, `file_offset_p`
-and `buf_offset_p` then. With `OPENDS_AISIO_GPU_INITIATED=1` the GPU issues
-them itself on every stream registered with `OPENDS_STREAM_FIXED_SHAPE`:
-`opends_stream_read` resolves the file's extents and builds the commands,
-PRP lists included, when it is called, and enqueues a kernel on the stream
-that submits them from GPU-resident NVMe queues and reaps the completions.
-No host thread is on the path once the stream reaches the op.
+or write when the user's stream reaches the op, and reads `size_p`,
+`file_offset_p` and `buf_offset_p` then. With `OPENDS_AISIO_GPU_INITIATED=1`
+the GPU issues them itself on every stream registered with
+`OPENDS_STREAM_FIXED_SHAPE`: `opends_stream_read` and `opends_stream_write`
+resolve the file's extents and build the commands, PRP lists included, when
+they are called, and enqueue a kernel on the stream that submits them from
+GPU-resident NVMe queues and reaps the completions. No host thread is on the
+path once the stream reaches the op.
 
-The flags fix the shape of the read at call time, which is what lets the
+The flags fix the shape of the op at call time, which is what lets the
 commands be built there; a stream registered without them keeps the I/O
-workers and deferred evaluation while the engine is on. Stream writes, and
-reads too large for a context (see `OPENDS_AISIO_GPU_MAX_CMDS`), still go
-through the I/O workers. GPU-resident queues need the privileges xNVMe
+workers and deferred evaluation while the engine is on. A write takes the GPU
+engine only when the in-place DMA rules allow it (see AiSIO writes below);
+every other write, and an op too large for a context (see
+`OPENDS_AISIO_GPU_MAX_CMDS`), still goes through the I/O workers.
+GPU-resident queues need the privileges xNVMe
 documents for GPU-issued I/O (the controller's BAR through sysfs, so root)
 and, behind a translating IOMMU, the `iommu_map_pa` module.
 
-- `OPENDS_AISIO_GPU_INITIATED`: `1` enables the GPU engine for the reads of
-  fixed-shape streams. Default off. Driver open fails when the GPU queues
+- `OPENDS_AISIO_GPU_INITIATED`: `1` enables the GPU engine for the reads and
+  in-place writes of fixed-shape streams. Default off. Driver open fails when the GPU queues
   cannot be created.
 - `OPENDS_AISIO_GPU_QUEUE_DEPTH`: Depth of each GPU-resident queue, which is
-  also the size of the CUDA block that drives it. A read with more commands
+  also the size of the CUDA block that drives it. An op with more commands
   than the depth goes in several rounds, each waiting for the slowest
-  completion before the next, so a depth that holds a whole read is fastest.
+  completion before the next, so a depth that holds a whole op is fastest.
   Default 256, at most 1023.
 - `OPENDS_AISIO_GPU_CTXS`: GPU contexts per device, each one op in flight
   with its own queues, command array and PRP lists. A submit waits for a
@@ -173,7 +176,7 @@ and, behind a translating IOMMU, the `iommu_map_pa` module.
   and the I/O workers.
 - `OPENDS_AISIO_GPU_QUEUES_PER_OP`: Queues (CUDA blocks) an op is spread
   over. Default 1, at most 8.
-- `OPENDS_AISIO_GPU_MAX_CMDS`: Commands a context holds; a read needing more
+- `OPENDS_AISIO_GPU_MAX_CMDS`: Commands a context holds; an op needing more
   falls back to the I/O workers. Each command moves up to the smaller of the
   device's MDTS and 2 MiB, and each costs a 4 KiB PRP list page in host and
   GPU memory per context. Default 2048.
@@ -221,7 +224,9 @@ does not wait for a re-index. Every other write, an append, a write into a
 hole, an unaligned one or one from an unregistered buffer, is staged to a host
 buffer and written through the kernel-mounted filesystem, which allocates
 blocks as needed; after an allocating write the index is marked dirty until
-xal-server has re-indexed.
+xal-server has re-indexed. With the GPU engine on, an in-place write on a
+fixed-shape stream is issued by the GPU like a read (see GPU-initiated
+stream I/O above).
 
 The DMA path treats every allocated extent as data and ignores the
 filesystem's unwritten state. A range preallocated with `fallocate` reads back

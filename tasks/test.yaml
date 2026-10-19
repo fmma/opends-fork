@@ -186,6 +186,17 @@ steps:
         '{{ config.test.build_dir }}/test_stream_write_aisio' \
           '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
 
+  - name: test_stream_write_gpu_aisio
+    run: |
+      # The GPU issues the in-place writes itself; the allocating and
+      # unaligned ones fall back to the I/O workers. The test registers its
+      # stream with OPENDS_STREAM_FIXED_SHAPE, which the engine requires.
+      OPENDS_XAL_SHM=/xal_dev0 \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        OPENDS_AISIO_GPU_INITIATED=1 \
+        '{{ config.test.build_dir }}/test_stream_write_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
+
   - name: test_block_alloc_aisio
     run: |
       OPENDS_XAL_SHM=/xal_dev0 \

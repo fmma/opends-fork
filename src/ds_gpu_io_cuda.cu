@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * CUDA kernel for GPU-initiated stream reads. One block drives one
+ * CUDA kernel for GPU-initiated stream I/O. One block drives one
  * GPU-resident NVMe queue and the block size is the queue depth. The blocks
- * take turns over the command array: each submits a round of up to depth
- * commands and reaps it before the next round. The block that issued the
- * last command copies the sub-LBA tail out of the bounce slot once that
- * command has completed.
+ * take turns over the command array, reads or writes alike: each submits a
+ * round of up to depth commands and reaps it before the next round. The
+ * block that issued the last command copies a read's sub-LBA tail out of the
+ * bounce slot once that command has completed.
  *
  * Compiled by nvcc; does not include the host ds_accel.h shim.
  */
