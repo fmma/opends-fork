@@ -138,10 +138,11 @@ def main(args, cijoe):
           f"(batches={args.batches} batch_size={args.batch_size}{knobs}) ---",
           flush=True)
     bdf = cijoe.getconf("test.nvme_bdf")
+    repo = cijoe.getconf("test.repo_path")
+    prefix = cijoe.getconf("deps.install_prefix", "/usr/local")
     env = ""
     mnt = args.mnt
     if args.backend == "gds":
-        repo = cijoe.getconf("test.repo_path")
         err, state = cijoe.run(f"'{repo}/tasks/steps/resolve_nvme_ns.sh' '{bdf}'")
         if err:
             return err
@@ -189,7 +190,8 @@ def main(args, cijoe):
     if MODE_FLAG[args.mode]:
         filperf.append(MODE_FLAG[args.mode])
 
-    cmd = "echo 3 > /proc/sys/vm/drop_caches\n" + " \\\n  ".join(filperf)
+    cmd = (f". '{repo}/tasks/steps/install_prefix.sh' '{prefix}'\n"
+           "echo 3 > /proc/sys/vm/drop_caches\n" + " \\\n  ".join(filperf))
     err, state = cijoe.run(cmd)
     # assume_aligned_only rejects any read with a sub-LBA tail, so a dataset
     # whose files are not LBA-multiples fails by construction. Record it and
