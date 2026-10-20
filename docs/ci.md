@@ -15,10 +15,10 @@ the build directory and the Python binding tests under `python/tests`.
 The cufile and aisio backends need CUDA, the pinned dependency stack
 and a machine with an NVMe device and a GPU with dma-buf P2P support,
 so the hosted jobs do not cover them. Their suite runs on a self-hosted
-runner behind the `test-full` label, as described below. Without the
-label that check is skipped, and the manual flow in the README
-(`rsync.py`, `build.py`, `run_tests.py` against a configured target)
-remains available.
+runner behind the `test-full` label, and the benchmarks behind the
+`bench` labels, as described below. Without a label those checks are
+skipped, and the manual flow in the README (`rsync.py`, `build.py`,
+`run_tests.py` against a configured target) remains available.
 
 ## Hardware checks
 
@@ -56,23 +56,31 @@ same rsync/build/run_tests flow as manual development (see "Remote
 testing with CIJOE" in the README). The full log lands on the
 workflow run.
 
-Every job uploads its cijoe output as a workflow artifact on the run.
+The bench labels work the same way, except that a bench job waits for
+`test-full` and is skipped when that one fails; without the `test-full`
+label it runs on its own. `bench` runs one leg at the default knobs,
+`bench-sweep` runs the standard sweep (`scripts/bench/sweep.toml`), and
+`bench-full-sweep` runs the whole knob cross product. Every job uploads its cijoe output as a workflow
+artifact on the run, the bench ones with `report.md`. The reference
+datasets must already be present on the machine.
 
 ### Repository setup
 
 One-time GitHub configuration on the repository the workflow runs in:
 
-1. Create the `test-full` label.
-2. Add the `test-full / nvme-cuda` check to the required status checks.
-   A skipped check satisfies the requirement, so unlabeled PRs are
-   unaffected.
+1. Create the `test-full`, `bench`, `bench-sweep`, and
+   `bench-full-sweep` labels.
+2. Add the four checks, `test-full / nvme-cuda`, `bench / nvme-cuda`,
+   `bench-sweep / nvme-cuda` and `bench-full-sweep / nvme-cuda`, to the
+   required status checks. A skipped check satisfies the requirement,
+   so unlabeled PRs are unaffected.
 
 ### Runner machine
 
 One-time setup on the hardware machine, as an unprivileged user:
 
 1. Bring the machine to the target requirements ("Remote testing with
-   CIJOE" in the README).
+   CIJOE" in the README). Populate the reference datasets for bench.
 2. Install the GitHub Actions runner under `~/actions-runner`.
    Register it with an extra `nvme-cuda` label. Install it as a
    service (`sudo ./svc.sh install <user> && sudo ./svc.sh start`) and
