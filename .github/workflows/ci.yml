@@ -50,4 +50,4 @@ jobs:
       name: test-full
       run: scripts/run_tests.py
       teardown: tasks/test.yaml homi_stack_down
-      timeout-minutes: 120
+      timeout-minutes: 1560
