@@ -56,6 +56,15 @@ jobs:
       - name: Render the report
         if: inputs.report
         run: scripts/bench/report.py
+      - name: Bundle the results
+        if: inputs.report
+        run: scripts/bench/results.py
+      - name: Upload the results
+        if: inputs.report
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ inputs.name }}
+          path: results
       - name: Tear the stack down
         if: always() && steps.check.outcome == 'success'
         run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml ${{ inputs.teardown }}
