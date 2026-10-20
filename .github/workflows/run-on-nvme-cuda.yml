@@ -31,6 +31,10 @@ jobs:
     timeout-minutes: ${{ inputs.timeout-minutes }}
     env:
       LG_USERNAME: gh-run-${{ github.run_id }}-${{ inputs.name }}
+      OPENDS_CI_JOB: ${{ inputs.name }}
+      OPENDS_CI_PR: ${{ github.event.pull_request.number }}
+      OPENDS_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      OPENDS_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@v4
       - name: Install target configs
