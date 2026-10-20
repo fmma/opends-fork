@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
@@ -40,3 +41,13 @@ jobs:
       - name: Run python binding tests
         run: python3 -m pytest tests
         working-directory: python
+
+  test-full:
+    if: success() && contains(github.event.pull_request.labels.*.name, 'test-full')
+    needs: [lint, test-ref]
+    uses: ./.github/workflows/run-on-nvme-cuda.yml
+    with:
+      name: test-full
+      run: scripts/run_tests.py
+      teardown: tasks/test.yaml homi_stack_down
+      timeout-minutes: 120
