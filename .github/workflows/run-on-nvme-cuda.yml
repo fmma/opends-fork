@@ -16,6 +16,10 @@ on:
         description: The cijoe task and steps that bring the stack down
         required: true
         type: string
+      report:
+        description: Render the bench report before uploading
+        type: boolean
+        default: false
       timeout-minutes:
         description: Run budget plus a day of waiting for the machine
         required: true
@@ -45,6 +49,9 @@ jobs:
       - run: scripts/setup_deps.py
       - run: scripts/build.py
       - run: ${{ inputs.run }}
+      - name: Render the report
+        if: inputs.report
+        run: scripts/bench/report.py
       - name: Tear the stack down
         if: always() && steps.check.outcome == 'success'
         run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml ${{ inputs.teardown }}
