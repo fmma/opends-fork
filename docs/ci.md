@@ -61,8 +61,11 @@ The bench labels work the same way, except that a bench job waits for
 label it runs on its own. `bench` runs one leg at the default knobs,
 `bench-sweep` runs the standard sweep (`scripts/bench/sweep.toml`), and
 `bench-full-sweep` runs the whole knob cross product. Every job uploads its cijoe output as a workflow
-artifact on the run, the bench ones with `report.md`. The reference
-datasets must already be present on the machine.
+artifact on the run. A bench job that ran its legs also uploads
+`results-<job>`: `results.json` with the run's provenance, every
+record, the raw filperf logs and the report, and `report.md` beside it,
+so a collector fetches one artifact per job. The reference datasets
+must already be present on the machine.
 
 ### Repository setup
 
