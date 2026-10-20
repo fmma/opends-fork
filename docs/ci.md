@@ -28,13 +28,19 @@ hardware machine. It is opt-in per PR.
 A maintainer puts the `test-full` label on the PR. The label starts a
 `test-full / nvme-cuda` check. The check waits for the hosted `lint` and
 `test-ref` jobs. When they pass, the job runs on the hardware
-machine's persistent runner. It first checks that the stack is down:
-no HOMI process running, nothing mounted over ublk, and the NVMe
-controller on the kernel driver.
+machine's persistent runner. The job first queues for the machine's
+labgrid place as `gh-run-<run id>-<job>`, printing who holds it, and
+waits up to a day; each job's timeout is its run budget plus that day.
+It then checks that the stack is down: no HOMI process running,
+nothing mounted over ublk, and the NVMe controller on the kernel
+driver.
 Otherwise the job fails before it installs anything, names what is in
-the way, and leaves the machine alone. The check is required, so a
-labeled PR cannot merge before the suite passes. A new push or a label
-change cancels the superseded run and starts a fresh one.
+the way, and leaves the machine alone. The place is given back when
+the job ends, cancelled or not. Someone who needs the machine while a
+job waits or runs cancels the run and re-runs it afterwards. The check
+is required, so a labeled PR cannot merge before the suite passes. A
+new push or a label change cancels the superseded run, queued or
+mid-suite, and starts a fresh one.
 
 The job runs the PR's own workflow and scripts as root on the machine.
 The label is the only gate, and it stays on the PR, so later pushes by
@@ -87,3 +93,9 @@ One-time setup on the hardware machine, as an unprivileged user:
    in the runner's `.path`, so configure from a shell that finds them.
 6. Check that rsync on the machine is 3.2.3 or newer: `scripts/rsync.py`
    passes `--mkpath`.
+7. Install [labgrid](https://labgrid.readthedocs.io/), run
+   `labgrid-coordinator` as a service bound to localhost, and create a
+   place for the machine. Put `LG_PLACE=<place>` in the runner's
+   `.env`. Everyone who uses the machine acquires that place first;
+   the job queues for it with a reservation and gives it back with
+   `release-from`.

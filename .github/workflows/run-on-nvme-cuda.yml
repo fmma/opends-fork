@@ -5,7 +5,7 @@ on:
   workflow_call:
     inputs:
       name:
-        description: The calling job's name
+        description: The calling job's name; part of the lease identity
         required: true
         type: string
       run:
@@ -17,7 +17,7 @@ on:
         required: true
         type: string
       timeout-minutes:
-        description: Run budget
+        description: Run budget plus a day of waiting for the machine
         required: true
         type: number
 
@@ -25,10 +25,19 @@ jobs:
   nvme-cuda:
     runs-on: nvme-cuda
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      LG_USERNAME: gh-run-${{ github.run_id }}-${{ inputs.name }}
     steps:
       - uses: actions/checkout@v4
       - name: Install target configs
         run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - name: Wait for the machine
+        id: lease
+        run: |
+          labgrid-client show | grep '^  acquired:'
+          eval "$(labgrid-client reserve --wait --shell name="$LG_PLACE")"
+          echo "LG_TOKEN=$LG_TOKEN" >> "$GITHUB_ENV"
+          labgrid-client -p + acquire
       - run: scripts/rsync.py
       - name: Check the stack is down
         id: check
@@ -45,3 +54,8 @@ jobs:
         with:
           name: ${{ inputs.name }}
           path: cijoe-output-*
+      - name: Give the machine back
+        if: always() && steps.lease.outcome == 'success'
+        run: |
+          labgrid-client release-from "$(hostname)/$LG_USERNAME"
+          labgrid-client cancel-reservation || true
