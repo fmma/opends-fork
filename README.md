@@ -248,7 +248,8 @@ Integration tests run on a remote target via
   hugepages allocated (prerequisites for the GPU↔NVMe dma-buf P2P path that
   aisio uses).
 - An XFS filesystem on the test namespace; the mount step does not format. Test
-  artifacts live under `<mount_point>/opends_tests/`.
+  artifacts live under `<mount_point>/opends_tests/` and are removed at the end
+  of a run.
 
 The [aisio](https://github.com/xnvme/aisio) project ships cijoe tasks that take
 a fresh Ubuntu 24.04 install through every step above (custom kernel, NVIDIA
