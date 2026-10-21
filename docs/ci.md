@@ -65,7 +65,10 @@ artifact on the run. A bench job that ran its legs also uploads
 `results-<job>`: `results.json` with the run's provenance, every
 record, the raw filperf logs and the report, and `report.md` beside it,
 so a collector fetches one artifact per job. The reference datasets
-must already be present on the machine.
+must already be present on the machine, and nothing else should be:
+filperf indexes the whole filesystem, so the suite removes its files at
+the end of a run, and a file left by other work changes the bench or
+crashes it.
 
 ### Repository setup
 

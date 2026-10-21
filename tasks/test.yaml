@@ -12,8 +12,9 @@ doc: |
   hands the controller to userspace, exposes it as a ublk block device,
   and remounts the same XFS over it, so the sync-read pattern written
   during prep is still present. The aisio tests attach I/O qpairs from
-  HOMI and read that pattern file. homi_stack_down tears the stack down
-  and rebinds nvme so iterative runs leave the target usable.
+  HOMI and read that pattern file. clean_test_dir removes the files the
+  suite wrote, then homi_stack_down tears the stack down and rebinds nvme
+  so iterative runs leave the target usable.
 
   Prerequisites:
     - setup_opends.yaml has been run (sync_and_build.py does this).
@@ -197,6 +198,10 @@ steps:
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_block_alloc_aisio' \
           '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
+
+  - name: clean_test_dir
+    run: |
+      rm -f '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin' '{{ config.test.mount_point }}/opends_tests/coherency_large.bin' '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
 
   - name: homi_stack_down
     run: |
