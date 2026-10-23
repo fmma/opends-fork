@@ -93,8 +93,9 @@ int main(void)
   every device the server holds gets its own queues and I/O threads. File
   extents come from per-device indexes xal-server publishes over POSIX shared
   memory, built over the qublk-exported block devices, and a registered file
-  is bound to the device whose index resolves its path. Reads and writes are
-  supported. Requires xNVMe, xal, and the CUDA toolkit.
+  is bound to the device whose index resolves its path. Reads are P2P DMA, and
+  so are writes inside the file's allocated extents; see AiSIO writes below.
+  Requires xNVMe, xal, and the CUDA toolkit.
 
 ## OpenDS AiSIO configuration
 
@@ -133,6 +134,26 @@ is the only place they are named.
   every process in the group shares, so xNVMe's 1 GiB default is too large.
 - `OPENDS_AISIO_DEVICE_HEAP_MB`: GPU device heap for this process. Default 0,
   which leaves it at the xNVMe default.
+
+## AiSIO writes
+
+A write whose range lies inside the file's allocated extents, at or below the
+file size, goes GPU to NVMe by DMA when it is LBA-aligned and its source is a
+registered buffer, and it leaves the extent index alone, so a read that follows
+does not wait for a re-index. Every other write, an append, a write into a
+hole, an unaligned one or one from an unregistered buffer, is staged to a host
+buffer and written through the kernel-mounted filesystem, which allocates
+blocks as needed; after an allocating write the index is marked dirty until
+xal-server has re-indexed.
+
+The DMA path treats every allocated extent as data and ignores the
+filesystem's unwritten state. A range preallocated with `fallocate` reads back
+through OpenDS as whatever bytes the DMA put there, while the kernel reports
+zeros for it until something writes it through the filesystem. A DMA write
+also leaves the file's timestamps and other processes' cached pages alone.
+Files shared by reflink are not supported for writes, and the caller keeps a
+registered file's layout stable: no truncate, hole punch or defragmentation
+while a handle is registered, as cuFile requires.
 
 ## Performance
 
