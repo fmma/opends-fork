@@ -50,6 +50,7 @@ else
 	git checkout --detach "$REF"
 fi
 git submodule update --init --recursive
+meson subprojects update --reset
 
 rm -rf "$BUILD_DIR"
 meson setup "${MESON_ARGS[@]}" "$BUILD_DIR" "$SRC_DIR" "$@"
