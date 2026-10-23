@@ -37,6 +37,9 @@ else
 	git checkout --detach "$REF"
 fi
 git submodule update --init --recursive
+meson subprojects foreach --types git -- git reset -q --hard
+meson subprojects foreach --types git -- git clean -fdxq
+meson subprojects update --reset
 
 rm -rf "$BUILD_DIR"
 meson setup "$BUILD_DIR" "$SRC_DIR"
