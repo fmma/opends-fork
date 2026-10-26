@@ -32,4 +32,4 @@ doc: |
 steps:
   - name: setup_xal
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.xal.repository.remote }}' '{{ config.xal.repository.ref }}' '{{ config.deps.src_root }}/xal' '{{ config.deps.build_root }}/xal-build' -Dxal-server=enabled
+      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' {{ '--reset' if config.deps.reset else '' }} '{{ config.xal.repository.remote }}' '{{ config.xal.repository.ref }}' '{{ config.deps.src_root }}/xal' '{{ config.deps.build_root }}/xal-build' '{{ config.deps.install_prefix | default("/usr/local") }}' -Dxal-server=enabled
