@@ -65,6 +65,7 @@ jobs:
         with:
           name: results-${{ inputs.name }}
           path: results
+          overwrite: true
       - name: Tear the stack down
         if: always() && steps.check.outcome == 'success'
         run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml ${{ inputs.teardown }}
@@ -74,6 +75,7 @@ jobs:
         with:
           name: ${{ inputs.name }}
           path: cijoe-output-*
+          overwrite: true
       - name: Give the machine back
         if: always() && steps.lease.outcome == 'success'
         run: |
