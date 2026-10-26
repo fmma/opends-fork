@@ -2,9 +2,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 set -e
 
+RESET=0
+if [ "$1" = --reset ]; then
+	RESET=1
+	shift
+fi
+
 if [ $# -lt 4 ] || [ $# -gt 5 ]; then
-	echo "usage: setup_meson_dep.sh REMOTE REF SRC_DIR BUILD_DIR [INSTALL_PREFIX]" >&2
+	echo "usage: setup_meson_dep.sh [--reset] REMOTE REF SRC_DIR BUILD_DIR [INSTALL_PREFIX]" >&2
 	echo "  REF is a branch, tag, or commit hash; INSTALL_PREFIX defaults to /usr/local" >&2
+	echo "  --reset discards local changes and leftovers in SRC_DIR instead of refusing" >&2
 	exit 1
 fi
 
@@ -22,7 +29,9 @@ fi
 
 cd "$SRC_DIR"
 
-if [ -n "$(git status --porcelain)" ]; then
+if [ "$RESET" = 1 ]; then
+	git reset -q --hard
+elif [ -n "$(git status --porcelain)" ]; then
 	echo "error: dependency checkout is not clean: $SRC_DIR" >&2
 	git status --short >&2
 	echo "       commit, stash, or 'git -C $SRC_DIR reset --hard' it, then retry" >&2
@@ -39,6 +48,19 @@ else
 	git checkout --detach "$REF"
 fi
 git submodule update --init --recursive
+# A pin move leaves the other pin's fetched subprojects behind: untracked when
+# the new pin has no wrap for them, stale when it has one at another revision.
+# Their build products go too, or a wrap that skips configure while a build
+# directory exists builds the wrong revision, or nothing.
+if [ "$RESET" = 1 ]; then
+	git clean -qfd
+	if [ -d subprojects ]; then
+		meson subprojects foreach --types git -- git reset -q --hard
+		meson subprojects foreach --types git -- git clean -fdxq
+		meson subprojects foreach --types git -- git submodule --quiet foreach --recursive git clean -fdxq
+		meson subprojects update --reset
+	fi
+fi
 
 rm -rf "$BUILD_DIR"
 meson setup "${MESON_ARGS[@]}" "$BUILD_DIR" "$SRC_DIR"

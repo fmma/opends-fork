@@ -100,8 +100,11 @@ One-time setup on the hardware machine, as an unprivileged user:
    `localhost` as the hostname. Use a `repo_path`, a `build_dir` and a
    `deps.install_prefix` dedicated to CI, so a run installs nothing into
    /usr/local; homi's install still writes its unit to /usr/lib/systemd
-   and its default config to /etc/homi. The workflow copies the files
-   into the checkout.
+   and its default config to /etc/homi. Set `deps.reset = true`: the
+   checkouts belong to the CI, and a pin that moves between runs leaves
+   the other pin's fetched subprojects behind, which the reset removes
+   instead of refusing the build. The workflow copies the files into
+   the checkout.
 5. Install cijoe and the python dependencies of `scripts/` for the
    runner user. `config.sh` records the PATH of the shell that runs it
    in the runner's `.path`, so configure from a shell that finds them.
