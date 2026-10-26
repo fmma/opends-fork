@@ -1,8 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: BSD-3-Clause
 # Tear down the HOMI/qublk/xal-server stack and return the NVMe device to the
-# kernel driver. Process and shared-memory teardown is stop_homi_stack.sh's
-# job; this unmounts first and rebinds nvme after.
+# kernel driver. clear_homi_stack.sh stops the stack; this rebinds nvme after it.
 set -e
 
 if [ $# -ne 2 ]; then
@@ -14,9 +13,7 @@ BDF=$1
 MOUNT=$2
 HERE=$(dirname "$0")
 
-umount "$MOUNT" 2>/dev/null || umount -l "$MOUNT" 2>/dev/null || true
-
-"$HERE/stop_homi_stack.sh"
+"$HERE/clear_homi_stack.sh"
 
 # Rebind nvme; recover with a PCI remove+rescan if a wedged userspace owner
 # left the controller in a bad state.

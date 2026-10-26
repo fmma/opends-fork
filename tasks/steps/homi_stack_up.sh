@@ -20,6 +20,10 @@ HERE=$(dirname "$0")
 HOMI_ID=1
 XAL_SHM=/xal_dev0
 CONF=/run/homi/xal-server.conf
+# xal-server watch mode: 2 re-indexes on every change, 3 indexes once and pins the extents with reflink clones
+XAL_WATCHMODE=${XAL_WATCHMODE:-2}
+# optional subtree of MOUNT to index instead of the whole filesystem
+XAL_SUBTREE=${XAL_SUBTREE:-}
 
 die() {
 	echo "error: $1" >&2
@@ -27,11 +31,19 @@ die() {
 	exit 1
 }
 
+SUBTREE=""
+if [ -n "$XAL_SUBTREE" ]; then
+	case "$XAL_SUBTREE" in
+		"$MOUNT"/*) SUBTREE=", subtree = \"$XAL_SUBTREE\"" ;;
+		*) die "XAL_SUBTREE ($XAL_SUBTREE) is not under $MOUNT" /dev/null ;;
+	esac
+fi
+
 mkdir -p /run/homi
 
 # Clear any stale stack from a crashed or aborted prior run before bringing up
 # a fresh one.
-"$HERE/stop_homi_stack.sh"
+"$HERE/clear_homi_stack.sh"
 
 # Hand the controller to userspace (unmounts the kernel mount, unbinds nvme,
 # leaves the controller in a clean power-on state).
@@ -76,22 +88,19 @@ echo "$UBLK" > /run/homi/ublk_dev
 mkdir -p "$MOUNT"
 mount "$UBLK" "$MOUNT"
 
-# watchmode 2 = extent update: the server re-indexes on filesystem changes,
-# which is what makes the extents of freshly written files resolvable.
 cat > "$CONF" <<EOF
 log_level = 2
 devices = [
-  { uri = "$UBLK", shm_name = "$XAL_SHM", mountpoint = "$MOUNT" },
+  { uri = "$UBLK", shm_name = "$XAL_SHM", mountpoint = "$MOUNT"$SUBTREE },
 ]
 
 [xal]
-watchmode = 2
+watchmode = $XAL_WATCHMODE
 EOF
 
 echo "starting xal-server"
+XAL_START=$(date +%s)
 setsid xal-server --config "$CONF" < /dev/null > /run/homi/xal-server.log 2>&1 &
-# The shm region appearing is enough; clients retry -EAGAIN/-ESTALE until the
-# first index completes.
 for _ in $(seq 1 120); do
 	[ -e "/dev/shm${XAL_SHM}_state" ] && break
 	if ! pgrep -x xal-server > /dev/null; then
@@ -102,5 +111,24 @@ done
 if [ ! -e "/dev/shm${XAL_SHM}_state" ]; then
 	die "xal-server did not publish $XAL_SHM" /run/homi/xal-server.log
 fi
+
+# the shm exists before the first index is done; "published" in the syslog marks the end of it
+published() {
+	journalctl -t xal-server --since "@$XAL_START" -o cat 2>/dev/null |
+		grep -q "published .* at shm_name($XAL_SHM)" ||
+		grep -q "published .* at shm_name($XAL_SHM)" /run/homi/xal-server.log 2>/dev/null
+}
+echo "waiting for the first index of $MOUNT"
+for _ in $(seq 1 1800); do
+	published && break
+	if ! pgrep -x xal-server > /dev/null; then
+		die "xal-server exited while indexing" /run/homi/xal-server.log
+	fi
+	sleep 1
+done
+if ! published; then
+	die "xal-server did not finish the first index of $MOUNT within 30 min" /run/homi/xal-server.log
+fi
+echo "index of $MOUNT published after $(( $(date +%s) - XAL_START )) s"
 
 echo "HOMI stack up: homi + qublk ($UBLK) + xal-server mounted at $MOUNT"
