@@ -4,6 +4,14 @@ project('OpenDS', 'c',
   default_options : ['c_std=c11'],
 )
 
+version_parts = meson.project_version().split('.')
+add_project_arguments(
+  '-DOPENDS_VERSION_MAJOR=' + version_parts[0],
+  '-DOPENDS_VERSION_MINOR=' + version_parts[1],
+  '-DOPENDS_VERSION_PATCH=' + version_parts[2],
+  language : 'c',
+)
+
 opends_inc = include_directories('include')
 opends_internal_inc = include_directories('src')
 tests_inc = include_directories('tests')

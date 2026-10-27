@@ -8,6 +8,8 @@ any host without a GPU. Prints "all ok" on success.
 import ctypes
 import os
 import tempfile
+import tomllib
+from pathlib import Path
 
 import opends
 
@@ -17,7 +19,10 @@ def _payload(n):
 
 
 def test_version():
-    assert opends.get_version() == (0, 1, 0)
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    with open(pyproject, "rb") as f:
+        version = tomllib.load(f)["project"]["version"]
+    assert opends.get_version() == tuple(int(x) for x in version.split("."))
 
 
 def test_roundtrip():
