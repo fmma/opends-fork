@@ -4,6 +4,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     types: [opened, reopened, synchronize, labeled, unlabeled]
   workflow_dispatch:
@@ -20,6 +21,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Check the version in the tree
+        run: |
+          meson=$(sed -n "s/^ *version *: *'\(.*\)',/\1/p" meson.build)
+          python=$(sed -n 's/^version *= *"\(.*\)"/\1/p' python/pyproject.toml)
+          [ "$meson" = "$python" ] ||
+            { echo "meson.build says $meson, python/pyproject.toml says $python" >&2; exit 1; }
+          [ "$GITHUB_REF_TYPE" != tag ] || [ "v$meson" = "$GITHUB_REF_NAME" ] ||
+            { echo "tag $GITHUB_REF_NAME on version $meson" >&2; exit 1; }
       - name: Install clang-format
         run: sudo apt-get update -q && sudo apt-get install -qy --no-install-recommends clang-format
       - run: scripts/lint_check.py
@@ -43,7 +52,7 @@ jobs:
         working-directory: python
 
   test-full:
-    if: success() && contains(github.event.pull_request.labels.*.name, 'test-full')
+    if: success() && (github.ref_type == 'tag' || contains(github.event.pull_request.labels.*.name, 'test-full'))
     needs: [lint, test-ref]
     uses: ./.github/workflows/run-on-nvme-cuda.yml
     with:
@@ -64,7 +73,7 @@ jobs:
       timeout-minutes: 1500
 
   bench-sweep:
-    if: "!cancelled() && needs.lint.result == 'success' && needs.test-ref.result == 'success' && needs.test-full.result != 'failure' && contains(github.event.pull_request.labels.*.name, 'bench-sweep')"
+    if: "!cancelled() && needs.lint.result == 'success' && needs.test-ref.result == 'success' && needs.test-full.result != 'failure' && (github.ref_type == 'tag' || contains(github.event.pull_request.labels.*.name, 'bench-sweep'))"
     needs: [lint, test-ref, test-full]
     uses: ./.github/workflows/run-on-nvme-cuda.yml
     with:
@@ -84,3 +93,40 @@ jobs:
       teardown: tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
       report: true
       timeout-minutes: 4320
+
+  release:
+    if: github.ref_type == 'tag' && needs.bench-sweep.result == 'success'
+    needs: [bench-sweep]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: results-bench-sweep
+          path: results
+      - uses: actions/download-artifact@v4
+        with:
+          name: bench-sweep
+          path: bench-sweep
+      - name: Write the release notes
+        run: |
+          {
+            echo "OpenDS builds from source. The pinned dependency stack:"
+            echo
+            awk -F'"' '/^\[/ { sub(/^\[/, ""); sub(/\..*/, ""); dep = $0 } /^ref/ { print "- " dep ": " $2 }' configs/deps.toml
+            echo
+            echo "The benchmark sweep of this release on the reference machine, scripts/bench/sweep.toml; results.json and the cijoe output are attached."
+            echo
+            cat results/report.md
+          } > notes.md
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          zip -qr bench-sweep-cijoe-output.zip bench-sweep
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "OpenDS $GITHUB_REF_NAME" --notes-file notes.md
+          gh release upload "$GITHUB_REF_NAME" --clobber results/results.json results/report.md bench-sweep-cijoe-output.zip

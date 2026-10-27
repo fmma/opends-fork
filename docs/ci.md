@@ -2,8 +2,8 @@
 
 One workflow, `.github/workflows/ci.yml`, whose hardware jobs share
 their steps through `run-on-nvme-cuda.yml`. The `lint` and `test-ref` jobs run
-on GitHub-hosted runners for every push to main and every pull request,
-and both are intended as required checks.
+on GitHub-hosted runners for every push to main, every pull request
+and every version tag, and both are intended as required checks.
 
 `lint` runs `scripts/lint_check.py` (clang-format 18, pinned by the
 ubuntu-24.04 image).
@@ -80,6 +80,9 @@ One-time GitHub configuration on the repository the workflow runs in:
    `bench-sweep / nvme-cuda` and `bench-full-sweep / nvme-cuda`, to the
    required status checks. A skipped check satisfies the requirement,
    so unlabeled PRs are unaffected.
+3. Add a ruleset for the version tags (`v*`) that limits who creates
+   them and forbids updating and deleting them, so a release cannot be
+   moved from the commit it measured.
 
 ### Runner machine
 
@@ -114,3 +117,26 @@ One-time setup on the hardware machine, as an unprivileged user:
    `.env`. Everyone who uses the machine acquires that place first;
    the job queues for it with a reservation and gives it back with
    `release-from`.
+
+## Releases
+
+A release is an archive of the source at a tag together with the
+benchmark results of that commit on the reference machine. To release
+a version:
+
+1. Bump `version` in `meson.build` and in `python/pyproject.toml`;
+   `lint` fails when the two differ. Land it on main as
+   `build: bump the version to 0.2.0`.
+2. Tag that commit: `git tag -a v0.2.0 -m "OpenDS 0.2.0"` and
+   `git push upstream v0.2.0`. "Draft a new release" in the GitHub UI
+   with a new tag name does the same.
+3. Wait for the tag's workflow run, about two hours. `lint` checks the
+   tag against the version in the tree, `test-ref`, `test-full` and
+   `bench-sweep` run without labels, and the `release` job publishes
+   the release: the pinned dependency refs and the sweep report as the
+   notes, `results.json`, `report.md` and the cijoe output attached
+   beside the source archives. A release drafted in the UI keeps its
+   notes; the job only attaches the files.
+4. If a job failed for a reason outside the code, "Re-run failed jobs"
+   on the run repeats it and the upload replaces the assets. A fix in
+   the code is a new version; a tag is never moved.
