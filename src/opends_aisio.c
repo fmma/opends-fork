@@ -121,6 +121,14 @@ struct bounce_slot {
 	size_t nbytes;
 };
 
+/* Whole LBAs bound for a destination off a dword. upcie wants the data buffer
+ * dword aligned, so they move through mid_buf one chunk at a time. */
+struct mid_seg {
+	uint64_t slba;
+	uint8_t *dst;
+	uint64_t lbas;
+};
+
 struct file_op {
 	enum file_op_mode mode;
 	bool is_write;
@@ -134,6 +142,12 @@ struct file_op {
 	struct bounce_slot bounces[BOUNCE_SLOTS];
 	int n_bounces;
 	void *bounce_buf;
+	void *mid_buf;
+	struct mid_seg *mid_segs;
+	int mid_nsegs;
+	int mid_idx;
+	uint8_t *mid_chunk_dst;
+	size_t mid_chunk_bytes; /* the chunk in flight or landed in mid_buf */
 	union {
 		struct file_op_stream stream;
 		struct file_op_async async;
@@ -722,6 +736,39 @@ chunk_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 }
 
 static int
+submit_read_lbas(struct driver *d, struct xnvme_queue *q, struct file_op *op,
+                 uint64_t slba, uint64_t nlbas, void *dst)
+{
+	for (;;) {
+		struct xnvme_cmd_ctx *ctx;
+		for (;;) {
+			ctx = xnvme_queue_get_cmd_ctx(q);
+			if (ctx)
+				break;
+			xnvme_queue_poke(q, 0);
+		}
+		xnvme_cmd_ctx_set_cb(ctx, chunk_cb, op);
+
+		op->chunks_remaining++;
+		int srv = xnvme_nvm_read(ctx, d->nsid, slba,
+		                         (uint16_t)(nlbas - 1), dst, NULL);
+		if (srv == -EBUSY) {
+			op->chunks_remaining--;
+			xnvme_queue_put_cmd_ctx(q, ctx);
+			xnvme_queue_poke(q, 0);
+			continue;
+		}
+		if (srv < 0) {
+			op->chunks_remaining--;
+			xnvme_queue_put_cmd_ctx(q, ctx);
+			op->err = OPENDS_DEVICE_DRIVER_ERROR;
+			return -1;
+		}
+		return 0;
+	}
+}
+
+static int
 submit_read_middle(struct driver *d, struct read_cursor *c, struct file_op *op,
                    uint64_t middle_lbas)
 {
@@ -733,41 +780,71 @@ submit_read_middle(struct driver *d, struct read_cursor *c, struct file_op *op,
 		        XNVME_MIN_U64(middle_lbas - lbas_done, max_chunk_lbas);
 		chunk_lbas = XNVME_MIN_U64(chunk_lbas, NVME_MAX_NLB);
 
-		struct xnvme_cmd_ctx *ctx;
-		for (;;) {
-			ctx = xnvme_queue_get_cmd_ctx(c->queue);
-			if (ctx)
-				break;
-			xnvme_queue_poke(c->queue, 0);
-		}
-		xnvme_cmd_ctx_set_cb(ctx, chunk_cb, op);
-
-		uint16_t nlb = (uint16_t)(chunk_lbas - 1);
-		uint64_t chunk_slba = c->cur_slba + lbas_done;
-		uint8_t *dst_chunk = c->abs_dst + lbas_done * lba_nbytes;
-
-		op->chunks_remaining++;
-		int srv = xnvme_nvm_read(ctx, d->nsid, chunk_slba, nlb,
-		                         dst_chunk, NULL);
-		if (srv == -EBUSY) {
-			op->chunks_remaining--;
-			xnvme_queue_put_cmd_ctx(c->queue, ctx);
-			xnvme_queue_poke(c->queue, 0);
-			continue;
-		}
-		if (srv < 0) {
-			op->chunks_remaining--;
-			xnvme_queue_put_cmd_ctx(c->queue, ctx);
-			op->err = OPENDS_DEVICE_DRIVER_ERROR;
+		if (submit_read_lbas(d, c->queue, op, c->cur_slba + lbas_done,
+		                     chunk_lbas,
+		                     c->abs_dst + lbas_done * lba_nbytes) < 0)
 			return -1;
-		}
-
 		lbas_done += chunk_lbas;
 	}
 
 	c->cur_slba += middle_lbas;
 	c->abs_dst += middle_lbas * lba_nbytes;
 	c->remaining -= middle_lbas * lba_nbytes;
+	return 0;
+}
+
+static uint64_t
+mid_bounce_lbas(const struct driver *d)
+{
+	uint64_t lbas = XNVME_MIN_U64(d->mdts_nbytes, DEFAULT_BOUNCE_SIZE) >>
+	                d->lba_shift;
+	return lbas ? lbas : 1;
+}
+
+static int
+queue_mid_seg(struct io_worker *w, struct file_op *op, uint8_t *dst,
+              uint64_t slba, uint64_t lbas, uint32_t max_segs)
+{
+	if (w->drv->cfg.assume_aligned_only || op->mode == FILE_OP_STREAM) {
+		op->err = OPENDS_INVALID_VALUE;
+		return -1;
+	}
+	if (!op->mid_segs)
+		op->mid_segs = malloc(max_segs * sizeof(*op->mid_segs));
+	if (!op->mid_segs) {
+		op->err = OPENDS_INTERNAL_ERROR;
+		return -1;
+	}
+	op->mid_segs[op->mid_nsegs++] = (struct mid_seg){slba, dst, lbas};
+	return 0;
+}
+
+/* The chain runs one chunk at a time: reap_in_flight copies a landed chunk to
+ * its destination and calls this for the next one. */
+static int
+submit_mid_chunk(struct io_worker *w, struct file_op *op)
+{
+	struct driver *d = w->drv;
+	struct mid_seg *seg = &op->mid_segs[op->mid_idx];
+	uint64_t cap = mid_bounce_lbas(d);
+	uint64_t lbas = XNVME_MIN_U64(seg->lbas, cap);
+
+	if (!op->mid_buf)
+		op->mid_buf = buf_alloc_locked(d, cap << d->lba_shift);
+	if (!op->mid_buf) {
+		op->err = OPENDS_INTERNAL_ERROR;
+		return -1;
+	}
+	if (submit_read_lbas(d, w->queue, op, seg->slba, lbas, op->mid_buf) < 0)
+		return -1;
+
+	op->mid_chunk_dst = seg->dst;
+	op->mid_chunk_bytes = (size_t)(lbas << d->lba_shift);
+	seg->slba += lbas;
+	seg->dst += lbas << d->lba_shift;
+	seg->lbas -= lbas;
+	if (seg->lbas == 0)
+		op->mid_idx++;
 	return 0;
 }
 
@@ -954,11 +1031,6 @@ start_read_op(struct io_worker *w, struct file_op *op)
 
 			if (head_bytes > remaining)
 				head_bytes = remaining;
-			if (remaining - head_bytes >= d->lba_size &&
-			    (head_bytes & (NVME_PRP_OFFSET_ALIGN - 1))) {
-				op->err = OPENDS_INVALID_VALUE;
-				goto out;
-			}
 			if (submit_partial(w, op, abs_dst, cur_slba, head_off,
 			                   head_bytes) < 0)
 				goto out;
@@ -969,7 +1041,15 @@ start_read_op(struct io_worker *w, struct file_op *op)
 
 		size_t tail_bytes = remaining & lba_mask;
 		uint64_t middle_lbas = (remaining - tail_bytes) >> lba_shift;
-		if (middle_lbas) {
+		if (middle_lbas &&
+		    ((uintptr_t)abs_dst & (NVME_PRP_OFFSET_ALIGN - 1))) {
+			if (queue_mid_seg(w, op, abs_dst, cur_slba, middle_lbas,
+			                  extent_count) < 0)
+				goto out;
+			cur_slba += middle_lbas;
+			abs_dst += middle_lbas * d->lba_size;
+			remaining -= middle_lbas * d->lba_size;
+		} else if (middle_lbas) {
 			struct read_cursor c = {
 			        .queue = w->queue,
 			        .cur_slba = cur_slba,
@@ -989,6 +1069,8 @@ start_read_op(struct io_worker *w, struct file_op *op)
 				goto out;
 		}
 	}
+	if (op->mid_nsegs)
+		submit_mid_chunk(w, op);
 out:
 	free(extents);
 }
@@ -1028,6 +1110,9 @@ static void
 complete_read_op(struct file_op *op)
 {
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
+
+	free(op->mid_segs);
+	op->mid_segs = NULL;
 
 	if (op->mode == FILE_OP_STREAM) {
 		struct opends_stream *s = op->u.stream.opends_stream;
@@ -1099,15 +1184,28 @@ dispatch_pending(struct io_worker *w, struct file_op *op)
 	op->bytes_acc = 0;
 	op->err = 0;
 	op->n_bounces = 0;
+	op->mid_nsegs = 0;
+	op->mid_idx = 0;
+	op->mid_chunk_bytes = 0;
 	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
 	start_read_op(w, op);
 }
 
 static void
-reap_in_flight(struct file_op *op)
+reap_in_flight(struct io_worker *w, struct file_op *op)
 {
-	if (op->chunks_remaining == 0 && op->bounces_outstanding == 0)
-		complete_read_op(op);
+	if (op->chunks_remaining || op->bounces_outstanding)
+		return;
+	if (op->mid_chunk_bytes) {
+		if (!op->err && ds_accel->copy(op->mid_chunk_dst, op->mid_buf,
+		                               op->mid_chunk_bytes) != 0)
+			op->err = OPENDS_DEVICE_DRIVER_ERROR;
+		op->mid_chunk_bytes = 0;
+		if (!op->err && op->mid_idx < op->mid_nsegs &&
+		    submit_mid_chunk(w, op) == 0)
+			return;
+	}
+	complete_read_op(op);
 }
 
 /* Service a PENDING async op: dispatch it once its stream gate has opened,
@@ -1160,7 +1258,7 @@ io_thread_main(void *arg)
 					break;
 				}
 				break;
-			case FILE_OP_IN_FLIGHT: reap_in_flight(op); break;
+			case FILE_OP_IN_FLIGHT: reap_in_flight(w, op); break;
 			default: break;
 			}
 		}
@@ -1321,6 +1419,12 @@ workers_teardown(struct driver *d)
 				buf_free_locked(d, op->bounce_buf);
 				op->bounce_buf = NULL;
 			}
+			if (op->mid_buf) {
+				buf_free_locked(d, op->mid_buf);
+				op->mid_buf = NULL;
+			}
+			free(op->mid_segs);
+			op->mid_segs = NULL;
 		}
 		if (w->queue) {
 			xnvme_queue_term(w->queue);

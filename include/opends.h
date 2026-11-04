@@ -50,12 +50,13 @@
  *   POSIX direct I/O alignment rules. A read or write may start and
  *   end anywhere in the file.
  *
- *   Restrictions (aisio): a read that starts mid-LBA and covers whole
- *   LBAs past the first must start on a 4-byte boundary. A
- *   stream read must start on an LBA boundary, and only its tail may
- *   be partial. Both violations fail with OPENDS_INVALID_VALUE. With
- *   OPENDS_AISIO_ASSUME_ALIGNED_ONLY set, every read must be fully
- *   LBA-aligned.
+ *   aisio moves the partial LBAs at the ends of a read, and every
+ *   LBA whose destination is not on a 4-byte boundary, through a
+ *   bounce buffer; the rest goes straight to the device. A stream
+ *   read must start on an LBA boundary and land on a 4-byte boundary,
+ *   and only its tail may be partial; a violation fails with
+ *   OPENDS_INVALID_VALUE. With OPENDS_AISIO_ASSUME_ALIGNED_ONLY set,
+ *   every read must be fully LBA-aligned.
  */
 #ifndef OPENDS_H_
 #define OPENDS_H_
