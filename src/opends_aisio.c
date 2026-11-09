@@ -1988,8 +1988,6 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (!fh || !buf_base || !size_p || !file_offset_p || !buf_offset_p ||
 	    !bytes_p)
 		return opends_err(OPENDS_INVALID_VALUE);
-	if (!stream)
-		return opends_err(OPENDS_INVALID_VALUE);
 	if (!d->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
@@ -2100,8 +2098,6 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
-	if (!stream)
-		return opends_err(OPENDS_INVALID_VALUE);
 
 	if (!drv->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
