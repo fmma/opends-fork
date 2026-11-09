@@ -100,6 +100,8 @@ stream order. `stream` accepts a raw handle (`int` or `ctypes.c_void_p`), a
 The returned `StreamOp` holds the storage the backend reads and writes when
 the stream reaches the operation, so keep it alive until the stream has been
 synchronized; `result()` raises until then and returns the byte count after.
+`error` is the `OpenDSError` of a failed operation and `None` otherwise, for
+a caller that wants the failure without an exception.
 `register_stream` and
 `deregister_stream` wrap `cuFileStreamRegister`/`Deregister`.
 
