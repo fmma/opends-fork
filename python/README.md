@@ -26,8 +26,8 @@ return the byte count, `read_async`/`write_async` return a `Future`, and
 `read_stream`/`write_stream` enqueue on a CUDA stream. Buffers may be any
 object exposing `__cuda_array_interface__`, `__array_interface__`, a
 torch-style `data_ptr()`, the buffer protocol, or a `HostBuffer` from
-`opends.alloc`. These are registered on first use and deregistered at driver
-shutdown. `opends.alloc` is the backend's own allocator: host memory on ref,
+`opends.alloc`. All but a `HostBuffer` need `opends.register_buffer` first.
+`opends.alloc` is the backend's own allocator: host memory on ref,
 device memory on GPU backends.
 
 `OpenDSFile` also takes a descriptor that is already open in place of a path,
@@ -61,7 +61,7 @@ counted, so independent components may each hold one; the C driver closes
 when the last is closed, which drops every registration, so close files and
 deregister buffers first. `get_properties()`, `use_count()` and
 `set_max_direct_io_size()` pass through to the C driver calls. Failures raise
-`OpenDSError`, whose `code` is an `opends.ErrorCode` member. A driver left
+`OpenDSError`, a `RuntimeError` whose `code` is an `opends.ErrorCode` member. A driver left
 open is closed at exit and on SIGTERM/SIGINT; a framework that installs its
 own SIGTERM handler calls `opends.cleanup()` from it.
 
