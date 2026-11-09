@@ -4,7 +4,7 @@
 import ctypes
 
 from . import cdll as _c
-from .driver import check, io_result, preserve_cuda_context, require_driver
+from .driver import OpenDSError, check, io_result, preserve_cuda_context, require_driver
 
 
 def stream_handle(stream):
@@ -56,6 +56,15 @@ class StreamOp:
     @property
     def done(self):
         return self._bytes.value != _PENDING
+
+    @property
+    def error(self):
+        """The OpenDSError of a failed operation. None for one that
+        succeeded, and until the stream has executed the operation."""
+        nbytes = int(self._bytes.value)
+        if nbytes == _PENDING or nbytes >= 0:
+            return None
+        return OpenDSError(-nbytes)
 
     def result(self):
         """Byte count once the stream has executed the operation."""
